@@ -90,21 +90,15 @@ def _own_cli_prefs(tmp_path, monkeypatch):
     monkeypatch.setattr("cli.prefs._PREFS_PATH", tmp_path / "cli_prefs.json")
 
 
+# Task 2 (#21): 외부 LLM provider API 키 환경변수는 전부 삭제되었습니다 —
+# Claude Code 는 OAuth 토큰으로 인증 (ADR-0001). 남은 두 개는:
+# - ALPHA_VANTAGE_API_KEY: alpha_vantage vendor 가 아직 유지됨 (Task 6 에서
+#   pykrx 로 교체되면 제거 예정).
+# - ANTHROPIC_API_KEY: TRADINGAGENTS_CLAUDE_BARE=1 escape hatch 에서만 사용
+#   (CLAUDE.md §4.6 참조). 운영 환경에서는 사용 금지.
 _API_KEY_ENV_VARS = (
-    "OPENAI_API_KEY",
-    "GOOGLE_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "XAI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "DASHSCOPE_API_KEY",
-    "DASHSCOPE_CN_API_KEY",
-    "ZHIPU_API_KEY",
-    "ZHIPU_CN_API_KEY",
-    "MINIMAX_API_KEY",
-    "MINIMAX_CN_API_KEY",
-    "OPENROUTER_API_KEY",
-    "AZURE_OPENAI_API_KEY",
     "ALPHA_VANTAGE_API_KEY",
+    "ANTHROPIC_API_KEY",
 )
 
 
