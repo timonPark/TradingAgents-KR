@@ -134,9 +134,13 @@ def test_sentiment_prompt_states_constraint(monkeypatch):
 def test_tool_using_analysts_keep_their_date_guidance():
     # The analysts that really do call tools keep the wording that anchors their
     # tool date ranges (#836) — this fix is scoped to no-tool agents.
-    import tradingagents.agents.analysts.market_analyst as market
+    #
+    # Task 3 (#32) 로 각 분석가가 순차적으로 사전조회 패턴으로 전환됩니다 — 전환된
+    # 분석가는 이 리스트에서 빠집니다. Task 3a (#33) 에서 market 전환. Task 3b/3c
+    # 가 fundamentals/news 를 전환하고 Task 3d 가 완전 삭제하면 이 테스트도 함께
+    # 삭제됩니다.
     import tradingagents.agents.analysts.news_analyst as news
-    for module in (market, news):
+    for module in (news,):
         assert "tool-call date ranges" in inspect.getsource(module)
 
 

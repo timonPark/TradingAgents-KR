@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from tradingagents.agents.analysts import fundamentals_analyst, market_analyst, news_analyst
+from tradingagents.agents.analysts import fundamentals_analyst, news_analyst
 
 
 @dataclass(frozen=True)
@@ -19,10 +19,11 @@ class AnalystExecutionPlan:
 
 ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
     "market": AnalystNodeSpec(
+        # Task 3a (#33): 사전조회 패턴으로 전환되어 ToolNode 바인딩 불필요.
+        # analyst 내부에서 Python 이 데이터를 선조회하고 단일 LLM 호출로 완결.
         key="market",
         agent_node="Market Analyst",
         report_key="market_report",
-        tools=market_analyst.TOOLS,
     ),
     "social": AnalystNodeSpec(
         # Saved configs select this analyst as "social". It fetches its
