@@ -3,14 +3,17 @@
 Task 1a (#2): 기본 subprocess 래퍼
 Task 1b (#3): with_structured_output → --json-schema 매핑
 Task 1c (#4): 격리 플래그 전체 세트 + SystemMessage 분리 전달
+Task 1d (#5): 동시 실행 세마포어
 
 subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다. 하위 이슈
-에서 테스트가 확장된다 (세마포어, 타임아웃, 재시도, 429).
+에서 테스트가 확장된다 (타임아웃, 재시도, 429).
 """
 
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import Literal
 from unittest.mock import MagicMock, patch
 
@@ -25,8 +28,20 @@ from tradingagents.llm_clients.claude_code_client import (
     _coerce_input_to_messages,
     _messages_to_prompt,
     _parse_structured_output,
+    _reset_semaphore,
+    _resolve_concurrency,
+    _run_claude_subprocess,
     _split_messages,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_semaphore(monkeypatch):
+    """매 테스트마다 세마포어 재초기화. 환경변수 오버라이드도 함께 초기화."""
+    monkeypatch.delenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", raising=False)
+    _reset_semaphore()
+    yield
+    _reset_semaphore()
 
 
 def _success_payload(result_text: str = "pong") -> str:
@@ -423,6 +438,124 @@ def test_structured_output_also_uses_isolation_flags_and_system_split(mock_run):
     assert "User: Decide 005930." in prompt
     # --json-schema 도 여전히 포함
     assert "--json-schema" in args_list
+
+
+# ---------------------------------------------------------------------------
+# Task 1d (#5): 동시 실행 세마포어
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_default():
+    assert _resolve_concurrency() == 2
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_from_env(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "5")
+    assert _resolve_concurrency() == 5
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_empty_string_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "")
+    assert _resolve_concurrency() == 2
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_rejects_non_integer(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "abc")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_concurrency()
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_rejects_zero(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "0")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_concurrency()
+
+
+@pytest.mark.unit
+def test_resolve_concurrency_rejects_negative(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "-1")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_concurrency()
+
+
+@pytest.mark.unit
+def test_semaphore_limits_concurrent_subprocess_calls(monkeypatch):
+    """concurrency=2 설정 시 3개 쓰레드 중 하나는 반드시 대기해야 한다."""
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "2")
+    _reset_semaphore()
+
+    in_flight = 0
+    max_in_flight = 0
+    stats_lock = threading.Lock()
+
+    def _slow_run(*args, **kwargs):
+        nonlocal in_flight, max_in_flight
+        with stats_lock:
+            in_flight += 1
+            if in_flight > max_in_flight:
+                max_in_flight = in_flight
+        time.sleep(0.1)
+        with stats_lock:
+            in_flight -= 1
+        return MagicMock(stdout=_success_payload(), returncode=0)
+
+    with patch(
+        "tradingagents.llm_clients.claude_code_client.subprocess.run",
+        side_effect=_slow_run,
+    ):
+        threads = [
+            threading.Thread(target=_run_claude_subprocess, args=(["claude", "-p", "x"],))
+            for _ in range(3)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    # 디폴트 2 로 제한되므로 동시에 3개는 불가능
+    assert max_in_flight <= 2
+
+
+@pytest.mark.unit
+def test_semaphore_concurrency_one_fully_serializes(monkeypatch):
+    """concurrency=1 → 완전 직렬 실행."""
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_CONCURRENCY", "1")
+    _reset_semaphore()
+
+    in_flight = 0
+    max_in_flight = 0
+    stats_lock = threading.Lock()
+
+    def _slow_run(*args, **kwargs):
+        nonlocal in_flight, max_in_flight
+        with stats_lock:
+            in_flight += 1
+            if in_flight > max_in_flight:
+                max_in_flight = in_flight
+        time.sleep(0.05)
+        with stats_lock:
+            in_flight -= 1
+        return MagicMock(stdout=_success_payload(), returncode=0)
+
+    with patch(
+        "tradingagents.llm_clients.claude_code_client.subprocess.run",
+        side_effect=_slow_run,
+    ):
+        threads = [
+            threading.Thread(target=_run_claude_subprocess, args=(["claude", "-p", "x"],))
+            for _ in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert max_in_flight == 1
 
 
 @pytest.mark.unit

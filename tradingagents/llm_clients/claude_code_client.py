@@ -8,14 +8,17 @@ Max/Pro 플랜 쿼터로 추론한다 (ADR-0001 참조).
 - Task 1a (#2): 기본 subprocess 래퍼 + JSON 응답 파싱 + AIMessage 반환
 - Task 1b (#3): with_structured_output(Schema) → --json-schema 매핑
 - Task 1c (#4): 어댑터 격리 플래그 전체 세트 + SystemMessage 분리 전달
+- Task 1d (#5): 동시 실행 세마포어 (TRADINGAGENTS_CLAUDE_CONCURRENCY)
 
-세마포어·타임아웃·재시도는 하위 이슈에서 확장된다.
+타임아웃·재시도는 하위 이슈에서 확장된다.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import threading
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -83,14 +86,70 @@ def _coerce_input_to_messages(input_: Any) -> list[BaseMessage]:
     return [HumanMessage(content=str(input_))]
 
 
+# 동시 실행 세마포어 (Task 1d #5) ------------------------------------------
+#
+# OAuth Max/Pro 쿼터와 머신 메모리 (Node.js 런타임당 300~500MB) 를 보호하기
+# 위해 모든 `claude -p` subprocess 호출을 모듈 레벨 세마포어로 통과시킨다.
+# LangGraph 가 분석가를 병렬로 띄우거나 백테스트가 여러 종목을 동시에 돌릴
+# 때 세마포어가 동일하게 공유된다 — ChatClaudeCodeHeadless 가 여러 번
+# 인스턴스화되어도 쿼터는 하나이기 때문.
+#
+# 세마포어는 lazy singleton: 첫 호출 시 환경변수를 읽고 생성한다. 이후 환경
+# 변수 변경은 반영되지 않는다 — 실행 중인 분석이 동시성 예산을 바꾸는 것을
+# 막기 위함. 테스트는 `_reset_semaphore()` 로 재초기화한다.
+
+_CONCURRENCY_ENV = "TRADINGAGENTS_CLAUDE_CONCURRENCY"
+_DEFAULT_CONCURRENCY = 2
+
+_SEMAPHORE: threading.Semaphore | None = None
+_SEMAPHORE_LOCK = threading.Lock()
+
+
+def _resolve_concurrency() -> int:
+    """환경변수에서 동시 실행 한도를 읽는다. 미설정 시 디폴트, 부적합 시 ValueError."""
+    raw = os.environ.get(_CONCURRENCY_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_CONCURRENCY
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_CONCURRENCY_ENV} must be a positive integer, got {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            f"{_CONCURRENCY_ENV} must be a positive integer, got {value}"
+        )
+    return value
+
+
+def _get_semaphore() -> threading.Semaphore:
+    """세마포어 lazy singleton. 테스트는 `_reset_semaphore()` 로 재초기화."""
+    global _SEMAPHORE
+    if _SEMAPHORE is None:
+        with _SEMAPHORE_LOCK:
+            if _SEMAPHORE is None:
+                _SEMAPHORE = threading.Semaphore(_resolve_concurrency())
+    return _SEMAPHORE
+
+
+def _reset_semaphore() -> None:
+    """다음 `_get_semaphore()` 호출 시 환경변수를 다시 읽도록 재설정. 테스트 전용."""
+    global _SEMAPHORE
+    with _SEMAPHORE_LOCK:
+        _SEMAPHORE = None
+
+
 def _run_claude_subprocess(args: list[str]) -> dict:
     """Claude Code CLI subprocess 호출. JSON payload dict 반환.
 
-    `is_error=True` 응답은 RuntimeError 로 전파한다. subprocess 자체의
-    non-zero exit (CalledProcessError) 는 호출부로 그대로 전파된다 — Task 1e
-    (#6) 에서 재시도 로직 추가 시 처리.
+    세마포어로 동시 실행이 제한된다 (`TRADINGAGENTS_CLAUDE_CONCURRENCY`,
+    디폴트 2). `is_error=True` 응답은 RuntimeError 로 전파한다. subprocess
+    자체의 non-zero exit (CalledProcessError) 는 호출부로 그대로 전파된다 —
+    Task 1e (#6) 에서 재시도 로직 추가 시 처리.
     """
-    completed = subprocess.run(args, capture_output=True, text=True, check=True)
+    with _get_semaphore():
+        completed = subprocess.run(args, capture_output=True, text=True, check=True)
     payload = json.loads(completed.stdout)
     if payload.get("is_error"):
         raise RuntimeError(
