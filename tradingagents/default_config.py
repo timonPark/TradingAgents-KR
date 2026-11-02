@@ -31,6 +31,12 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_GOOGLE_THINKING_LEVEL":   "google_thinking_level",
     "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
+    # Claude Code 어댑터용 티어별 effort (Task 1f #7). `effort` 는 deep 티어
+    # (리서처/매니저/트레이더/디베이터), `quick_effort` 는 quick 티어 (분석가).
+    # `factory.create_tier_client` 가 호출 티어에 맞는 값을 선택해 어댑터로
+    # 넘긴다.
+    "TRADINGAGENTS_EFFORT":        "effort",
+    "TRADINGAGENTS_QUICK_EFFORT":  "quick_effort",
 }
 
 
@@ -89,9 +95,14 @@ def build_default_config() -> dict:
         # Pending entries are never pruned. None disables rotation entirely.
         "memory_log_max_entries": None,
         # LLM settings
-        "llm_provider": "openai",
-        "deep_think_llm": "gpt-6-sol",
-        "quick_think_llm": "gpt-6-luna",
+        # Task 1f (#7) + ADR-0001: Claude Code 헤드리스 단일 백엔드. 디폴트
+        # 모델은 균형 조합 — 깊은 추론은 Sonnet high, 빠른 요약은 Haiku medium.
+        "llm_provider": "claude-code",
+        "deep_think_llm": "sonnet",
+        "quick_think_llm": "haiku",
+        # Claude Code `--effort` 티어별 디폴트. Task 1f (#7).
+        "effort": "high",            # deep 티어 (리서처/매니저/트레이더/디베이터)
+        "quick_effort": "medium",    # quick 티어 (분석가)
         # When None, each provider's client falls back to its own default endpoint
         # (api.openai.com for OpenAI, generativelanguage.googleapis.com for Gemini, ...).
         # The CLI overrides this per provider when the user picks one. Keeping a

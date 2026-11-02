@@ -794,3 +794,104 @@ def test_quota_error_twice_raises_with_korean_message(mock_run, mock_sleep):
         _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
     assert mock_run.call_count == 2
     mock_sleep.assert_called_once_with(_QUOTA_RETRY_AFTER_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Task 1f (#7): 티어 매핑 (--effort CLI 플래그 + ClaudeCodeClient effort kwarg)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_generate_passes_effort_flag_to_cli(mock_run):
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+    llm = ChatClaudeCodeHeadless(model="sonnet", effort="high")
+    llm._generate([HumanMessage(content="hi")])
+    (args_list,), _ = mock_run.call_args
+    assert "--effort" in args_list
+    assert args_list[args_list.index("--effort") + 1] == "high"
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_passes_effort_flag(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "x"}),
+        returncode=0,
+    )
+    llm = ChatClaudeCodeHeadless(model="haiku", effort="max")
+    llm.with_structured_output(_Decision).invoke("decide")
+    (args_list,), _ = mock_run.call_args
+    assert args_list[args_list.index("--effort") + 1] == "max"
+
+
+@pytest.mark.unit
+def test_client_wrapper_forwards_effort_kwarg():
+    client = ClaudeCodeClient("sonnet", effort="high")
+    llm = client.get_llm()
+    assert isinstance(llm, ChatClaudeCodeHeadless)
+    assert llm.effort == "high"
+
+
+@pytest.mark.unit
+def test_client_wrapper_rejects_invalid_effort():
+    client = ClaudeCodeClient("sonnet", effort="not-a-real-level")
+    with pytest.raises(ValueError, match="effort must be one of"):
+        client.get_llm()
+
+
+@pytest.mark.unit
+def test_client_wrapper_default_effort_when_no_kwarg():
+    """effort 를 kwarg 로 넘기지 않으면 ChatClaudeCodeHeadless 가 자체 디폴트(medium)."""
+    client = ClaudeCodeClient("sonnet")
+    llm = client.get_llm()
+    assert llm.effort == "medium"
+
+
+# -- factory.create_tier_client 가 티어별 effort 를 올바르게 매핑 ----------
+
+
+@pytest.mark.unit
+def test_factory_deep_tier_uses_effort_key():
+    """deep 티어 호출 시 config['effort'] 가 어댑터로 넘어감."""
+    from tradingagents.llm_clients.factory import create_tier_client
+
+    config = {
+        "llm_provider": "claude-code",
+        "deep_think_llm": "sonnet",
+        "quick_think_llm": "haiku",
+        "effort": "high",
+        "quick_effort": "medium",
+    }
+    client = create_tier_client(config, tier="deep")
+    assert isinstance(client, ClaudeCodeClient)
+    assert client.model == "sonnet"
+    llm = client.get_llm()
+    assert llm.effort == "high"
+
+
+@pytest.mark.unit
+def test_factory_quick_tier_uses_quick_effort_key():
+    """quick 티어 호출 시 config['quick_effort'] 가 어댑터로 넘어감."""
+    from tradingagents.llm_clients.factory import create_tier_client
+
+    config = {
+        "llm_provider": "claude-code",
+        "deep_think_llm": "sonnet",
+        "quick_think_llm": "haiku",
+        "effort": "high",
+        "quick_effort": "medium",
+    }
+    client = create_tier_client(config, tier="quick")
+    assert isinstance(client, ClaudeCodeClient)
+    assert client.model == "haiku"
+    llm = client.get_llm()
+    assert llm.effort == "medium"
+
+
+@pytest.mark.unit
+def test_factory_claude_code_requires_no_api_key():
+    """api_key_env 는 claude-code 를 키 불필요로 표시해야 함 (OAuth 사용)."""
+    from tradingagents.llm_clients.api_key_env import get_api_key_env
+
+    assert get_api_key_env("claude-code") is None
