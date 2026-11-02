@@ -169,7 +169,7 @@ tradingagents --ticker 005930 --date 2026-11-01 --analysts market,news,fundament
 TradingAgents-KR 은 한국거래소(KRX) 상장 종목을 기본 지원합니다.
 
 - **KOSPI/KOSDAQ**: 6자리 숫자 코드 (예: `005930` 삼성전자, `035720` 카카오, `247540` 에코프로비엠)
-- 미국 등 해외 종목은 upstream 의 Yahoo Finance 경로가 폴백으로 유지됩니다 (예: `AAPL`, `0700.HK`).
+- 미국·홍콩·상해 등 해외 종목은 **지원하지 않습니다** (Task 4, 하드 포크 결정 ADR-0001). KRX 외 티커를 입력하면 CLI 가 거부합니다.
 
 ---
 

@@ -113,7 +113,7 @@ def _prompt_selections(prefs, flags):
         console.print(
             create_question_box(
                 "Step 1: Ticker Symbol",
-                "Enter the ticker (한국 종목코드 6자리 또는 상류 포맷)",
+                "KRX 종목코드를 입력하세요 (6자리 숫자, 예: 005930 삼성전자)",
                 "005930",
             )
         )
