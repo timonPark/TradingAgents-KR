@@ -14,7 +14,9 @@ from cli.display import console
 from cli.models import AnalystType, AssetType
 from tradingagents.dataflows.symbols import safe_ticker_component
 
-TICKER_INPUT_EXAMPLES = "005930 (삼성전자), 000660 (SK하이닉스), 035720 (카카오)"
+TICKER_INPUT_EXAMPLES = (
+    "005930 (삼성전자), 000660 (SK하이닉스), 035720 (카카오), 069500 (KODEX 200 ETF)"
+)
 
 ANALYST_CHOICES = [
     ("Market Analyst", AnalystType.MARKET),
@@ -23,10 +25,10 @@ ANALYST_CHOICES = [
     ("Fundamentals Analyst", AnalystType.FUNDAMENTALS),
 ]
 
-# Yahoo/Alpha Vantage vendor 들이 Task 2 에서 제거되고 KRX 전용으로 전환되기
-# 전까지는 레거시 crypto suffix 를 유지. Task 5·6 에서 심볼 경로가 정리되면
-# 이 상수도 제거 예정.
-CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
+# Task 4b (#43): KRX 포크는 암호자산을 지원하지 않습니다. CRYPTO_SUFFIXES 는
+# 빈 튜플로 축소되어 detect_asset_type 은 항상 AssetType.STOCK 을 반환합니다.
+# Task 7 에서 crypto 관련 분기 전체 정리 예정.
+CRYPTO_SUFFIXES: tuple[str, ...] = ()
 
 # Claude Code 헤드리스가 지원하는 모델 alias.
 # `claude --model` 이 받는 세 alias (sonnet/opus/haiku) 외의 모델 ID 도 Custom
@@ -70,10 +72,10 @@ def is_valid_ticker_input(value: str) -> bool:
 def get_ticker() -> str:
     """사용자가 입력한 티커를 받아 정규화된 심볼로 반환."""
     ticker = questionary.text(
-        f"Enter ticker symbol (e.g. {TICKER_INPUT_EXAMPLES}):",
+        f"KRX 종목코드를 입력하세요 (예: {TICKER_INPUT_EXAMPLES}):",
         validate=lambda x: (
             is_valid_ticker_input(x)
-            or "Please enter a valid ticker symbol, e.g. 005930 (6-digit KRX code)."
+            or "KRX 6자리 숫자 종목코드만 지원합니다 (예: 005930 삼성전자)."
         ),
         style=questionary.Style(
             [
@@ -84,10 +86,12 @@ def get_ticker() -> str:
     ).ask()
 
     if ticker is None:
-        console.print("\n[red]No ticker symbol provided. Exiting...[/red]")
+        console.print("\n[red]티커를 입력하지 않아 종료합니다.[/red]")
         exit(1)
 
-    return normalize_ticker_symbol(ticker) if ticker.strip() else "SPY"
+    # Task 4b (#43): 빈 입력의 디폴트는 SPY 가 아니라 삼성전자 (005930). 미국
+    # 종목으로의 폴백은 KRX 전용 포크에서 더 이상 의미 없음.
+    return normalize_ticker_symbol(ticker) if ticker.strip() else "005930"
 
 
 def parse_ticker(value: str) -> str:

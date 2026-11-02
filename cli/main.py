@@ -49,7 +49,7 @@ def analyze(
         help="JSON file with current holdings and cash, so the trader, risk and "
         "portfolio agents size against your actual position.",
     ),
-    ticker: str = typer.Option(None, "--ticker", help="Ticker to analyze, e.g. NVDA or 0700.HK; skips the prompt"),
+    ticker: str = typer.Option(None, "--ticker", help="분석할 KRX 종목코드 (예: 005930 삼성전자); 지정하면 프롬프트 생략"),
     date: str = typer.Option(None, "--date", help="Analysis date, YYYY-MM-DD; skips the prompt"),
     analysts: str = typer.Option(
         None, "--analysts", help="Comma-separated analysts, e.g. market,news; skips the prompt"
@@ -102,7 +102,7 @@ def analyze(
 
 @app.command()
 def backtest(
-    tickers: str = typer.Argument(..., help="Comma-separated tickers, e.g. NVDA,AAPL"),
+    tickers: str = typer.Argument(..., help="쉼표로 구분된 KRX 종목코드 (예: 005930,000660,035720)"),
     start: str = typer.Option(..., "--start", help="First analysis date, YYYY-MM-DD"),
     end: str = typer.Option(..., "--end", help="Last analysis date, YYYY-MM-DD"),
     every: int = typer.Option(7, "--every", help="Days between analysis dates"),
@@ -133,7 +133,7 @@ def backtest(
 
     names = [t.strip() for t in tickers.split(",") if t.strip()]
     if not names:
-        console.print("[red]No ticker to analyze; pass them comma-separated, e.g. NVDA,AAPL[/red]")
+        console.print("[red]분석할 종목코드가 없습니다. 쉼표로 구분해 입력하세요 (예: 005930,000660).[/red]")
         raise typer.Exit(code=1)
 
     def show_progress(done, total, ticker, date):

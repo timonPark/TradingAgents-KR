@@ -115,8 +115,9 @@ def test_backtest_can_continue_an_interrupted_sweep(runner, monkeypatch, tmp_pat
 
 @pytest.mark.unit
 @pytest.mark.parametrize("args, expected", [
-    (["backtest", "NVDA", "--start", "2026-08-01", "--end", "2026-06-08"], "before"),
-    (["backtest", ",,", "--start", "2026-06-01", "--end", "2026-06-08"], "ticker"),
+    (["backtest", "005930", "--start", "2026-08-01", "--end", "2026-06-08"], "before"),
+    # Task 4b (#43): 티커 리스트가 빈 경우의 에러 메시지가 한국어 "종목코드" 로 바뀜.
+    (["backtest", ",,", "--start", "2026-06-01", "--end", "2026-06-08"], "종목코드"),
 ])
 def test_backtest_rejects_input_that_would_sweep_nothing(runner, args, expected):
     """An inverted range or an empty ticker list reported a clean zero-cell run,
