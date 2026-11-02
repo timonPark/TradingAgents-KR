@@ -10,6 +10,8 @@ Max/Pro 플랜 쿼터로 추론한다 (ADR-0001 참조).
 - Task 1c (#4): 어댑터 격리 플래그 전체 세트 + SystemMessage 분리 전달
 - Task 1d (#5): 동시 실행 세마포어 (TRADINGAGENTS_CLAUDE_CONCURRENCY)
 - Task 1e (#6): 오류 처리 정책 (타임아웃·재시도·429)
+- Task 1f (#7): 티어별 --effort 플래그 전달 + effort 유효성 검증
+- Task 1h (#9): TRADINGAGENTS_CLAUDE_BARE=1 escape hatch (--bare + API 키)
 """
 
 from __future__ import annotations
@@ -138,6 +140,43 @@ def _reset_semaphore() -> None:
     global _SEMAPHORE
     with _SEMAPHORE_LOCK:
         _SEMAPHORE = None
+
+
+# Escape hatch: --bare 모드 (Task 1h #9) -----------------------------------
+#
+# TRADINGAGENTS_CLAUDE_BARE=1 이 설정되면 모든 subprocess 호출에 `--bare` 를
+# 추가한다. --bare 는 Claude Code 가 로드하는 숨은 상태(auto-memory, 상위
+# CLAUDE.md 자동 발견, hooks, LSP, 플러그인 sync, 백그라운드 prefetch, keychain
+# reads) 를 전부 끈다 — 결정론이 중요한 디버깅/테스트에 유용.
+#
+# **중요한 제약:** --bare 는 OAuth 토큰과 keychain 을 읽지 않는다. 인증은 오직
+# `ANTHROPIC_API_KEY` 또는 `apiKeyHelper` 로만 가능. Max/Pro 플랜 쿼터 활용과
+# 상충하므로 운영 환경에서는 사용 금지 (CLAUDE.md §4.6).
+#
+# 디폴트는 OFF — Max/Pro 플랜 쿼터 활용을 위한 OAuth 경로가 기본.
+
+_BARE_ENV = "TRADINGAGENTS_CLAUDE_BARE"
+_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+
+
+def _bare_mode_enabled() -> bool:
+    """TRADINGAGENTS_CLAUDE_BARE=1 설정 시 True."""
+    return os.environ.get(_BARE_ENV, "").strip() == "1"
+
+
+def _validate_bare_prereqs() -> None:
+    """bare 모드 활성 시 ANTHROPIC_API_KEY 가 비어있지 않은지 검증.
+
+    OAuth 를 읽지 않는 모드이므로 API 키가 반드시 설정되어 있어야 한다. 없으면
+    Claude Code 가 "No API key" 에러로 실패하지만, 어댑터 레벨에서 미리 명확한
+    메시지로 전파하는 것이 운영 디버깅에 유리.
+    """
+    if not os.environ.get(_ANTHROPIC_API_KEY_ENV, "").strip():
+        raise RuntimeError(
+            f"{_BARE_ENV}=1 requires {_ANTHROPIC_API_KEY_ENV} to be set "
+            "(bare mode does not read OAuth token/keychain). "
+            f"Either set {_ANTHROPIC_API_KEY_ENV} or unset {_BARE_ENV}."
+        )
 
 
 # 오류 처리 정책 (Task 1e #6) ---------------------------------------------
@@ -291,6 +330,9 @@ class ChatClaudeCodeHeadless(BaseChatModel):
         ]
         if system_prompt:
             args.extend(["--append-system-prompt", system_prompt])
+        if _bare_mode_enabled():
+            _validate_bare_prereqs()
+            args.append("--bare")
         return args
 
     def _generate(
