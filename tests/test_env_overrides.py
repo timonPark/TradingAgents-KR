@@ -26,24 +26,21 @@ def test_no_env_uses_built_in_defaults(monkeypatch):
     assert config["quick_think_llm"] == "haiku"
     assert config["effort"] == "high"
     assert config["quick_effort"] == "medium"
-    assert config["backend_url"] is None
     assert config["max_debate_rounds"] == 1
     assert config["checkpoint_enabled"] is False
 
 
 def test_string_overrides(monkeypatch):
+    # Task 2 (#21): LLM_PROVIDER / LLM_BACKEND_URL env 매핑은 제거되었음 —
+    # provider 는 claude-code 고정 (ADR-0001).
     config = _config_with_env(
         monkeypatch,
-        TRADINGAGENTS_LLM_PROVIDER="google",
-        TRADINGAGENTS_DEEP_THINK_LLM="gemini-3-pro-preview",
-        TRADINGAGENTS_QUICK_THINK_LLM="gemini-3-flash-preview",
-        TRADINGAGENTS_LLM_BACKEND_URL="https://example.invalid/v1",
+        TRADINGAGENTS_DEEP_THINK_LLM="opus",
+        TRADINGAGENTS_QUICK_THINK_LLM="sonnet",
         TRADINGAGENTS_OUTPUT_LANGUAGE="Chinese",
     )
-    assert config["llm_provider"] == "google"
-    assert config["deep_think_llm"] == "gemini-3-pro-preview"
-    assert config["quick_think_llm"] == "gemini-3-flash-preview"
-    assert config["backend_url"] == "https://example.invalid/v1"
+    assert config["deep_think_llm"] == "opus"
+    assert config["quick_think_llm"] == "sonnet"
     assert config["output_language"] == "Chinese"
 
 
@@ -71,35 +68,27 @@ def test_bool_coercion(monkeypatch, raw, expected):
     assert config["checkpoint_enabled"] is expected
 
 
-def test_reasoning_thinking_overrides(monkeypatch):
-    """The provider reasoning/thinking knobs are env-configurable (non-interactive runs)."""
+def test_effort_overrides(monkeypatch):
+    """Claude Code `--effort` 티어별 env 로 설정 가능 (TRADINGAGENTS_EFFORT /
+    TRADINGAGENTS_QUICK_EFFORT). provider-specific thinking/reasoning 노브는
+    Task 2 (#21) 로 전부 제거됨."""
     config = _config_with_env(
         monkeypatch,
-        TRADINGAGENTS_OPENAI_REASONING_EFFORT="high",
-        TRADINGAGENTS_GOOGLE_THINKING_LEVEL="minimal",
-        TRADINGAGENTS_ANTHROPIC_EFFORT="low",
+        TRADINGAGENTS_EFFORT="low",
+        TRADINGAGENTS_QUICK_EFFORT="xhigh",
     )
-    assert config["openai_reasoning_effort"] == "high"
-    assert config["google_thinking_level"] == "minimal"
-    assert config["anthropic_effort"] == "low"
-
-
-def test_reasoning_effort_defaults_to_none(monkeypatch):
-    """Unset reasoning/thinking knobs stay None so each provider uses its own default."""
-    config = _config_with_env(monkeypatch)
-    assert config["openai_reasoning_effort"] is None
-    assert config["google_thinking_level"] is None
-    assert config["anthropic_effort"] is None
+    assert config["effort"] == "low"
+    assert config["quick_effort"] == "xhigh"
 
 
 def test_empty_env_value_is_passthrough(monkeypatch):
     """Empty TRADINGAGENTS_* values must not clobber the built-in default."""
     config = _config_with_env(
         monkeypatch,
-        TRADINGAGENTS_LLM_PROVIDER="",
+        TRADINGAGENTS_EFFORT="",
         TRADINGAGENTS_MAX_DEBATE_ROUNDS="",
     )
-    assert config["llm_provider"] == "claude-code"
+    assert config["effort"] == "high"
     assert config["max_debate_rounds"] == 1
 
 

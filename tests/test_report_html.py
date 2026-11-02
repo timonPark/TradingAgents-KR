@@ -10,8 +10,9 @@ import pytest
 
 from tradingagents.reporting import write_report_tree
 
-SETTINGS = {"version": "1.2.3", "llm_provider": "openai", "deep_think_llm": "gpt-6-sol",
-            "quick_think_llm": "gpt-6-luna", "analysts": ["market", "news"], "max_debate_rounds": 1,
+SETTINGS = {"version": "1.2.3", "llm_provider": "claude-code", "deep_think_llm": "sonnet",
+            "quick_think_llm": "haiku", "effort": "high", "quick_effort": "medium",
+            "analysts": ["market", "news"], "max_debate_rounds": 1,
             "max_risk_discuss_rounds": 1, "data_vendors": {"core_stock_apis": "yfinance"}}
 
 
@@ -89,12 +90,13 @@ def _fields(fragment):
 
 @pytest.mark.unit
 def test_run_details_show_each_value_as_its_own_field(tmp_path):
-    settings = {**SETTINGS, "deep_think_provider": "anthropic", "deep_think_llm": "claude-opus-5-5",
+    # Task 2 (#21): deep_think_provider 는 제거됨. 모든 티어가 claude-code.
+    settings = {**SETTINGS, "deep_think_llm": "opus",
                 "data_vendors": {"core_stock_apis": "yfinance", "fundamental_data": "sec_edgar,yfinance"}}
     write_report_tree(_state(), "NVDA", tmp_path, settings=settings, html=True)
     page = (tmp_path / "complete_report.html").read_text(encoding="utf-8")
     header = page[page.index("<header"):page.index("</header>")]
-    for value in ("anthropic", "claude-opus-5-5", "openai", "gpt-6-luna", "market", "news",
+    for value in ("claude-code", "opus", "haiku", "market", "news",
                   "sec_edgar", "yfinance"):
         assert value in _fields(header)
     # Vendors are named by what they serve, and a chain keeps its order.

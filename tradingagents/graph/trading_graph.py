@@ -14,7 +14,7 @@ from tradingagents.dataflows.config import run_config, run_config_context, set_c
 from tradingagents.dataflows.date_window import get_current_date, is_historical
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.llm_clients import create_tier_client, tier_provider
+from tradingagents.llm_clients import create_tier_client
 from tradingagents.memory import TradingMemoryLog, settlement
 from tradingagents.memory.reflection import Reflector
 from tradingagents.reporting import write_report_tree
@@ -41,10 +41,11 @@ def _validate_trade_date(trade_date) -> str:
     return value
 
 
-# Config keys that do not change what a run writes: where it keeps its files,
-# whether it checkpoints, and how often it retries a provider.
+# Config keys that do not change what a run writes: where it keeps its files
+# and whether it checkpoints. Task 2 (#21): llm_max_retries 는 제거됨 (어댑터가
+# 자체 재시도 정책을 갖고 config 에 더 이상 노출되지 않음).
 _NOT_IN_SIGNATURE = frozenset({
-    "results_dir", "data_cache_dir", "memory_log_path", "checkpoint_enabled", "llm_max_retries",
+    "results_dir", "data_cache_dir", "memory_log_path", "checkpoint_enabled",
 })
 
 
@@ -255,17 +256,18 @@ class TradingAgentsGraph:
     def run_settings(self) -> dict:
         """What produces this graph's runs, for the saved report and state log.
 
-        An allowlist: endpoints (a backend_url can carry credentials), keys and
-        local paths are never recorded.
+        An allowlist: keys and local paths are never recorded. Task 2 (#21) 로
+        provider-specific 설정(backend_url, deep_think_provider, quick_think_
+        provider 등) 은 제거되었습니다 — provider 가 claude-code 로 고정이므로.
         """
         cfg = self.config
         return {
             "version": tradingagents.__version__,
             "llm_provider": cfg.get("llm_provider"),
-            "deep_think_provider": tier_provider(cfg, "deep") if cfg.get("llm_provider") else None,
             "deep_think_llm": cfg.get("deep_think_llm"),
-            "quick_think_provider": tier_provider(cfg, "quick") if cfg.get("llm_provider") else None,
             "quick_think_llm": cfg.get("quick_think_llm"),
+            "effort": cfg.get("effort"),
+            "quick_effort": cfg.get("quick_effort"),
             "analysts": list(self.selected_analysts),
             "max_debate_rounds": cfg.get("max_debate_rounds"),
             "max_risk_discuss_rounds": cfg.get("max_risk_discuss_rounds"),

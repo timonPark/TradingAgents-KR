@@ -27,13 +27,13 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
     lines.append(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if settings:
         s = settings.get
-        deep_provider = s("deep_think_provider") or s("llm_provider", "?")
-        quick_provider = s("quick_think_provider") or s("llm_provider", "?")
-        if deep_provider == quick_provider:
-            models = f"{deep_provider}, deep {s('deep_think_llm', '?')}, quick {s('quick_think_llm', '?')}"
-        else:   # each tier on its own provider (#1440)
-            models = (f"deep {deep_provider} {s('deep_think_llm', '?')}, "
-                      f"quick {quick_provider} {s('quick_think_llm', '?')}")
+        # Task 2 (#21): deep_think_provider / quick_think_provider 는 제거됨.
+        # Claude Code 가 유일 provider 이므로 llm_provider 하나로 모든 티어 표현.
+        provider = s("llm_provider", "?")
+        models = (f"{provider}, deep {s('deep_think_llm', '?')} "
+                  f"(effort {s('effort', '?')}), "
+                  f"quick {s('quick_think_llm', '?')} "
+                  f"(effort {s('quick_effort', '?')})")
         lines.append(f"- TradingAgents {s('version', '?')}: {models}")
         lines.append(f"- Analysts: {', '.join(analyst_names(s('analysts')))}; "
                      f"research debate rounds {s('max_debate_rounds', '?')}, "
