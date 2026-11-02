@@ -1001,3 +1001,39 @@ def test_bare_flag_applied_to_structured_output_path(mock_run, monkeypatch):
 
     (args_list,), _ = mock_run.call_args
     assert "--bare" in args_list
+
+
+# ---------------------------------------------------------------------------
+# Task 1g (#8): llm_clients 패키지 공개 심볼
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_package_exposes_claude_code_symbols():
+    """`from tradingagents.llm_clients import ...` 로 Claude Code 어댑터 접근 가능."""
+    from tradingagents import llm_clients as pkg
+
+    assert hasattr(pkg, "ChatClaudeCodeHeadless")
+    assert hasattr(pkg, "ClaudeCodeClient")
+    assert "ChatClaudeCodeHeadless" in pkg.__all__
+    assert "ClaudeCodeClient" in pkg.__all__
+
+
+@pytest.mark.unit
+def test_factory_create_llm_client_returns_claude_code_client():
+    """create_llm_client(provider='claude-code', ...) 가 ClaudeCodeClient 반환."""
+    from tradingagents.llm_clients import create_llm_client
+
+    client = create_llm_client(provider="claude-code", model="sonnet")
+    assert isinstance(client, ClaudeCodeClient)
+    assert client.model == "sonnet"
+
+
+@pytest.mark.unit
+def test_factory_create_llm_client_passes_kwargs_through():
+    """effort 같은 kwargs 가 어댑터로 넘어감."""
+    from tradingagents.llm_clients import create_llm_client
+
+    client = create_llm_client(provider="claude-code", model="haiku", effort="high")
+    llm = client.get_llm()
+    assert llm.effort == "high"
