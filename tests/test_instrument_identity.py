@@ -19,56 +19,59 @@ class ResolveInstrumentIdentityTests(unittest.TestCase):
     def setUp(self):
         _identity.cache_clear()
 
-    def test_resolves_company_metadata_from_yfinance(self):
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
-            mock.return_value.info = {
-                "longName": "TOTO LTD.",
-                "shortName": "TOTO",
-                "sector": "Industrials",
-                "industry": "Building Products & Equipment",
-                "exchange": "PNK",
+    def test_resolves_company_metadata_from_dart(self):
+        # Task 5b (#48): identity 는 DART 기업 프로필에서 가져옴 (KRX 전용 하드 포크).
+        with patch("tradingagents.agents.context.get_company_profile") as mock:
+            mock.return_value = {
+                "longName": "삼성전자",
+                "shortName": "Samsung Electronics",
+                "exchange": "KOSPI",
                 "quoteType": "EQUITY",
             }
-            identity = resolve_instrument_identity("totdy")
-        mock.assert_called_once_with("TOTDY")
-        self.assertEqual(identity["company_name"], "TOTO LTD.")
-        self.assertEqual(identity["sector"], "Industrials")
-        self.assertEqual(identity["industry"], "Building Products & Equipment")
-        self.assertEqual(identity["exchange"], "PNK")
+            identity = resolve_instrument_identity("005930")
+        mock.assert_called_once_with("005930")
+        self.assertEqual(identity["company_name"], "삼성전자")
+        self.assertEqual(identity["exchange"], "KOSPI")
 
     def test_falls_back_to_short_name(self):
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
-            mock.return_value.info = {"shortName": "TOTO", "sector": "Industrials"}
-            identity = resolve_instrument_identity("TOTDY")
-        self.assertEqual(identity["company_name"], "TOTO")
+        with patch("tradingagents.agents.context.get_company_profile") as mock:
+            mock.return_value = {"shortName": "Samsung Electronics"}
+            identity = resolve_instrument_identity("005930")
+        self.assertEqual(identity["company_name"], "Samsung Electronics")
 
     def test_skips_placeholder_values(self):
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
-            mock.return_value.info = {"longName": "  ", "sector": "None", "industry": "n/a"}
-            identity = resolve_instrument_identity("TOTDY")
+        with patch("tradingagents.agents.context.get_company_profile") as mock:
+            mock.return_value = {"longName": "  ", "exchange": "None"}
+            identity = resolve_instrument_identity("005930")
         self.assertEqual(identity, {})
 
     def test_fails_open_on_exception(self):
         with patch(
-            "tradingagents.dataflows.vendors.yahoo.market.yf.Ticker",
+            "tradingagents.agents.context.get_company_profile",
             side_effect=RuntimeError("rate limited"),
         ):
-            self.assertEqual(resolve_instrument_identity("TOTDY"), {})
+            self.assertEqual(resolve_instrument_identity("005930"), {})
 
     def test_a_failed_lookup_is_asked_again(self):
         # A long process (a backtest) must not run every later cell without an
         # identity because one request failed.
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
-            type(mock.return_value).info = property(lambda self: (_ for _ in ()).throw(TimeoutError()))
-            self.assertEqual(resolve_instrument_identity("TOTDY"), {})
-            type(mock.return_value).info = {"longName": "TOTO LTD."}
-            self.assertEqual(resolve_instrument_identity("TOTDY")["company_name"], "TOTO LTD.")
+        call_count = {"n": 0}
+
+        def side_effect(ticker):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise TimeoutError()
+            return {"longName": "삼성전자"}
+
+        with patch("tradingagents.agents.context.get_company_profile", side_effect=side_effect):
+            self.assertEqual(resolve_instrument_identity("005930"), {})
+            self.assertEqual(resolve_instrument_identity("005930")["company_name"], "삼성전자")
 
     def test_result_is_cached(self):
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
-            mock.return_value.info = {"longName": "TOTO LTD."}
-            first = resolve_instrument_identity("TOTDY")
-            second = resolve_instrument_identity("TOTDY")
+        with patch("tradingagents.agents.context.get_company_profile") as mock:
+            mock.return_value = {"longName": "삼성전자"}
+            first = resolve_instrument_identity("005930")
+            second = resolve_instrument_identity("005930")
         mock.assert_called_once()  # second call served from cache
         self.assertEqual(first, second)
 
@@ -111,13 +114,13 @@ class GetInstrumentContextFromStateTests(unittest.TestCase):
         self.assertEqual(get_instrument_context_from_state(state), "PRECOMPUTED")
 
     def test_fallback_is_network_free_ticker_only(self):
-        # No instrument_context and no yfinance call — must not hit the network.
-        with patch("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker") as mock:
+        # No instrument_context and no DART call — must not hit the network.
+        with patch("tradingagents.agents.context.get_company_profile") as mock:
             context = get_instrument_context_from_state(
-                {"company_of_interest": "NVDA", "asset_type": "stock"}
+                {"company_of_interest": "005930", "asset_type": "stock"}
             )
         mock.assert_not_called()
-        self.assertIn("NVDA", context)
+        self.assertIn("005930", context)
 
     def test_fallback_respects_asset_type(self):
         context = get_instrument_context_from_state(
