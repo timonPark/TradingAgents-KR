@@ -5,6 +5,8 @@ Task 1b (#3): with_structured_output → --json-schema 매핑
 Task 1c (#4): 격리 플래그 전체 세트 + SystemMessage 분리 전달
 Task 1d (#5): 동시 실행 세마포어
 Task 1e (#6): 오류 처리 정책 (타임아웃·재시도·429)
+Task 1f (#7): 티어별 --effort 플래그 + effort 유효성 검증
+Task 1h (#9): TRADINGAGENTS_CLAUDE_BARE escape hatch
 
 subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다.
 """
@@ -24,9 +26,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from tradingagents.llm_clients.claude_code_client import (
+    _ANTHROPIC_API_KEY_ENV,
+    _BARE_ENV,
     _QUOTA_RETRY_AFTER_SECONDS,
     ChatClaudeCodeHeadless,
     ClaudeCodeClient,
+    _bare_mode_enabled,
     _coerce_input_to_messages,
     _is_quota_error,
     _messages_to_prompt,
@@ -36,6 +41,7 @@ from tradingagents.llm_clients.claude_code_client import (
     _resolve_timeout,
     _run_claude_subprocess,
     _split_messages,
+    _validate_bare_prereqs,
 )
 
 
@@ -895,3 +901,103 @@ def test_factory_claude_code_requires_no_api_key():
     from tradingagents.llm_clients.api_key_env import get_api_key_env
 
     assert get_api_key_env("claude-code") is None
+
+
+# ---------------------------------------------------------------------------
+# Task 1h (#9): TRADINGAGENTS_CLAUDE_BARE escape hatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_bare_mode_disabled_by_default(monkeypatch):
+    monkeypatch.delenv(_BARE_ENV, raising=False)
+    assert _bare_mode_enabled() is False
+
+
+@pytest.mark.unit
+def test_bare_mode_enabled_when_env_is_1(monkeypatch):
+    monkeypatch.setenv(_BARE_ENV, "1")
+    assert _bare_mode_enabled() is True
+
+
+@pytest.mark.unit
+def test_bare_mode_other_truthy_values_not_accepted(monkeypatch):
+    """엄격한 '1' 매칭 — true/yes/on 은 수용하지 않는다 (오타로 켜지는 것 방지)."""
+    for val in ("true", "yes", "on", "True", "01", " 1 "):
+        monkeypatch.setenv(_BARE_ENV, val)
+        if val.strip() == "1":
+            assert _bare_mode_enabled() is True
+        else:
+            assert _bare_mode_enabled() is False, f"should reject {val!r}"
+
+
+@pytest.mark.unit
+def test_validate_bare_prereqs_passes_when_key_set(monkeypatch):
+    monkeypatch.setenv(_ANTHROPIC_API_KEY_ENV, "sk-ant-test")
+    _validate_bare_prereqs()  # no raise
+
+
+@pytest.mark.unit
+def test_validate_bare_prereqs_raises_when_key_missing(monkeypatch):
+    monkeypatch.delenv(_ANTHROPIC_API_KEY_ENV, raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        _validate_bare_prereqs()
+
+
+@pytest.mark.unit
+def test_validate_bare_prereqs_raises_when_key_empty(monkeypatch):
+    monkeypatch.setenv(_ANTHROPIC_API_KEY_ENV, "   ")
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        _validate_bare_prereqs()
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_bare_flag_not_in_args_by_default(mock_run, monkeypatch):
+    monkeypatch.delenv(_BARE_ENV, raising=False)
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+
+    ChatClaudeCodeHeadless(model="sonnet")._generate([HumanMessage(content="hi")])
+
+    (args_list,), _ = mock_run.call_args
+    assert "--bare" not in args_list
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_bare_flag_added_when_env_set_and_key_present(mock_run, monkeypatch):
+    monkeypatch.setenv(_BARE_ENV, "1")
+    monkeypatch.setenv(_ANTHROPIC_API_KEY_ENV, "sk-ant-test")
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+
+    ChatClaudeCodeHeadless(model="sonnet")._generate([HumanMessage(content="hi")])
+
+    (args_list,), _ = mock_run.call_args
+    assert "--bare" in args_list
+
+
+@pytest.mark.unit
+def test_bare_mode_without_api_key_raises_from_adapter(monkeypatch):
+    """어댑터 레벨에서 선검증 → subprocess 호출 전에 명확히 실패."""
+    monkeypatch.setenv(_BARE_ENV, "1")
+    monkeypatch.delenv(_ANTHROPIC_API_KEY_ENV, raising=False)
+
+    llm = ChatClaudeCodeHeadless(model="sonnet")
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        llm._generate([HumanMessage(content="hi")])
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_bare_flag_applied_to_structured_output_path(mock_run, monkeypatch):
+    monkeypatch.setenv(_BARE_ENV, "1")
+    monkeypatch.setenv(_ANTHROPIC_API_KEY_ENV, "sk-ant-test")
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "x"}),
+        returncode=0,
+    )
+
+    ChatClaudeCodeHeadless(model="sonnet").with_structured_output(_Decision).invoke("hi")
+
+    (args_list,), _ = mock_run.call_args
+    assert "--bare" in args_list
