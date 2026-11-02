@@ -4,14 +4,15 @@ Task 1a (#2): 기본 subprocess 래퍼
 Task 1b (#3): with_structured_output → --json-schema 매핑
 Task 1c (#4): 격리 플래그 전체 세트 + SystemMessage 분리 전달
 Task 1d (#5): 동시 실행 세마포어
+Task 1e (#6): 오류 처리 정책 (타임아웃·재시도·429)
 
-subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다. 하위 이슈
-에서 테스트가 확장된다 (타임아웃, 재시도, 429).
+subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from typing import Literal
@@ -23,13 +24,16 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from tradingagents.llm_clients.claude_code_client import (
+    _QUOTA_RETRY_AFTER_SECONDS,
     ChatClaudeCodeHeadless,
     ClaudeCodeClient,
     _coerce_input_to_messages,
+    _is_quota_error,
     _messages_to_prompt,
     _parse_structured_output,
     _reset_semaphore,
     _resolve_concurrency,
+    _resolve_timeout,
     _run_claude_subprocess,
     _split_messages,
 )
@@ -509,7 +513,9 @@ def test_semaphore_limits_concurrent_subprocess_calls(monkeypatch):
         side_effect=_slow_run,
     ):
         threads = [
-            threading.Thread(target=_run_claude_subprocess, args=(["claude", "-p", "x"],))
+            threading.Thread(
+                target=_run_claude_subprocess, args=(["claude", "-p", "x"], 300)
+            )
             for _ in range(3)
         ]
         for t in threads:
@@ -547,7 +553,9 @@ def test_semaphore_concurrency_one_fully_serializes(monkeypatch):
         side_effect=_slow_run,
     ):
         threads = [
-            threading.Thread(target=_run_claude_subprocess, args=(["claude", "-p", "x"],))
+            threading.Thread(
+                target=_run_claude_subprocess, args=(["claude", "-p", "x"], 300)
+            )
             for _ in range(4)
         ]
         for t in threads:
@@ -573,3 +581,216 @@ def test_structured_output_raises_on_is_error(mock_run):
 
     with pytest.raises(RuntimeError, match="Claude Code returned error"):
         ChatClaudeCodeHeadless(model="sonnet").with_structured_output(_Decision).invoke("hi")
+
+
+# ---------------------------------------------------------------------------
+# Task 1e (#6): 오류 처리 정책 (타임아웃·재시도·429)
+# ---------------------------------------------------------------------------
+
+
+# -- _resolve_timeout --------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_timeout_default_medium():
+    assert _resolve_timeout("medium") == 300
+
+
+@pytest.mark.unit
+def test_resolve_timeout_effort_levels():
+    assert _resolve_timeout("low") == 180
+    assert _resolve_timeout("medium") == 300
+    assert _resolve_timeout("high") == 600
+    assert _resolve_timeout("xhigh") == 900
+    assert _resolve_timeout("max") == 1200
+
+
+@pytest.mark.unit
+def test_resolve_timeout_unknown_effort_falls_back_to_medium():
+    assert _resolve_timeout("totally-unknown") == 300
+
+
+@pytest.mark.unit
+def test_resolve_timeout_env_override_wins(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_TIMEOUT", "42")
+    # effort 가 어떻든 환경변수가 우선
+    assert _resolve_timeout("high") == 42
+    assert _resolve_timeout("low") == 42
+
+
+@pytest.mark.unit
+def test_resolve_timeout_rejects_invalid_env(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_TIMEOUT", "nope")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_timeout("medium")
+
+
+@pytest.mark.unit
+def test_resolve_timeout_rejects_zero_env(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_TIMEOUT", "0")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_timeout("medium")
+
+
+# -- _is_quota_error ---------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_is_quota_error_detects_429_status():
+    assert _is_quota_error(
+        {"is_error": True, "api_error_status": 429, "subtype": "whatever"}
+    ) is True
+
+
+@pytest.mark.unit
+def test_is_quota_error_detects_rate_limit_subtype():
+    assert _is_quota_error(
+        {"is_error": True, "subtype": "rate_limit_exceeded"}
+    ) is True
+
+
+@pytest.mark.unit
+def test_is_quota_error_detects_quota_subtype():
+    assert _is_quota_error({"is_error": True, "subtype": "quota_exceeded"}) is True
+
+
+@pytest.mark.unit
+def test_is_quota_error_ignores_other_errors():
+    assert _is_quota_error({"is_error": True, "subtype": "invalid_input"}) is False
+
+
+@pytest.mark.unit
+def test_is_quota_error_requires_is_error_flag():
+    # api_error_status 가 429 라도 is_error 가 False 면 쿼터로 간주하지 않음
+    assert _is_quota_error({"is_error": False, "api_error_status": 429}) is False
+
+
+# -- subprocess 호출 시 timeout 전달 ----------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_run_passes_timeout_to_subprocess(mock_run):
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+    _run_claude_subprocess(["claude", "-p", "x"], timeout=42)
+    (_, kwargs) = mock_run.call_args
+    assert kwargs.get("timeout") == 42
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_generate_uses_effort_based_timeout(mock_run):
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+    llm = ChatClaudeCodeHeadless(model="sonnet", effort="high")
+    llm._generate([HumanMessage(content="hi")])
+    (_, kwargs) = mock_run.call_args
+    assert kwargs.get("timeout") == 600  # high
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_generate_env_timeout_overrides_effort(mock_run, monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_CLAUDE_TIMEOUT", "77")
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+    llm = ChatClaudeCodeHeadless(model="sonnet", effort="max")
+    llm._generate([HumanMessage(content="hi")])
+    (_, kwargs) = mock_run.call_args
+    assert kwargs.get("timeout") == 77
+
+
+# -- non-zero exit 재시도 ---------------------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_non_zero_exit_retried_once_then_succeeds(mock_run):
+    """첫 호출은 CalledProcessError, 두 번째는 성공."""
+    mock_run.side_effect = [
+        subprocess.CalledProcessError(returncode=1, cmd="claude"),
+        MagicMock(stdout=_success_payload("ok"), returncode=0),
+    ]
+    payload = _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+    assert payload["result"] == "ok"
+    assert mock_run.call_count == 2
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_non_zero_exit_propagates_after_retry(mock_run):
+    """두 번 다 CalledProcessError → 전파."""
+    mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd="claude")
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+    assert mock_run.call_count == 2
+
+
+# -- 타임아웃 (재시도 없이 전파) ---------------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_timeout_propagates_without_retry(mock_run):
+    """subprocess.TimeoutExpired 는 재시도 없이 전파."""
+    mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=1)
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=1)
+    assert mock_run.call_count == 1  # 재시도 없음
+
+
+# -- JSON 파싱 실패 (재시도 없이 전파) --------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_malformed_json_propagates_without_retry(mock_run):
+    mock_run.return_value = MagicMock(stdout="not json at all", returncode=0)
+    with pytest.raises(json.JSONDecodeError):
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+    assert mock_run.call_count == 1
+
+
+# -- 429 쿼터 재시도 ---------------------------------------------------------
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.time.sleep")
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_quota_error_waits_and_retries_success(mock_run, mock_sleep):
+    """429 → 60초 대기 → 재시도 성공."""
+    quota = json.dumps(
+        {
+            "type": "result",
+            "subtype": "rate_limit_exceeded",
+            "is_error": True,
+            "api_error_status": 429,
+            "session_id": "quota",
+        }
+    )
+    mock_run.side_effect = [
+        MagicMock(stdout=quota, returncode=0),
+        MagicMock(stdout=_success_payload("ok"), returncode=0),
+    ]
+    payload = _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+    assert payload["result"] == "ok"
+    assert mock_run.call_count == 2
+    mock_sleep.assert_called_once_with(_QUOTA_RETRY_AFTER_SECONDS)
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.time.sleep")
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_quota_error_twice_raises_with_korean_message(mock_run, mock_sleep):
+    quota = json.dumps(
+        {
+            "type": "result",
+            "subtype": "rate_limit_exceeded",
+            "is_error": True,
+            "api_error_status": 429,
+            "session_id": "quota",
+        }
+    )
+    mock_run.return_value = MagicMock(stdout=quota, returncode=0)
+    with pytest.raises(RuntimeError, match="Max 플랜 쿼터 소진"):
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+    assert mock_run.call_count == 2
+    mock_sleep.assert_called_once_with(_QUOTA_RETRY_AFTER_SECONDS)

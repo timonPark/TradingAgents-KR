@@ -9,8 +9,7 @@ Max/Pro 플랜 쿼터로 추론한다 (ADR-0001 참조).
 - Task 1b (#3): with_structured_output(Schema) → --json-schema 매핑
 - Task 1c (#4): 어댑터 격리 플래그 전체 세트 + SystemMessage 분리 전달
 - Task 1d (#5): 동시 실행 세마포어 (TRADINGAGENTS_CLAUDE_CONCURRENCY)
-
-타임아웃·재시도는 하위 이슈에서 확장된다.
+- Task 1e (#6): 오류 처리 정책 (타임아웃·재시도·429)
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -140,36 +140,120 @@ def _reset_semaphore() -> None:
         _SEMAPHORE = None
 
 
-def _run_claude_subprocess(args: list[str]) -> dict:
+# 오류 처리 정책 (Task 1e #6) ---------------------------------------------
+#
+# 실패 모드별 대응:
+#   - 타임아웃: effort 레벨 기반 가변 디폴트. TRADINGAGENTS_CLAUDE_TIMEOUT 로
+#     전역 오버라이드. 재시도 없음 — 타임아웃은 대개 상황이 바뀌어도 재발.
+#   - subprocess non-zero exit (CalledProcessError): 1회 재시도 후 전파.
+#     일시적 ENOTFOUND 등 네트워크 흔들림 흡수.
+#   - 429 / 쿼터 초과: 60초 대기 후 1회 재시도. 2회째 실패 시 명확한
+#     "Max 플랜 쿼터 소진" 메시지와 함께 RuntimeError 전파.
+#   - JSON 파싱 실패: 재시도 없이 그대로 전파 (JSONDecodeError). structured.py
+#     의 free-text 폴백 경로가 처리.
+
+_EFFORT_TIMEOUTS = {
+    "low": 180,
+    "medium": 300,
+    "high": 600,
+    "xhigh": 900,
+    "max": 1200,
+}
+_DEFAULT_EFFORT = "medium"
+_TIMEOUT_ENV = "TRADINGAGENTS_CLAUDE_TIMEOUT"
+_QUOTA_RETRY_AFTER_SECONDS = 60
+
+
+def _resolve_timeout(effort: str) -> int:
+    """환경변수가 설정되어 있으면 그 값, 아니면 effort 기반 디폴트."""
+    raw = os.environ.get(_TIMEOUT_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{_TIMEOUT_ENV} must be a positive integer, got {raw!r}"
+            ) from exc
+        if value <= 0:
+            raise ValueError(
+                f"{_TIMEOUT_ENV} must be a positive integer, got {value}"
+            )
+        return value
+    return _EFFORT_TIMEOUTS.get(effort, _EFFORT_TIMEOUTS[_DEFAULT_EFFORT])
+
+
+def _is_quota_error(payload: dict) -> bool:
+    """payload 가 429 / 쿼터 초과를 나타내는지 판정.
+
+    Claude Code 는 쿼터 초과를 두 가지 지표 중 하나로 노출한다:
+    - `api_error_status == 429`
+    - `subtype` 에 "rate" / "quota" / "limit" 포함 (예: "rate_limit_exceeded")
+    """
+    if not payload.get("is_error"):
+        return False
+    if payload.get("api_error_status") == 429:
+        return True
+    subtype = str(payload.get("subtype", "")).lower()
+    return any(keyword in subtype for keyword in ("rate", "quota", "limit"))
+
+
+def _run_claude_subprocess(args: list[str], timeout: int) -> dict:
     """Claude Code CLI subprocess 호출. JSON payload dict 반환.
 
-    세마포어로 동시 실행이 제한된다 (`TRADINGAGENTS_CLAUDE_CONCURRENCY`,
-    디폴트 2). `is_error=True` 응답은 RuntimeError 로 전파한다. subprocess
-    자체의 non-zero exit (CalledProcessError) 는 호출부로 그대로 전파된다 —
-    Task 1e (#6) 에서 재시도 로직 추가 시 처리.
+    세마포어로 동시 실행을 제한한다 (`TRADINGAGENTS_CLAUDE_CONCURRENCY`,
+    디폴트 2). non-zero exit 와 429 쿼터 응답은 1회 재시도 (429 는 60초 대기
+    후). 타임아웃과 JSON 파싱 실패는 그대로 전파.
     """
     with _get_semaphore():
-        completed = subprocess.run(args, capture_output=True, text=True, check=True)
-    payload = json.loads(completed.stdout)
-    if payload.get("is_error"):
-        raise RuntimeError(
-            f"Claude Code returned error: subtype={payload.get('subtype')!r} "
-            f"session_id={payload.get('session_id')!r}"
-        )
-    return payload
+        for attempt in range(2):  # 초기 1 + 재시도 1
+            try:
+                completed = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=timeout,
+                )
+            except subprocess.CalledProcessError:
+                if attempt == 0:
+                    continue
+                raise
+
+            payload = json.loads(completed.stdout)
+
+            if _is_quota_error(payload):
+                if attempt == 0:
+                    time.sleep(_QUOTA_RETRY_AFTER_SECONDS)
+                    continue
+                raise RuntimeError(
+                    "Max 플랜 쿼터 소진 "
+                    f"(api_error_status={payload.get('api_error_status')!r}, "
+                    f"subtype={payload.get('subtype')!r}). "
+                    f"{_QUOTA_RETRY_AFTER_SECONDS}초 대기 후 재시도도 실패했습니다."
+                )
+
+            if payload.get("is_error"):
+                raise RuntimeError(
+                    f"Claude Code returned error: subtype={payload.get('subtype')!r} "
+                    f"session_id={payload.get('session_id')!r}"
+                )
+            return payload
+        # 도달 불가 — range(2) 는 반드시 return 또는 raise 로 종료.
+        raise AssertionError("unreachable: retry loop exited without return/raise")
 
 
 class ChatClaudeCodeHeadless(BaseChatModel):
     """Claude Code `claude -p` subprocess 를 LangChain BaseChatModel 로 래핑.
 
     다음 하위 이슈에서 확장:
-    - #4 격리 플래그 (`--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`)
-    - #5 세마포어 (`TRADINGAGENTS_CLAUDE_CONCURRENCY`)
-    - #6 타임아웃·재시도·429 처리
-    - #7 티어별 effort / 모델 매핑
+    - #7 티어별 effort / 모델 매핑 (`--effort` CLI 플래그 통합)
+    - #8 factory.py / api_key_env.py 통합
     """
 
     model: str = "sonnet"
+    # effort: Task 1e (#6) 타임아웃 산정용. Task 1f (#7) 에서 `--effort` CLI
+    # 플래그 전달과 티어별 매핑(deep=high, quick=medium) 이 추가된다.
+    effort: str = _DEFAULT_EFFORT
 
     @property
     def _llm_type(self) -> str:
@@ -215,7 +299,7 @@ class ChatClaudeCodeHeadless(BaseChatModel):
     ) -> ChatResult:
         system_prompt, conversation = _split_messages(messages)
         args = self._base_cli_args(conversation, system_prompt=system_prompt)
-        payload = _run_claude_subprocess(args)
+        payload = _run_claude_subprocess(args, timeout=_resolve_timeout(self.effort))
         text = payload.get("result", "")
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
@@ -261,7 +345,7 @@ class _StructuredClaudeCode:
             schema_json,
         ]
 
-        payload = _run_claude_subprocess(args)
+        payload = _run_claude_subprocess(args, timeout=_resolve_timeout(self._llm.effort))
         return _parse_structured_output(payload, self._schema)
 
 
