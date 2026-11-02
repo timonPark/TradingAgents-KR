@@ -75,11 +75,14 @@ class ScriptedModel(BaseChatModel):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
         self._count()
-        if self.tools:
-            import threading
-            import time
-            self.threads.add(threading.current_thread().name)
-            time.sleep(0.05)   # long enough for concurrent analysts to overlap
+        # Task 3a/3b/3c (#33·#34·#35): 사전조회 전환 분석가는 bind_tools 를 호출
+        # 안 하므로 self.tools 가 비어있다. 분석가가 병렬로 돈다는 사실은 tools
+        # 유무와 무관하므로 모든 _generate 에서 쓰레드 수집 (test_the_analysts_
+        # run_at_the_same_time 호환성 유지).
+        import threading
+        import time
+        self.threads.add(threading.current_thread().name)
+        time.sleep(0.05)   # long enough for concurrent analysts to overlap
         if self.tools and not isinstance(messages[-1], ToolMessage):
             calls = [{"name": t.name, "id": f"call_{i}",
                       "args": {k: v for k, v in ARGS.items()
@@ -199,10 +202,9 @@ def test_a_debug_run_prints_the_analysts_work_and_reaches_the_same_decision(tmp_
     assert signal == "Overweight"
     assert state["market_report"].strip() and state["fundamentals_report"].strip()
     printed = capsys.readouterr().out
-    # Task 3a (#33): market 가 사전조회 전환되어 get_stock_data 가 더 이상 tool call
-    # 로 로그에 뜨지 않음. 남은 tool-using 분석가의 함수를 체크 (news/fundamentals).
-    # Task 3b/3c 전환 후 이 테스트는 Task 3d 와 함께 삭제됨.
-    assert "get_balance_sheet" in printed and "get_news" in printed
+    # Task 3a·3b 로 market, fundamentals 전환됨. 남은 tool-using 는 news 하나 —
+    # Task 3c 전환 후 이 체크는 공란, Task 3d 가 테스트를 삭제.
+    assert "get_news" in printed
 
 
 @pytest.mark.unit
@@ -264,10 +266,10 @@ def test_an_analyst_that_keeps_calling_tools_writes_its_report_at_the_limit(tmp_
 
     final_state, rating = graph.propagate("NVDA", TRADE_DATE)
 
-    # Task 3a (#33): market analyst 가 사전조회 패턴으로 전환되어 더 이상 tool
-    # 루프를 돌지 않음. 남은 tool-using 분석가는 news/fundamentals 두 개 — Task
-    # 3b/3c 가 전환하면 이 수치가 0 이 되고 테스트는 Task 3d 에서 삭제됨.
-    assert len(model.tool_turns) == 2 * 3   # two tool-using analysts, three rounds each
+    # Task 3a (#33) + 3b (#34): market, fundamentals 가 사전조회 전환됨.
+    # 남은 tool-using 분석가는 news 하나 — Task 3c 가 전환하면 0 이 되고 테스트는
+    # Task 3d 에서 삭제됨.
+    assert len(model.tool_turns) == 1 * 3   # one tool-using analyst, three rounds
     for key in ("market_report", "news_report", "fundamentals_report"):
         assert final_state[key] == TEXT
     assert rating == "Overweight"
@@ -283,8 +285,8 @@ def test_the_last_turn_is_offered_no_tools_and_reads_its_tool_results_as_text(tm
     graph.propagate("NVDA", TRADE_DATE)
 
     wrap_ups = [h for h in model.last_turns if isinstance(h[-1], HumanMessage) and "tool round" in h[-1].content]
-    # Task 3a (#33): market 가 사전조회 전환됨 — wrap_up 은 news/fundamentals 둘만.
-    assert len(wrap_ups) == 2
+    # Task 3a (#33) + 3b (#34): market, fundamentals 전환됨 — wrap_up 은 news 하나.
+    assert len(wrap_ups) == 1
     for history in wrap_ups:
         assert not any(isinstance(m, ToolMessage) or getattr(m, "tool_calls", None) for m in history)
         assert any("returned]" in str(m.content) for m in history)
