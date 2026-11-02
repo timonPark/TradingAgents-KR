@@ -18,9 +18,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         # One run away from UTC, so a test that only passes in UTC fails here.
+        # Asia/Seoul: this fork's target production timezone (KRX markets).
         include:
           - python-version: "3.12"
-            tz: America/New_York
+            tz: Asia/Seoul
     env:
       TZ: ${{ matrix.tz }}
     steps:
