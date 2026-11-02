@@ -275,12 +275,15 @@ class ChatClaudeCodeHeadless(BaseChatModel):
           향상 및 호스트 상태 유출 방지)
         - `--append-system-prompt`: SystemMessage 가 있을 때만 추가. 상위
           `~/.claude/CLAUDE.md` 자동 발견 내용을 TradingAgents 지침으로 희석.
+        - `--effort`: 추론 깊이 (`low`/`medium`/`high`/`xhigh`/`max`). 티어
+          매핑은 `factory.create_tier_client` 가 담당 (Task 1f).
         """
         args = [
             "claude",
             "-p", prompt,
             "--output-format", "json",
             "--model", self.model,
+            "--effort", self.effort,
             "--no-session-persistence",
             "--permission-mode", "plan",
             "--disable-slash-commands",
@@ -373,13 +376,28 @@ class ClaudeCodeClient(BaseLLMClient):
 
     `factory.create_llm_client(provider="claude-code", model="sonnet")` 가
     이 클래스의 인스턴스를 반환한다 (Task 1g #8 에서 factory.py 분기 추가).
+
+    `effort` 를 kwarg 로 받으면 어댑터에 전달한다 — `factory.build_llm_kwargs`
+    가 티어별로 `effort` 또는 `quick_effort` 를 뽑아 넘겨준다 (Task 1f #7).
     """
 
     _KNOWN_MODELS = frozenset({"sonnet", "opus", "haiku"})
 
     def get_llm(self) -> Any:
         self.warn_if_unknown_model()
-        return ChatClaudeCodeHeadless(model=self.model)
+        llm_kwargs: dict[str, Any] = {"model": self.model}
+        if "effort" in self.kwargs:
+            llm_kwargs["effort"] = _validate_effort(self.kwargs["effort"])
+        return ChatClaudeCodeHeadless(**llm_kwargs)
 
     def validate_model(self) -> bool:
         return self.model in self._KNOWN_MODELS
+
+
+def _validate_effort(effort: str) -> str:
+    """effort 가 알려진 레벨인지 검증. 디버깅/운영 중 "medium" 외 값을 넘길 때 안전망."""
+    if effort not in _EFFORT_TIMEOUTS:
+        raise ValueError(
+            f"effort must be one of {sorted(_EFFORT_TIMEOUTS.keys())}, got {effort!r}"
+        )
+    return effort

@@ -12,6 +12,9 @@ prompts for it automatically instead of failing on first API call.
 from __future__ import annotations
 
 PROVIDER_API_KEY_ENV: dict[str, str | None] = {
+    # Claude Code 헤드리스는 OAuth 토큰(`~/.claude/.credentials.json`) 으로
+    # 인증 — 환경변수 API 키 불필요 (Task 1f #7, 1g #8, ADR-0001).
+    "claude-code": None,
     "openai":     "OPENAI_API_KEY",
     "anthropic":  "ANTHROPIC_API_KEY",
     "google":     "GOOGLE_API_KEY",
