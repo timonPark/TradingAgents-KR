@@ -10,19 +10,20 @@ from cli import prompts, run, selections
 from cli.models import AnalystType, AssetType
 
 UNATTENDED_ENV = {
-    "TRADINGAGENTS_OUTPUT_LANGUAGE": "English",
+    "TRADINGAGENTS_OUTPUT_LANGUAGE": "Korean",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS": "1",
     "TRADINGAGENTS_MAX_RISK_ROUNDS": "1",
-    "TRADINGAGENTS_LLM_PROVIDER": "openai",
-    "TRADINGAGENTS_QUICK_THINK_LLM": "gpt-6-luna",
+    "TRADINGAGENTS_QUICK_THINK_LLM": "haiku",
+    "TRADINGAGENTS_EFFORT": "high",
+    "TRADINGAGENTS_QUICK_EFFORT": "medium",
 }
-FLAGS = {"ticker": "NVDA", "date": "2026-09-23", "analysts": "market,news", "save": True, "show": False}
+FLAGS = {"ticker": "005930", "date": "2026-09-23", "analysts": "market,news", "save": True, "show": False}
 
 
 @pytest.mark.unit
 class TestFlagValues:
     def test_a_ticker_is_normalised_and_an_empty_one_refused(self):
-        assert prompts.parse_ticker("0700.hk") == "0700.HK"
+        assert prompts.parse_ticker("005930") == "005930"
         with pytest.raises(ValueError, match="ticker"):
             prompts.parse_ticker("  ")
         with pytest.raises(ValueError, match="ticker"):
@@ -60,7 +61,7 @@ def test_flags_skip_exactly_their_own_steps(monkeypatch):
 
     chosen = selections._prompt_selections({}, FLAGS)
 
-    assert chosen["ticker"] == "NVDA" and chosen["analysis_date"] == "2026-09-23"
+    assert chosen["ticker"] == "005930" and chosen["analysis_date"] == "2026-09-23"
     assert chosen["analysts"] == [AnalystType.MARKET, AnalystType.NEWS]
 
 
@@ -71,10 +72,12 @@ def test_without_a_terminal_every_unanswered_question_is_named_before_the_run(mo
     monkeypatch.setattr(run.sys.stdin, "isatty", lambda: False)
 
     with pytest.raises(typer.Exit):
-        run.run_analysis(flags={"ticker": "NVDA"})
+        run.run_analysis(flags={"ticker": "005930"})
 
     out = capsys.readouterr().out
-    for needed in ("--date", "--analysts", "--save", "--show", "TRADINGAGENTS_LLM_PROVIDER"):
+    # Task 2 (#21): TRADINGAGENTS_LLM_PROVIDER 는 더 이상 unattended gap 이
+    # 아님 — claude-code 로 하드코딩됨 (ADR-0001).
+    for needed in ("--date", "--analysts", "--save", "--show", "TRADINGAGENTS_QUICK_THINK_LLM"):
         assert needed in out
     assert "--ticker" not in out
 
@@ -118,14 +121,9 @@ def test_save_and_show_answer_the_questions_after_the_run(monkeypatch, tmp_path)
 
 
 
-@pytest.mark.unit
-def test_a_missing_key_without_a_terminal_names_the_variable(monkeypatch, capsys):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(prompts.sys.stdin, "isatty", lambda: False)
-
-    with pytest.raises(typer.Exit):
-        prompts.ensure_api_key("openai")
-    assert "OPENAI_API_KEY" in capsys.readouterr().out
+# test_a_missing_key_without_a_terminal_names_the_variable 는 Task 2 (#21) 에서
+# 삭제되었습니다 — prompts.ensure_api_key 와 API 키 interactive 입력은 제거
+# 되었습니다. Claude Code 는 OAuth 토큰으로 인증 (`claude login`).
 
 
 @pytest.mark.unit
@@ -137,7 +135,7 @@ def test_the_command_passes_its_flags_to_the_run(monkeypatch):
     seen = {}
     monkeypatch.setattr(cli_main, "run_analysis", lambda **kw: seen.update(kw))
 
-    result = CliRunner().invoke(cli_main.app, ["--ticker", "NVDA", "--date", "2026-09-23",
+    result = CliRunner().invoke(cli_main.app, ["--ticker", "005930", "--date", "2026-09-23",
                                                "--analysts", "market,news", "--save", "--no-show"])
 
     assert result.exit_code == 0, result.output
@@ -167,9 +165,9 @@ def test_rounds_from_the_environment_do_not_claim_a_depth_was_chosen(monkeypatch
     """With both round counts set, the depth question never appeared."""
     monkeypatch.setenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS", "1")
     monkeypatch.setenv("TRADINGAGENTS_MAX_RISK_ROUNDS", "1")
-    selections = {"research_depth": 3, "quick_think_llm": "q", "deep_think_llm": "d", "backend_url": None,
-                  "llm_provider": "openai", "google_thinking_level": None, "openai_reasoning_effort": None,
-                  "anthropic_effort": None, "output_language": "English"}
+    selections = {"research_depth": 3, "quick_think_llm": "haiku", "deep_think_llm": "sonnet",
+                  "llm_provider": "claude-code", "effort": "high", "quick_effort": "medium",
+                  "output_language": "Korean"}
 
     run._build_run_config(selections, None)
 
@@ -183,37 +181,11 @@ def test_an_unknown_analyst_error_names_the_analysts_as_users_know_them():
     assert "sentiment" in str(caught.value) and "social" not in str(caught.value)
 
 
-def _selections_with_env(monkeypatch, keys=None):
-    for name, value in UNATTENDED_ENV.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(selections.updates, "enabled", lambda: False)
-    checked = keys if keys is not None else []
-    monkeypatch.setattr(selections, "ensure_api_key", lambda provider: checked.append(provider))
-    return checked
-
-
-@pytest.mark.unit
-def test_a_tier_on_another_provider_needs_its_own_model(monkeypatch, capsys):
-    """Otherwise the CLI would take the main provider's model for it (#1440)."""
-    _selections_with_env(monkeypatch)
-    monkeypatch.setitem(selections.DEFAULT_CONFIG, "deep_think_provider", "anthropic")
-    monkeypatch.delenv("TRADINGAGENTS_DEEP_THINK_LLM", raising=False)
-
-    with pytest.raises(typer.Exit):
-        selections._prompt_selections({}, FLAGS)
-    assert "TRADINGAGENTS_DEEP_THINK_LLM" in capsys.readouterr().out
-
-
-@pytest.mark.unit
-def test_each_tier_provider_s_key_is_checked_before_the_run(monkeypatch):
-    checked = _selections_with_env(monkeypatch)
-    monkeypatch.setitem(selections.DEFAULT_CONFIG, "deep_think_provider", "anthropic")
-    monkeypatch.setenv("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-5-5")
-
-    selections._prompt_selections({}, FLAGS)
-
-    # Task 1f (#7) + ADR-0001: 기본 provider 가 claude-code 로 바뀜.
-    assert checked == ["claude-code", "anthropic"]
+# tier provider 관련 테스트 (`test_a_tier_on_another_provider_needs_its_own_model`,
+# `test_each_tier_provider_s_key_is_checked_before_the_run`,
+# `test_only_the_providers_the_tiers_use_need_a_key`) 는 Task 2 (#21) 에서
+# 삭제되었습니다 — tier 가 다른 provider 를 쓰는 로직 (#1440) 과 API 키 pre-check
+# 가 하드 포크로 제거되었습니다. deep/quick 모두 claude-code 로 고정 (ADR-0001).
 
 
 def _report_graph(tmp_path):
@@ -336,17 +308,8 @@ def test_the_html_flag_reaches_the_run(monkeypatch, args, expected):
     assert result.exit_code == 0 and seen["flags"]["html"] is expected
 
 
-@pytest.mark.unit
-def test_only_the_providers_the_tiers_use_need_a_key(monkeypatch):
-    """Both tiers on a local Ollama: the main provider's key is not needed."""
-    checked = _selections_with_env(monkeypatch)
-    for tier in ("quick", "deep"):
-        monkeypatch.setitem(selections.DEFAULT_CONFIG, f"{tier}_think_provider", "ollama")
-        monkeypatch.setenv(f"TRADINGAGENTS_{tier.upper()}_THINK_LLM", "llama3.1")
-
-    selections._prompt_selections({}, FLAGS)
-
-    assert checked == ["ollama"]
+# test_only_the_providers_the_tiers_use_need_a_key 는 Task 2 (#21) 에서
+# 삭제되었습니다 — tier-specific provider + API 키 pre-check 로직 제거.
 
 
 @pytest.mark.unit

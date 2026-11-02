@@ -3,8 +3,12 @@
 Prefill only: every prompt still appears, so a run never starts on a choice the
 user did not see. Environment variables keep skipping their step outright and
 win over anything remembered. Remembered values are validated against the
-current choices each time, since models and providers come and go between
-versions and a stale one must not be offered.
+current choices each time, since models come and go between versions and a
+stale one must not be offered.
+
+Task 2 (#21): provider 와 backend_url 저장이 제거되었습니다 — provider 는
+claude-code 로 고정이고 backend_url 은 로컬 CLI 호출이라 N/A. deep/quick
+모델과 effort 만 저장됩니다.
 """
 
 from __future__ import annotations
@@ -18,12 +22,13 @@ from cli.models import AnalystType
 from cli.prefs import load_last_run, sanitize, save_last_run
 
 SAVED = {
-    "output_language": "English",
+    "output_language": "Korean",
     "analysts": ["market", "fundamentals"],
     "research_depth": 3,
-    "llm_provider": "openai",
-    "quick_think_llm": "gpt-5.6-mini",
-    "deep_think_llm": "gpt-5.6",
+    "quick_think_llm": "haiku",
+    "deep_think_llm": "sonnet",
+    "effort": "high",
+    "quick_effort": "medium",
 }
 
 
@@ -46,28 +51,29 @@ def test_a_corrupt_file_degrades_to_no_memory(tmp_path):
 
 @pytest.mark.unit
 def test_a_half_written_file_cannot_be_observed(tmp_path):
-    """Two runs finishing together must never leave a torn file behind."""
+    """두 run 이 동시에 끝나도 torn 파일이 남으면 안 됨."""
     save_last_run(SAVED)
     save_last_run({**SAVED, "research_depth": 5})
     assert load_last_run()["research_depth"] == 5
     assert list(tmp_path.glob("*.tmp*")) == []
 
 
-# --- validation against the current choices ---------------------------------
-
-@pytest.mark.unit
-def test_a_model_that_no_longer_exists_is_dropped():
-    # gpt-5.4 is still accepted by config, but is no longer in the picker's list.
-    kept = sanitize({**SAVED, "quick_think_llm": "gpt-5.4"}, "stock")
-    assert "quick_think_llm" not in kept
-    assert kept["deep_think_llm"] == "gpt-5.6"  # the valid sibling survives
+# --- 현재 선택지와 비교해 유효성 검증 -----------------------------------------
 
 
 @pytest.mark.unit
-def test_an_unknown_provider_drops_itself_and_its_models():
-    kept = sanitize({**SAVED, "llm_provider": "no-such-provider"}, "stock")
-    assert "llm_provider" not in kept
-    assert "quick_think_llm" not in kept and "deep_think_llm" not in kept
+def test_a_custom_model_id_is_preserved():
+    """Custom Claude 모델 ID 는 free-text 로 입력되므로 그대로 유지."""
+    kept = sanitize({**SAVED, "quick_think_llm": "claude-sonnet-4-6"}, "stock")
+    assert kept["quick_think_llm"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.unit
+def test_an_unknown_effort_is_dropped():
+    """effort 는 알려진 레벨만 유지. 알 수 없는 값은 drop."""
+    kept = sanitize({**SAVED, "effort": "ultra"}, "stock")
+    assert "effort" not in kept
+    assert kept["quick_effort"] == "medium"  # 유효한 sibling 유지
 
 
 @pytest.mark.unit
@@ -83,79 +89,48 @@ def test_junk_values_are_dropped_rather_than_offered():
     assert kept == {}
 
 
-@pytest.mark.unit
-def test_a_region_specific_provider_survives():
-    kept = sanitize({**SAVED, "llm_provider": "qwen-cn", "quick_think_llm": None}, "stock")
-    assert kept["llm_provider"] == "qwen-cn"
-
-
 # --- wiring ------------------------------------------------------------------
 
-def _answer_every_prompt(monkeypatch):
-    """Drive the real selection flow, answering each prompt with a fixed value."""
-    import cli.main as m
 
+def _answer_every_prompt(monkeypatch):
+    """실제 selection 흐름을 돌려 각 프롬프트에 고정 값 응답."""
     monkeypatch.setattr(cli_selections.updates, "enabled", lambda: False)
-    monkeypatch.setattr(cli_selections, "get_ticker", lambda: "NVDA")
+    monkeypatch.setattr(cli_selections, "get_ticker", lambda: "005930")
     monkeypatch.setattr(cli_selections, "get_analysis_date", lambda: "2026-09-01")
-    monkeypatch.setattr(cli_selections, "ask_output_language", lambda default=None: "English")
+    monkeypatch.setattr(cli_selections, "ask_output_language", lambda default=None: "Korean")
     monkeypatch.setattr(cli_selections, "select_analysts", lambda asset_type, default=None: [AnalystType.MARKET])
     monkeypatch.setattr(cli_selections, "select_research_depth", lambda default=None: 3)
-    monkeypatch.setattr(cli_selections, "select_llm_provider", lambda default=None: ("openai", None))
-    monkeypatch.setattr(cli_selections, "select_shallow_thinking_agent", lambda p, default=None: "gpt-5.6-mini")
-    monkeypatch.setattr(cli_selections, "select_deep_thinking_agent", lambda p, default=None: "gpt-5.6")
-    monkeypatch.setattr(cli_selections, "ask_openai_reasoning_effort", lambda: "medium")
-    return m
+    monkeypatch.setattr(cli_selections, "select_shallow_thinking_agent", lambda default=None: "haiku")
+    monkeypatch.setattr(cli_selections, "select_deep_thinking_agent", lambda default=None: "sonnet")
+    monkeypatch.setattr(cli_selections, "ask_effort", lambda mode, default=None: "high" if mode == "deep" else "medium")
 
 
 @pytest.mark.unit
 def test_selections_are_remembered_after_a_run(monkeypatch):
-    """Drives the real flow: a stubbed selections dict would hide a key mismatch."""
+    """실제 흐름을 돌림: stubbed selections dict 는 키 미스매치를 가립니다."""
     _answer_every_prompt(monkeypatch)
 
     cli_selections.get_user_selections()
 
     remembered = load_last_run()
     assert remembered["analysts"] == ["market"]
-    assert remembered["quick_think_llm"] == "gpt-5.6-mini"
-    assert remembered["deep_think_llm"] == "gpt-5.6"
-    assert remembered["llm_provider"] == "openai"
-    assert "ticker" not in remembered  # changes every run; never remembered
-    assert "analysis_date" not in remembered  # a stale date must not be offered
+    assert remembered["quick_think_llm"] == "haiku"
+    assert remembered["deep_think_llm"] == "sonnet"
+    assert remembered["effort"] == "high"
+    assert remembered["quick_effort"] == "medium"
+    assert "ticker" not in remembered  # 매번 바뀜; 저장 안 함
+    assert "analysis_date" not in remembered  # 오래된 날짜 제시 방지
+    assert "llm_provider" not in remembered  # claude-code 고정, 저장 불필요
 
 
 @pytest.mark.unit
 def test_a_custom_language_is_remembered_without_breaking_the_next_run():
-    """A free-text answer is not one of the menu's choices, and questionary
-    rejects a default it cannot find, so offering it back would crash startup."""
+    """free-text 응답은 menu 선택지가 아니라 questionary 가 default 를 찾지 못하면
+    기동 시 crash. 그러므로 preselect 하지 않고 그대로 저장만 함."""
     from cli.prompts import ask_output_language
 
     save_last_run({"output_language": "Turkish"})
     with mock.patch("cli.prompts.questionary.select") as select:
-        select.return_value.ask.return_value = "English"
+        select.return_value.ask.return_value = "Korean"
         ask_output_language(load_last_run()["output_language"])
     assert select.call_args.kwargs["default"] is None
-
-
-@pytest.mark.unit
-def test_a_remembered_endpoint_is_offered_back(monkeypatch):
-    """Users of a local or custom endpoint retyped the URL every run: it was
-    remembered and validated, then never read."""
-
-    save_last_run({"llm_provider": "openai_compatible", "backend_url": "http://localhost:1234/v1"})
-    offered = {}
-    monkeypatch.setattr(cli_selections, "select_llm_provider", lambda default=None: ("openai_compatible", None))
-    monkeypatch.setattr(cli_selections, "prompt_openai_compatible_url",
-                        lambda default=None: offered.setdefault("default", default) or "http://x/v1")
-    monkeypatch.setattr(cli_selections.updates, "enabled", lambda: False)
-    monkeypatch.setattr(cli_selections, "get_ticker", lambda: "NVDA")
-    monkeypatch.setattr(cli_selections, "get_analysis_date", lambda: "2026-09-01")
-    monkeypatch.setattr(cli_selections, "ask_output_language", lambda default=None: "English")
-    monkeypatch.setattr(cli_selections, "select_analysts", lambda asset_type, default=None: [AnalystType.MARKET])
-    monkeypatch.setattr(cli_selections, "select_research_depth", lambda default=None: 1)
-    monkeypatch.setattr(cli_selections, "select_shallow_thinking_agent", lambda p, default=None: "local-model")
-    monkeypatch.setattr(cli_selections, "select_deep_thinking_agent", lambda p, default=None: "local-model")
-
-    cli_selections.get_user_selections()
-
-    assert offered["default"] == "http://localhost:1234/v1"
