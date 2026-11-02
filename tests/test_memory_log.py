@@ -637,22 +637,10 @@ class TestDeferredReflection:
         assert settlement.resolve_benchmark("RELIANCE.NS", config) == "^NSEI"
         assert settlement.resolve_benchmark("AZN.L", config) == "^FTSE"
 
-    def test_explicit_benchmark_is_resolved_like_any_other_symbol(self):
-        """A configured benchmark takes the same alias mapping as the ticker, or
-        the return lookup finds nothing and the decision never settles."""
-        config = {"benchmark_ticker": "SPX500", "benchmark_map": {"": "SPY"}}
-        assert settlement.resolve_benchmark("NVDA", config) == "^GSPC"
-
-    def test_resolve_benchmark_china_a_shares(self):
-        """A-share tickers route to their exchange composite (uses the real
-        default benchmark_map, since A-share support relies on it)."""
-        from tradingagents.default_config import DEFAULT_CONFIG
-        config = {"benchmark_ticker": None,
-                             "benchmark_map": DEFAULT_CONFIG["benchmark_map"]}
-        assert settlement.resolve_benchmark("600519.SS", config) == "000001.SS"
-        assert settlement.resolve_benchmark("000001.SZ", config) == "399001.SZ"
-        # .SH is the exchange's own suffix; Yahoo spells Shanghai .SS (#1260)
-        assert settlement.resolve_benchmark("600519.SH", config) == "000001.SS"
+    # Task 4a (#42): test_explicit_benchmark_is_resolved_like_any_other_symbol
+    # 와 test_resolve_benchmark_china_a_shares 는 상류의 Yahoo 심볼 alias 변환
+    # (SPX500 → ^GSPC, .SH → .SS) 을 테스트했으나 그 변환 로직이 symbols.py 에서
+    # 전부 삭제되어 함께 제거되었습니다.
 
     def test_resolve_benchmark_brazil(self):
         """B3 tickers were measured against SPY."""

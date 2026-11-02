@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.market import get_closes
 
 logger = logging.getLogger(__name__)
@@ -26,11 +25,11 @@ def resolve_benchmark(ticker: str, config: dict) -> str:
 
     explicit = config.get("benchmark_ticker")
     if explicit:
-        # Same alias mapping as the analyzed ticker; an unmapped alias finds
-        # no prices, and the decision would stay pending for good.
-        return normalize_symbol(explicit)
+        # Task 4a (#42): 상류의 Yahoo 심볼 변환은 삭제됨. explicit 벤치마크는
+        # 그대로 사용 (config 가 책임).
+        return explicit.strip()
     benchmark_map = config.get("benchmark_map", {})
-    ticker_upper = normalize_symbol(ticker)
+    ticker_upper = (ticker or "").strip().upper()
     for suffix, benchmark in benchmark_map.items():
         if suffix and ticker_upper.endswith(suffix.upper()):
             return benchmark

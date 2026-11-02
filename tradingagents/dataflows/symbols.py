@@ -1,168 +1,102 @@
-"""Symbol normalization for vendor calls, and ticker values safe to use in a path.
+"""KRX 종목코드 유효성 검증과 파일시스템 안전 가드.
 
-Yahoo Finance (the default vendor) uses specific ticker conventions that
-differ from the broker / TradingView / MT5 style symbols users often type:
+TradingAgents-KR 포크는 한국거래소(KRX) 상장 종목만 지원합니다 (code_artifact.md
+Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변환 테이블은
+전부 삭제되었습니다 — KRX 종목코드는 보통주/우선주/ETF/ETN 모두 ``^\\d{6}$`` 로
+통일된 6자리 숫자 체계라 추가 매핑 없이 그대로 쓸 수 있습니다.
 
-    user types        Yahoo wants       why
-    ---------------   ---------------   -----------------------------------
-    XAUUSD, XAUUSD+   GC=F              gold has no forex pair on Yahoo;
-                                        it is quoted as a COMEX future
-    EURUSD            EURUSD=X          spot forex pairs take a ``=X`` suffix
-    BTCUSD            BTC-USD           crypto pairs use a ``-`` separator
-    SPX500, US500     ^GSPC             index CFDs map to Yahoo index symbols
-    09992.HK, 700.HK  9992.HK, 0700.HK  HK codes are zero-padded to 4 digits
-    600519.SH         600519.SS         Yahoo spells Shanghai ``.SS``
+삭제된 상류 로직:
+- ``_FOREX_CURRENCIES`` / ``_CRYPTO_BASES`` / ``_ALIASES`` 테이블
+- ``_HK_CODE`` / ``_SHANGHAI_SH`` 정규식과 변환
+- forex ``=X`` 접미사 자동 부여
+- crypto ``-USD`` 정규화
+- Yahoo-specific suffix 변환 (``.SH`` → ``.SS`` 등)
 
-Passing the raw broker symbol to Yahoo returns an empty result, which the
-agents previously received as free text and could hallucinate a price
-around (see issue #781). Centralizing the mapping here means every yfinance
-entry point resolves symbols the same way, and new instruments are added by
-appending a table row rather than editing call sites.
+## normalize_symbol 과 validate_krx_ticker 의 분리
+
+Task 4a (#42) 는 CLI 입력 레벨에서 **KRX 종목만 허용** 하는 것이 목표입니다.
+그러나 아직 Task 5·6·7 (vendor 교체) 이전이라 Yahoo/Alpha Vantage 등 상류
+vendor 코드가 ``normalize_symbol`` 을 호출합니다 (예: ``vendors/yahoo/market.py``).
+이들 vendor 는 Task 6 에서 pykrx 로 교체되면서 함께 삭제될 운명입니다.
+
+**현재 상태:**
+- ``normalize_symbol`` — 입력 strip + upper 반환 (lenient). 상류 vendor 호환성
+  유지. Task 6 가 vendor 를 삭제하면 함께 축소 가능.
+- ``validate_krx_ticker`` — 엄격한 KRX 6자리 숫자 검증. ``ValueError`` 로 거부.
+  CLI 가 사용자 입력에서 이것을 호출해 KRX 외 티커를 사전 차단.
 """
 
 from __future__ import annotations
 
-import logging
 import re
 
-logger = logging.getLogger(__name__)
+# KRX 종목코드: 6자리 숫자. 보통주 (005930 삼성전자), 우선주 (005935 삼성전자우),
+# ETF (069500 KODEX 200), ETN (530001) 모두 동일 패턴.
+_KRX_TICKER_RE = re.compile(r"^\d{6}$")
 
-
-# ISO-4217 codes common enough to appear in retail forex pairs. A bare
-# six-letter symbol whose halves are BOTH in this set is treated as a spot
-# forex pair and given Yahoo's ``=X`` suffix.
-_FOREX_CURRENCIES = frozenset(
-    {
-        "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
-        "CNY", "CNH", "HKD", "SGD", "SEK", "NOK", "DKK", "PLN",
-        "MXN", "ZAR", "TRY", "INR", "KRW", "BRL", "RUB", "THB",
-    }
-)
-
-# Crypto bases that brokers quote against USD without a separator.
-_CRYPTO_BASES = frozenset(
-    {"BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "LTC", "BCH", "DOT", "AVAX", "LINK"}
-)
-
-# Explicit aliases for instruments whose broker symbol does not map to a
-# Yahoo symbol by rule. Metals/energy resolve to their front-month future;
-# index CFD names resolve to the underlying Yahoo index symbol. Extend by
-# adding rows — no call site changes required.
-_ALIASES = {
-    # Precious metals (spot names -> COMEX/NYMEX futures)
-    "XAUUSD": "GC=F", "XAU": "GC=F", "GOLD": "GC=F",
-    "XAGUSD": "SI=F", "XAG": "SI=F", "SILVER": "SI=F",
-    "XPTUSD": "PL=F", "XPDUSD": "PA=F",
-    # Energy
-    "WTICOUSD": "CL=F", "USOIL": "CL=F", "WTI": "CL=F",
-    "BCOUSD": "BZ=F", "UKOIL": "BZ=F", "BRENT": "BZ=F",
-    "NATGAS": "NG=F", "XNGUSD": "NG=F",
-    "COPPER": "HG=F", "XCUUSD": "HG=F",
-    # Index CFDs -> Yahoo index symbols
-    "SPX500": "^GSPC", "US500": "^GSPC", "SPX": "^GSPC",
-    "NAS100": "^NDX", "US100": "^NDX", "USTEC": "^NDX",
-    "US30": "^DJI", "DJI30": "^DJI", "WS30": "^DJI",
-    "GER40": "^GDAXI", "GER30": "^GDAXI", "DE40": "^GDAXI",
-    "UK100": "^FTSE", "JP225": "^N225", "JPN225": "^N225",
-    "FRA40": "^FCHI", "EU50": "^STOXX50E", "HK50": "^HSI",
-}
-
-# HKEX codes as Yahoo spells them: the number zero-padded to 4 digits (#957).
-_HK_CODE = re.compile(r"^(\d{1,5})\.HK$")
-_SHANGHAI_SH = re.compile(r"^(\d{6})\.SH$")
-
-
-# Crypto quote currencies that all map to Yahoo's USD pair. Yahoo lists only
-# ``<BASE>-USD`` (not the USDT/USDC stablecoin pairs), so a broker symbol quoted
-# in any of these resolves to ``-USD`` (#982). Longest first so ``USDT``/``USDC``
-# match before the ``USD`` substring.
-_CRYPTO_QUOTES = ("USDT", "USDC", "USD")
-
-
-def crypto_base(raw: str) -> str | None:
-    """Return the crypto base (e.g. ``BTC``) for a known USD/USDT/USDC-quoted
-    crypto symbol in any form the pipeline may hold — ``BTC-USD``, ``BTCUSD``,
-    ``BTC-USDT`` — or None for non-crypto symbols. Purely syntactic.
-    """
-    if not isinstance(raw, str):
-        return None
-    compact = raw.strip().upper().rstrip("+").replace("-", "")
-    for quote in _CRYPTO_QUOTES:
-        if compact.endswith(quote):
-            base = compact[: -len(quote)]
-            return base if base in _CRYPTO_BASES else None
-    return None
-
-
-def _normalize_crypto(s: str) -> str | None:
-    """Return ``<BASE>-USD`` for a known USD/USDT/USDC-quoted crypto, else None."""
-    base = crypto_base(s)
-    return f"{base}-USD" if base else None
-
-
-def normalize_symbol(raw: str) -> str:
-    """Map a user/broker symbol to its canonical Yahoo Finance symbol.
-
-    Resolution order (first match wins):
-      1. Explicit alias table (metals, energy, index CFDs).
-      2. Crypto rule: a known crypto base quoted in USD/USDT/USDC (dashed or
-         not) -> ``BASE-USD``.
-      3. Forex rule: six letters that are two ISO currency codes -> ``PAIR=X``.
-      4. HK rule: a numeric ``.HK`` code -> Yahoo's 4-digit padding
-         (``09992.HK`` -> ``9992.HK``, ``700.HK`` -> ``0700.HK``).
-      5. Shanghai rule: ``600519.SH`` -> ``600519.SS``.
-      6. Otherwise the upper-cased symbol is returned unchanged (plain
-         equities, ETFs, Yahoo-native symbols like ``GC=F`` or ``^GSPC``).
-
-    A trailing ``+`` (broker CFD marker, e.g. ``XAUUSD+``) is stripped before
-    matching. The function is purely syntactic — it performs no network
-    calls — so it is safe to apply on every request.
-    """
-    if not isinstance(raw, str) or not raw.strip():
-        return raw
-
-    s = raw.strip().upper()
-    # Broker CFD/qualifier suffixes Yahoo never uses.
-    s = s.rstrip("+")
-
-    crypto = _normalize_crypto(s)
-    if s in _ALIASES:
-        canonical = _ALIASES[s]
-    elif crypto is not None:
-        canonical = crypto
-    elif len(s) == 6 and s[:3] in _FOREX_CURRENCIES and s[3:] in _FOREX_CURRENCIES:
-        canonical = f"{s}=X"
-    elif hk := _HK_CODE.match(s):
-        canonical = f"{int(hk.group(1)):04d}.HK"
-    elif sh := _SHANGHAI_SH.match(s):
-        canonical = f"{sh.group(1)}.SS"
-    else:
-        canonical = s
-
-    if canonical != raw.strip().upper():
-        logger.info("Resolved symbol %r to Yahoo symbol %r", raw, canonical)
-    return canonical
-
-
-# Tickers can contain letters, digits, dot, dash, underscore, caret
-# (index symbols like ^GSPC), equals (futures like GC=F), and plus
-# (forex/CFD symbols like XAUUSD+). None of these enable directory
-# traversal, so the value never escapes a containing directory when
-# interpolated into a path. Anything else is rejected.
+# 파일시스템 경로 안전 문자. 티커 외에 run_id, 체크포인트 이름 등 사용자 입력도
+# 통과시키므로 KRX 티커보다 넓은 집합을 허용합니다. 상류와 호환되는 범위를
+# 그대로 유지 (등호 ``=`` 와 플러스 ``+`` 포함) — KRX 티커 자체는 ``validate_
+# krx_ticker`` 가 별도로 엄격 검증하므로 여기는 경로 안전만 책임.
 _TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^=+]+$")
 
 
+def validate_krx_ticker(raw: str) -> str:
+    """KRX 종목코드로 엄격 검증. 6자리 숫자가 아니면 ``ValueError``.
+
+    CLI 가 사용자 입력을 받아들일 때 이 함수로 사전 차단합니다. 상류의 미국/
+    홍콩/상해/forex/crypto 심볼 (``AAPL``, ``0700.HK``, ``GC=F``, ``BTC-USD``)
+    은 전부 거부됩니다 — 하드 포크(ADR-0001) 결정에 따라 KRX 외 시장은 지원
+    하지 않습니다.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"KRX 종목코드는 비어있지 않은 문자열이어야 합니다: {raw!r}")
+    s = raw.strip()
+    if not _KRX_TICKER_RE.fullmatch(s):
+        raise ValueError(
+            f"KRX 종목코드는 6자리 숫자입니다 (예: 005930 삼성전자, "
+            f"000660 SK하이닉스, 069500 KODEX 200). got {raw!r}"
+        )
+    return s
+
+
+def normalize_symbol(raw: str) -> str:
+    """심볼 공백 제거와 대문자화 — 상류 호환용 lenient 정규화.
+
+    Task 4a (#42) 로 상류의 Yahoo/HK/상해/forex/crypto 변환 테이블은 전부
+    삭제되었습니다. 현재는 strip + upper 만 수행합니다 — 상류 vendor 코드
+    (``vendors/yahoo/market.py`` 등) 가 Task 6 (pykrx 교체) 이전까지 이 함수를
+    호출하므로 lenient 로 유지. Vendor 가 삭제되면 이 함수는 ``validate_krx_
+    ticker`` 로 통합되거나 제거됩니다.
+
+    사용자 입력 시 KRX 외 심볼을 차단하려면 CLI 레벨에서 ``validate_krx_ticker``
+    를 사용하세요.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return raw
+    return raw.strip().upper()
+
+
+def crypto_base(raw: str) -> str | None:
+    """항상 ``None``. KRX 포크에서는 암호자산을 식별하지 않습니다.
+
+    상류의 StockTwits/Reddit vendor (Task 7 에서 삭제 예정) 가 이 함수를
+    import 하므로 스텁으로 유지. Task 7 완료 시 vendor 와 함께 제거 가능.
+    """
+    return None
+
+
 def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
-    """Validate ``value`` is safe to interpolate into a filesystem path.
+    """``value`` 가 파일시스템 경로에 안전하게 삽입 가능한지 검증.
 
-    Tickers come from user CLI input or from LLM tool calls, both of which
-    can be influenced by attacker-controlled content (e.g. prompt injection
-    embedded in fetched news). Without validation, a value like
-    ``"../../../etc/foo"`` flows into ``os.path.join`` / ``Path /`` and
-    escapes the configured cache, checkpoint, or results directory.
+    티커는 CLI 입력이나 LLM 툴 호출에서 흘러들어오는데, 둘 다 공격자 제어
+    콘텐츠에 영향받을 수 있습니다 (예: 가져온 뉴스에 섞인 prompt injection).
+    검증 없이 ``../../../etc/foo`` 같은 값이 ``os.path.join`` / ``Path /`` 에
+    들어가면 캐시/체크포인트/결과 디렉터리를 이탈합니다.
 
-    Returns ``value`` unchanged when it matches the allowed pattern; raises
-    ``ValueError`` otherwise.
+    허용 패턴에 맞으면 ``value`` 를 그대로 반환, 아니면 ``ValueError``.
+    티커 검증 자체는 ``validate_krx_ticker`` 가 담당합니다 — 여기는 **경로
+    안전** 가드일 뿐이라 run_id 같은 비-티커 입력도 통과시킵니다.
     """
     if not isinstance(value, str) or not value:
         raise ValueError(f"ticker must be a non-empty string, got {value!r}")
@@ -172,9 +106,8 @@ def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
         raise ValueError(
             f"ticker contains characters not allowed in a filesystem path: {value!r}"
         )
-    # The regex above allows '.', so values like '.', '..', '...' would pass,
-    # and as a path component they traverse the parent directory. Reject any
-    # value that's only dots.
+    # 위 정규식이 '.' 를 허용하므로 ``.``, ``..``, ``...`` 같은 값이 통과하지만,
+    # 경로 컴포넌트로서는 상위 디렉터리로 이탈합니다. 점만으로 이루어진 값 거부.
     if set(value) == {"."}:
         raise ValueError(f"ticker cannot consist solely of dots: {value!r}")
     return value

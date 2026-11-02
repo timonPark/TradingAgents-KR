@@ -126,13 +126,16 @@ def parse_analysts(value: str, asset_type: AssetType) -> list[AnalystType]:
 
 
 def normalize_ticker_symbol(ticker: str) -> str:
-    """사용자 입력을 데이터 레이어가 쓰는 캐노니컬 심볼로 정규화."""
-    try:
-        from tradingagents.dataflows.symbols import normalize_symbol
+    """사용자 입력을 KRX 종목코드로 정규화.
 
-        return normalize_symbol(ticker)
-    except Exception:
-        return ticker.strip().upper()
+    Task 4a (#42): KRX 6자리 숫자 패턴 외의 입력은 ``ValueError`` 로 거부합니다.
+    상류의 fallback (Exception 삼키고 upper-case 반환) 은 미국/홍콩 심볼을
+    통과시켜 데이터 레이어에서 "ticker not found" 로 이어지는 문제가 있어 삭제.
+    ``is_valid_ticker_input`` 가 이 예외를 바로 받아 False 로 변환합니다.
+    """
+    from tradingagents.dataflows.symbols import validate_krx_ticker
+
+    return validate_krx_ticker(ticker)
 
 
 def detect_asset_type(ticker: str) -> AssetType:
