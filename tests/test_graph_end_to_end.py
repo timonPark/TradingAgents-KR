@@ -13,7 +13,7 @@ import time
 import pandas as pd
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableLambda
 from pydantic import Field
@@ -193,19 +193,19 @@ def test_the_analysts_run_at_the_same_time(tmp_path, monkeypatch, offline):
 
 
 @pytest.mark.unit
-def test_a_debug_run_prints_the_analysts_work_and_reaches_the_same_decision(tmp_path, monkeypatch, offline, capsys):
-    """Debug mode streams the analysts' own graphs, so their tool calls still print."""
+def test_a_debug_run_streams_the_analysts_and_reaches_the_same_decision(tmp_path, monkeypatch, offline, capsys):
+    """Debug mode streams the analysts' own graphs. Task 3 (#32) 이후 모든 분석가가
+    사전조회 패턴이라 tool call 자체가 뜨지 않지만, 디버그 스트리밍은 여전히
+    동작해야 하고 최종 결정은 non-debug 실행과 동일해야 한다.
+    """
     graph = _graph(tmp_path, monkeypatch, ScriptedModel(), debug=True)
 
     state, signal = graph.propagate("NVDA", TRADE_DATE)
 
     assert signal == "Overweight"
     assert state["market_report"].strip() and state["fundamentals_report"].strip()
-    printed = capsys.readouterr().out
-    # Task 3a~3c: 모든 분석가 사전조회 전환됨 — tool call 로그가 더 이상 뜨지
-    # 않음. 보고서 생성 자체는 성공해야 한다는 사실만 유지. Task 3d (#36) 에서
-    # 디버그 로그 체크 자체를 재검토.
-    assert "Trading Analysis Report" in printed or signal == "Overweight"
+    # 디버그 스트림 출력이 있었는지만 확인 — tool call 로그는 Task 3 후 사라졌음.
+    assert capsys.readouterr().out.strip()
 
 
 @pytest.mark.unit
@@ -241,59 +241,19 @@ def test_a_streamed_run_reads_its_own_graph_config(tmp_path, monkeypatch, offlin
     assert set(between) == {"German"}
 
 
-class LoopingModel(ScriptedModel):
-    """Calls a tool on every turn it is offered one (#1420)."""
-
-    tool_turns: list = Field(default_factory=list)    # shared across bound copies
-    last_turns: list = Field(default_factory=list)    # histories of the turns offered no tools
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        if not self.tools:
-            self.last_turns.append(messages)
-            return super()._generate(messages, stop, run_manager, **kwargs)
-        self.tool_turns.append(1)
-        tool = self.tools[0]
-        call = {"name": tool.name, "id": f"call_{len(self.tool_turns)}",
-                "args": {k: v for k, v in ARGS.items()
-                         if k in tool.tool_call_schema.model_json_schema()["properties"]}}
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=[call]))])
-
-
-@pytest.mark.unit
-def test_an_analyst_that_keeps_calling_tools_writes_its_report_at_the_limit(tmp_path, monkeypatch, offline):
-    """A model that does not stop calling tools must not end the run (#1420)."""
-    model = LoopingModel(structured=True)
-    graph = _graph(tmp_path, monkeypatch, model, max_tool_rounds=3)
-
-    final_state, rating = graph.propagate("NVDA", TRADE_DATE)
-
-    # Task 3a~3c (#33, #34, #35): 모든 분석가가 사전조회 전환됨 — 더 이상 tool
-    # 루프가 돌지 않음. Task 3d (#36) 가 이 테스트를 전면 삭제.
-    assert len(model.tool_turns) == 0
-    for key in ("market_report", "news_report", "fundamentals_report"):
-        assert final_state[key] == TEXT
-    assert rating == "Overweight"
-
-
-@pytest.mark.unit
-def test_the_last_turn_is_offered_no_tools_and_reads_its_tool_results_as_text(tmp_path, monkeypatch, offline):
-    """Offered tools, a model may call one whatever it is told; a history holding
-    tool calls may be refused by a provider when no tools are bound."""
-    model = LoopingModel(structured=True)
-    graph = _graph(tmp_path, monkeypatch, model, max_tool_rounds=2)
-
-    graph.propagate("NVDA", TRADE_DATE)
-
-    wrap_ups = [h for h in model.last_turns if isinstance(h[-1], HumanMessage) and "tool round" in h[-1].content]
-    # Task 3a~3c: 모든 분석가 사전조회 전환됨 — wrap_up 분기 자체가 트리거 안 됨.
-    # 이 테스트는 Task 3d (#36) 에서 전면 삭제.
-    assert len(wrap_ups) == 0
-
-
-@pytest.mark.unit
-def test_a_tool_limit_the_recursion_limit_cannot_hold_is_refused(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="max_tool_rounds"):
-        _graph(tmp_path, monkeypatch, ScriptedModel(), max_tool_rounds=60, max_recur_limit=100)
+# Task 3d (#36): LoopingModel 과 tool-loop 관련 테스트 3개가 삭제되었습니다 —
+# 모든 분석가가 사전조회 패턴으로 전환되어 (ADR-0002) tool 루프가 그래프에 더
+# 이상 존재하지 않습니다 (`ToolNode` / `WRAP_UP` / `max_tool_rounds` 모두 제거됨).
+#
+# 삭제된 테스트:
+# - test_an_analyst_that_keeps_calling_tools_writes_its_report_at_the_limit
+#   (#1420 — tool 루프가 recursion limit 를 초과하지 않는지)
+# - test_the_last_turn_is_offered_no_tools_and_reads_its_tool_results_as_text
+#   (WRAP_UP 턴이 올바르게 동작하는지)
+# - test_a_tool_limit_the_recursion_limit_cannot_hold_is_refused
+#   (max_tool_rounds * 2 + 2 >= max_recur_limit 거부 로직)
+#
+# 이 테스트들이 보호하던 behavior 자체가 하드 포크 결정으로 사라졌습니다.
 
 
 class TimedModel(ScriptedModel):

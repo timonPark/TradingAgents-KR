@@ -9,22 +9,12 @@ from datetime import datetime, timedelta
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from tradingagents.agents.analysts.turn import invoke_once
+from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.tools import (
     get_global_news,
     get_macro_indicators,
     get_news,
-    get_prediction_markets,
-)
-
-# 사전조회 패턴 전환으로 `TOOLS` 상수는 더 이상 LangGraph ToolNode 에 바인딩되지
-# 않지만, Task 3d (#36) 가 ToolNode/take_turn 을 최종 삭제할 때까지 명시적으로
-# "이 분석가가 쓰는 데이터 함수들" 을 문서화하는 용도로 유지.
-TOOLS = (
-    get_news,
-    get_global_news,
-    get_macro_indicators,
     get_prediction_markets,
 )
 

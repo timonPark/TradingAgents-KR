@@ -86,19 +86,14 @@ class TradingAgentsGraph:
             max_debate_rounds=self.config["max_debate_rounds"],
             max_risk_discuss_rounds=self.config["max_risk_discuss_rounds"],
         )
-        # An analyst takes two graph steps per tool round, plus its first turn
-        # and its wrap-up; a limit past the recursion limit would end the run
-        # there instead.
-        max_tool_rounds, max_recur_limit = self.config["max_tool_rounds"], self.config["max_recur_limit"]
-        if 2 * max_tool_rounds + 2 >= max_recur_limit:
-            raise ValueError(
-                f"max_tool_rounds={max_tool_rounds} needs max_recur_limit above {2 * max_tool_rounds + 2}"
-            )
+        # Task 3 (#32): 모든 분석가가 사전조회 패턴으로 전환되어 ToolNode / tool
+        # 루프 / `max_tool_rounds` 전부 제거됨 (ADR-0002). 분석가는 한 번의 LLM
+        # 호출로 완결.
+        max_recur_limit = self.config["max_recur_limit"]
         self.graph_setup = GraphSetup(
             self.quick_thinking_llm,
             self.deep_thinking_llm,
             self.conditional_logic,
-            max_tool_rounds,
         )
 
         self.propagator = Propagator(

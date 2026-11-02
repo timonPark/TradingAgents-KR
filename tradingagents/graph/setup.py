@@ -1,10 +1,7 @@
 import logging
-from collections import Counter
 from typing import Any, TypedDict
 
-from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import (
     create_aggressive_debator,
@@ -20,7 +17,6 @@ from tradingagents.agents import (
     create_sentiment_analyst,
     create_trader,
 )
-from tradingagents.agents.analysts.turn import WRAP_UP
 from tradingagents.agents.state import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
@@ -45,48 +41,19 @@ RISK_ANALYSIS_PATH_MAP = {
 }
 
 
-def _tools_or_done(state) -> str:
-    """Route an analyst's turn: run its tool calls, or finish with its report."""
-    return "tools" if state["messages"][-1].tool_calls else END
+def _analyst_graph(spec, agent):
+    """One analyst as a graph of its own: a single-call node on a private history.
 
-
-def _analyst_graph(spec, agent, max_tool_rounds: int):
-    """One analyst as a graph of its own: the model and its tools, on a private message history.
-
-    It returns only its report, so analysts running side by side never write the
-    same key, and its tool calls never reach the other analysts' messages. After
-    ``max_tool_rounds`` rounds of tool calls it is told to write its report, and
-    that turn ends it whatever it answers, so a model that keeps calling tools
-    cannot run the graph into its recursion limit (#1420).
+    Task 3 (#32) 이후 모든 분석가가 사전조회 패턴으로 전환되어 (ADR-0002), 분석가는
+    Python 이 선조회한 데이터를 받아 한 번의 LLM 호출로 보고서를 작성합니다.
+    LangGraph `ToolNode` 와 조건부 엣지, `WRAP_UP` 로직은 전부 제거되었습니다 —
+    남은 것은 "START → agent → END" 뿐.
     """
     output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str})
     graph = StateGraph(AgentState, output_schema=output)
     graph.add_node("agent", agent)
     graph.add_edge(START, "agent")
-    if not spec.tools:
-        graph.add_edge("agent", END)
-        return graph.compile()
-
-    def calls(messages):
-        return [call["name"] for m in messages for call in (getattr(m, "tool_calls", None) or [])]
-
-    def rounds(messages) -> int:
-        return sum(1 for m in messages if getattr(m, "tool_calls", None))
-
-    def more_or_wrap_up(state) -> str:
-        return "wrap_up" if rounds(state["messages"]) >= max_tool_rounds else "agent"
-
-    def wrap_up(state):
-        repeated = ", ".join(f"{name} x{n}" for name, n in Counter(calls(state["messages"])).most_common())
-        logger.warning("%s used its %d tool rounds (%s); asking for its report",
-                       spec.agent_node, max_tool_rounds, repeated)
-        return agent({**state, "messages": [*state["messages"], HumanMessage(WRAP_UP)]})
-
-    graph.add_node("tools", ToolNode(list(spec.tools)))
-    graph.add_node("wrap_up", wrap_up)
-    graph.add_conditional_edges("agent", _tools_or_done, ["tools", END])
-    graph.add_conditional_edges("tools", more_or_wrap_up, ["agent", "wrap_up"])
-    graph.add_edge("wrap_up", END)
+    graph.add_edge("agent", END)
     return graph.compile()
 
 
@@ -98,13 +65,15 @@ class GraphSetup:
         quick_thinking_llm: Any,
         deep_thinking_llm: Any,
         conditional_logic: ConditionalLogic,
-        max_tool_rounds: int,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        Task 3 (#32): `max_tool_rounds` 는 ToolNode 와 함께 제거되었습니다 — 모든
+        분석가가 사전조회 패턴으로 LLM 1회 호출만 하기 때문.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.conditional_logic = conditional_logic
-        self.max_tool_rounds = max_tool_rounds
 
     def setup_graph(
         self, selected_analysts=("market", "social", "news", "fundamentals"), memory_node=None
@@ -143,7 +112,7 @@ class GraphSetup:
 
         for spec in plan.specs:
             workflow.add_node(spec.agent_node,
-                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds))
+                              _analyst_graph(spec, analyst_factories[spec.key]()))
 
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
