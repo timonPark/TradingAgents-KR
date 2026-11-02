@@ -81,14 +81,15 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
             )
     config["quick_think_llm"] = selections["quick_think_llm"]
     config["deep_think_llm"] = selections["deep_think_llm"]
-    config["backend_url"] = selections["backend_url"]
-    config["llm_provider"] = selections["llm_provider"].lower()
-    # Provider-specific thinking configuration. Only the main provider's is
-    # asked; a tier on another provider keeps its configured value (#1440).
-    for key in ("google_thinking_level", "openai_reasoning_effort", "anthropic_effort"):
+    # Task 2 (#21): llm_provider 는 claude-code 고정, backend_url 은 제거됨
+    # (Claude Code 는 로컬 CLI 호출이라 엔드포인트 URL 이 없음).
+    config["llm_provider"] = "claude-code"
+    # Task 1f (#7): 티어별 effort 가 config 로 주입됨 — deep → effort,
+    # quick → quick_effort. factory.create_tier_client 가 티어에 맞게 선택.
+    for key in ("effort", "quick_effort"):
         if selections.get(key) is not None:
             config[key] = selections[key]
-    config["output_language"] = selections.get("output_language", "English")
+    config["output_language"] = selections.get("output_language", "Korean")
     # --checkpoint/--no-checkpoint overrides only when explicitly given; omitting
     # the flag preserves TRADINGAGENTS_CHECKPOINT_ENABLED / the default (#976).
     if checkpoint is not None:

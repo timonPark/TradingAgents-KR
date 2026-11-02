@@ -1,4 +1,10 @@
-"""The interactive choices for a run: ticker, date, analysts, depth, provider and models."""
+"""한 run 의 대화형 선택: ticker, date, analysts, depth, 모델, effort.
+
+TradingAgents-KR 포크는 Claude Code 헤드리스가 유일 LLM 백엔드이므로 (ADR-0001)
+provider 선택 흐름은 제거되었습니다 (Task 2 #21). 사용자는 ticker/date/언어/
+analysts/depth/model/effort 만 고르면 됩니다 — 백엔드 URL, 지역, API 키 입력
+단계가 전부 사라졌습니다.
+"""
 
 import datetime
 import os
@@ -9,54 +15,39 @@ from rich.align import Align
 from rich.panel import Panel
 
 from cli import updates
-from cli.display import (
-    console,
-)
+from cli.display import console
 from cli.prefs import load_last_run, sanitize, save_last_run
 from cli.prompts import (
-    ask_anthropic_effort,
-    ask_gemini_thinking_config,
-    ask_glm_region,
-    ask_minimax_region,
-    ask_openai_reasoning_effort,
+    ask_effort,
     ask_output_language,
-    ask_qwen_region,
-    confirm_ollama_endpoint,
     detect_asset_type,
-    ensure_api_key,
-    ensure_signed_in,
     get_ticker,
     parse_analysis_date,
     parse_analysts,
     parse_ticker,
-    prompt_openai_compatible_url,
-    resolve_backend_url,
     select_analysts,
     select_deep_thinking_agent,
-    select_llm_provider,
     select_research_depth,
     select_shallow_thinking_agent,
 )
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.llm_clients.factory import REASONING_EFFORT_PROVIDERS
-from tradingagents.llm_clients.openai_client import check_endpoint
 
 
 def get_user_selections(flags=None):
-    """Ask for the run's settings, offering the previous run's answers."""
+    """Run 설정을 대화형으로 수집. 지난 번 답을 디폴트로 제시."""
     selections = _prompt_selections(load_last_run(), flags or {})
     save_last_run(selections)
     return selections
 
 
 def depth_from_env() -> bool:
-    """Both round counts come from the environment, so the depth question is skipped."""
+    """두 라운드 수가 전부 환경변수로 설정되어 있으면 depth 질문 skip."""
     return bool(os.environ.get("TRADINGAGENTS_MAX_DEBATE_ROUNDS")
                 and os.environ.get("TRADINGAGENTS_MAX_RISK_ROUNDS"))
 
 
 def unattended_gaps(flags) -> list[str]:
-    """The flags and environment variables a run with no terminal still needs."""
+    """터미널 없는 run 에 필요한 환경변수/플래그 중 비어있는 것들."""
     env = os.environ.get
     gaps = [f"--{name}" for name in ("ticker", "date", "analysts") if flags.get(name) is None]
     gaps += [f"--{name} or --no-{name}" for name in ("save", "show") if flags.get(name) is None]
@@ -64,47 +55,13 @@ def unattended_gaps(flags) -> list[str]:
         gaps.append("TRADINGAGENTS_OUTPUT_LANGUAGE")
     if not depth_from_env():
         gaps.append("TRADINGAGENTS_MAX_DEBATE_ROUNDS and TRADINGAGENTS_MAX_RISK_ROUNDS")
-    if not env("TRADINGAGENTS_LLM_PROVIDER"):
-        gaps.append("TRADINGAGENTS_LLM_PROVIDER")
     if not (env("TRADINGAGENTS_QUICK_THINK_LLM") or env("TRADINGAGENTS_DEEP_THINK_LLM")):
         gaps.append("TRADINGAGENTS_QUICK_THINK_LLM or TRADINGAGENTS_DEEP_THINK_LLM")
     return gaps
 
 
-def _check_tier_providers(main_provider: str, backend_url: str | None = None) -> None:
-    """Check each provider the model tiers use (#1440) before the run.
-
-    A tier on another provider needs its model from its variable, since the
-    model question offers the main provider's models. Each provider a tier uses
-    has its endpoint, sign-in and key checked now, prompting for a missing key,
-    rather than at its first call, which for the deep tier comes after everything
-    else has been paid for; a provider no tier uses needs no key.
-    """
-    used = []
-    for tier in ("quick", "deep"):
-        provider = (DEFAULT_CONFIG.get(f"{tier}_think_provider") or main_provider).lower()
-        on_main = provider == main_provider.lower()
-        if not on_main:
-            variable = f"TRADINGAGENTS_{tier.upper()}_THINK_LLM"
-            if not os.environ.get(variable):
-                console.print(f"[red]The {tier} tier runs on {provider}; set {variable} to one of its models.[/red]")
-                raise typer.Exit(code=1)
-        # The tier's endpoint, as create_tier_client resolves it.
-        url = DEFAULT_CONFIG.get(f"{tier}_think_backend_url") or (backend_url if on_main else None)
-        try:
-            check_endpoint(provider, url)
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from None
-        if provider not in used:
-            used.append(provider)
-    for provider in used:
-        ensure_signed_in(provider)
-        ensure_api_key(provider)
-
-
 def _from_flag(parse, value, *args):
-    """A flag's value through the same check its prompt applies; a bad one ends the run."""
+    """플래그 값을 프롬프트와 동일한 검증으로 통과시킴. 부적합이면 run 종료."""
     try:
         return parse(value, *args)
     except ValueError as exc:
@@ -113,31 +70,30 @@ def _from_flag(parse, value, *args):
 
 
 def _prompt_selections(prefs, flags):
-    """Walk the selection steps. ``prefs`` prefills; flags and the environment skip."""
+    """선택 단계를 순회. ``prefs`` 가 pre-fill, flags/환경변수가 skip."""
     with open(Path(__file__).parent / "static" / "welcome.txt", encoding="utf-8") as f:
         welcome_ascii = f.read()
 
     welcome_content = f"{welcome_ascii}\n"
-    welcome_content += "[bold green]TradingAgents: Multi-Agents LLM Financial Trading Framework - CLI[/bold green]\n\n"
+    welcome_content += "[bold green]TradingAgents-KR: 한국 증시 멀티에이전트 LLM 트레이딩 프레임워크 - CLI[/bold green]\n\n"
     welcome_content += "[bold]Workflow Steps:[/bold]\n"
     welcome_content += "I. Analyst Team → II. Research Team → III. Trader → IV. Risk Management → V. Portfolio Management\n\n"
     welcome_content += (
-        "[dim]Built by [Tauric Research](https://github.com/TauricResearch)[/dim]"
+        "[dim]LLM 백엔드: Claude Code 헤드리스 (ADR-0001)[/dim]"
     )
 
     welcome_box = Panel(
         welcome_content,
         border_style="green",
         padding=(1, 2),
-        title="Welcome to TradingAgents",
-        subtitle="Multi-Agents LLM Financial Trading Framework",
+        title="Welcome to TradingAgents-KR",
+        subtitle="Korean Market Multi-Agents LLM Trading Framework",
     )
     console.print(Align.center(welcome_box))
     console.print()
-    console.print()  # Add vertical space before announcements
+    console.print()
 
-    # What's new comes from a cache refreshed in the background, and only for
-    # someone at a terminal: a run never waits on it and unattended runs skip it.
+    # What's new 는 터미널이 있을 때만. unattended run 은 skip.
     if updates.enabled():
         updates.show(console)
         updates.start_background_refresh()
@@ -149,20 +105,6 @@ def _prompt_selections(prefs, flags):
             box_content += f"\n[dim]Default: {default}[/dim]"
         return Panel(box_content, border_style="blue", padding=(1, 2))
 
-    def thinking_value_or_prompt(env_var, config_key, label, box_title, box_body, prompt_fn):
-        """Return the env-configured reasoning/thinking value, or prompt for it.
-
-        When ``env_var`` is set the interactive choice is skipped and the value
-        the env overlay placed on DEFAULT_CONFIG is used — mirroring the
-        env-precedence rule applied to the other selection steps.
-        """
-        if os.environ.get(env_var):
-            value = DEFAULT_CONFIG[config_key]
-            console.print(f"[green]✓ {label} from environment:[/green] {value}")
-            return value
-        console.print(create_question_box(box_title, box_body))
-        return prompt_fn()
-
     # Step 1: Ticker symbol
     if flags.get("ticker") is not None:
         selected_ticker = _from_flag(parse_ticker, flags["ticker"])
@@ -171,14 +113,12 @@ def _prompt_selections(prefs, flags):
         console.print(
             create_question_box(
                 "Step 1: Ticker Symbol",
-                "Enter the ticker, with exchange suffix when needed (e.g. SPY, 0700.HK, BTC-USD)",
-                "SPY",
+                "Enter the ticker (한국 종목코드 6자리 또는 상류 포맷)",
+                "005930",
             )
         )
         selected_ticker = get_ticker()
     asset_type = detect_asset_type(selected_ticker)
-    # Only announce when it's not the default stock path, to avoid printing
-    # "stock" on every run.
     if asset_type.value != "stock":
         console.print(
             f"[green]Detected asset type:[/green] {asset_type.value}"
@@ -199,7 +139,7 @@ def _prompt_selections(prefs, flags):
         )
         analysis_date = get_analysis_date()
 
-    # Step 3: Output language (skipped when set via TRADINGAGENTS_OUTPUT_LANGUAGE)
+    # Step 3: Output language (TRADINGAGENTS_OUTPUT_LANGUAGE 로 skip)
     if os.environ.get("TRADINGAGENTS_OUTPUT_LANGUAGE"):
         output_language = DEFAULT_CONFIG["output_language"]
         console.print(
@@ -229,10 +169,7 @@ def _prompt_selections(prefs, flags):
         f"[green]Selected analysts:[/green] {', '.join(analyst.value for analyst in selected_analysts)}"
     )
 
-    # Step 5: Research depth (skipped when both round counts are set via env).
-    # Research depth maps to the debate + risk round counts; when both are
-    # supplied through TRADINGAGENTS_MAX_DEBATE_ROUNDS / _MAX_RISK_ROUNDS we keep
-    # the run non-interactive and honor the env values (#977).
+    # Step 5: Research depth (양쪽 라운드 수가 env 로 설정되면 skip)
     if depth_from_env():
         selected_research_depth = DEFAULT_CONFIG["max_debate_rounds"]
         console.print(
@@ -248,58 +185,7 @@ def _prompt_selections(prefs, flags):
         )
         selected_research_depth = select_research_depth(prefs.get("research_depth"))
 
-    # Step 6: LLM Provider (skipped when set via TRADINGAGENTS_LLM_PROVIDER).
-    # The backend URL comes from TRADINGAGENTS_LLM_BACKEND_URL when set,
-    # otherwise the provider's default endpoint — the same value the menu
-    # would have picked.
-    provider_from_env = bool(os.environ.get("TRADINGAGENTS_LLM_PROVIDER"))
-    if provider_from_env:
-        selected_llm_provider = DEFAULT_CONFIG["llm_provider"].lower()
-        backend_url = resolve_backend_url(
-            selected_llm_provider, env_url=DEFAULT_CONFIG["backend_url"]
-        )
-        console.print(f"[green]✓ LLM provider from environment:[/green] {selected_llm_provider}")
-        console.print(f"[green]✓ Backend URL:[/green] {backend_url}")
-    else:
-        console.print(
-            create_question_box(
-                "Step 6: LLM Provider", "Select your LLM provider"
-            )
-        )
-        selected_llm_provider, backend_url = select_llm_provider(prefs.get("llm_provider"))
-
-        # Providers with regional endpoints prompt for the region as a secondary
-        # step so the main dropdown stays clean (mainland China and international
-        # accounts cannot share API keys).
-        if selected_llm_provider == "qwen":
-            selected_llm_provider, backend_url = ask_qwen_region()
-        elif selected_llm_provider == "minimax":
-            selected_llm_provider, backend_url = ask_minimax_region()
-        elif selected_llm_provider == "glm":
-            selected_llm_provider, backend_url = ask_glm_region()
-
-        # Honor an explicit env backend URL even when the provider was chosen
-        # interactively, so it isn't overwritten by the menu default (#978).
-        backend_url = resolve_backend_url(
-            selected_llm_provider, backend_url, env_url=DEFAULT_CONFIG["backend_url"]
-        )
-
-        # The generic OpenAI-compatible endpoint has no default; ask for it if
-        # neither the menu nor the environment supplied one.
-        if selected_llm_provider == "openai_compatible" and not backend_url:
-            remembered_url = (prefs.get("backend_url")
-                              if prefs.get("llm_provider") == selected_llm_provider else None)
-            backend_url = prompt_openai_compatible_url(remembered_url)
-
-        # For Ollama, surface the resolved endpoint (OLLAMA_BASE_URL vs default)
-        # before model selection so it's obvious where we're connecting.
-        if selected_llm_provider == "ollama":
-            confirm_ollama_endpoint(backend_url)
-
-
-    _check_tier_providers(selected_llm_provider, backend_url)
-
-    # Step 7: Thinking agents (skipped when either model is set via environment)
+    # Step 6: Thinking agents (양쪽 중 하나라도 env 로 설정되면 skip)
     if os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM") or os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM"):
         selected_shallow_thinker = DEFAULT_CONFIG["quick_think_llm"]
         selected_deep_thinker = DEFAULT_CONFIG["deep_think_llm"]
@@ -310,49 +196,42 @@ def _prompt_selections(prefs, flags):
     else:
         console.print(
             create_question_box(
-                "Step 7: Thinking Agents", "Select your thinking agents for analysis"
+                "Step 6: Thinking Agents (Claude models)",
+                "Select Claude models for quick (analyst) and deep (manager/trader) tiers"
             )
         )
-        remembered = prefs if prefs.get("llm_provider") == selected_llm_provider else {}
-        selected_shallow_thinker = select_shallow_thinking_agent(
-            selected_llm_provider, remembered.get("quick_think_llm")
-        )
-        selected_deep_thinker = select_deep_thinking_agent(
-            selected_llm_provider, remembered.get("deep_think_llm")
-        )
+        selected_shallow_thinker = select_shallow_thinking_agent(prefs.get("quick_think_llm"))
+        selected_deep_thinker = select_deep_thinking_agent(prefs.get("deep_think_llm"))
 
-    # Step 8: Provider-specific reasoning/thinking configuration. Each knob is
-    # settable via its TRADINGAGENTS_* env var; when that var is set (or the
-    # provider itself came from env) the prompt is skipped and the configured
-    # value is used — same env-precedence rule as the steps above. None = each
-    # provider's own default.
-    thinking_level = None
-    reasoning_effort = None
-    anthropic_effort = None
+    # Step 7: Effort levels — Claude Code `--effort` per tier.
+    # TRADINGAGENTS_EFFORT / TRADINGAGENTS_QUICK_EFFORT 로 각각 skip.
+    if os.environ.get("TRADINGAGENTS_EFFORT"):
+        selected_deep_effort = DEFAULT_CONFIG["effort"]
+        console.print(
+            f"[green]✓ Deep tier effort from environment:[/green] {selected_deep_effort}"
+        )
+    else:
+        console.print(
+            create_question_box(
+                "Step 7a: Deep Tier Effort",
+                "Select --effort for deep tier (researchers/managers/trader/debaters)"
+            )
+        )
+        selected_deep_effort = ask_effort("deep", prefs.get("effort"))
 
-    provider_lower = selected_llm_provider.lower()
-    if provider_from_env:
-        thinking_level = DEFAULT_CONFIG["google_thinking_level"]
-        reasoning_effort = DEFAULT_CONFIG["openai_reasoning_effort"]
-        anthropic_effort = DEFAULT_CONFIG["anthropic_effort"]
-    elif provider_lower == "google":
-        thinking_level = thinking_value_or_prompt(
-            "TRADINGAGENTS_GOOGLE_THINKING_LEVEL", "google_thinking_level",
-            "Gemini thinking mode", "Step 8: Thinking Mode",
-            "Configure Gemini thinking mode", ask_gemini_thinking_config,
+    if os.environ.get("TRADINGAGENTS_QUICK_EFFORT"):
+        selected_quick_effort = DEFAULT_CONFIG["quick_effort"]
+        console.print(
+            f"[green]✓ Quick tier effort from environment:[/green] {selected_quick_effort}"
         )
-    elif provider_lower in REASONING_EFFORT_PROVIDERS:
-        reasoning_effort = thinking_value_or_prompt(
-            "TRADINGAGENTS_OPENAI_REASONING_EFFORT", "openai_reasoning_effort",
-            "Reasoning effort", "Step 8: Reasoning Effort",
-            "Configure OpenAI reasoning effort level", ask_openai_reasoning_effort,
+    else:
+        console.print(
+            create_question_box(
+                "Step 7b: Quick Tier Effort",
+                "Select --effort for quick tier (analysts)"
+            )
         )
-    elif provider_lower == "anthropic":
-        anthropic_effort = thinking_value_or_prompt(
-            "TRADINGAGENTS_ANTHROPIC_EFFORT", "anthropic_effort",
-            "Claude effort", "Step 8: Effort Level",
-            "Configure Claude effort level", ask_anthropic_effort,
-        )
+        selected_quick_effort = ask_effort("quick", prefs.get("quick_effort"))
 
     return {
         "ticker": selected_ticker,
@@ -360,19 +239,17 @@ def _prompt_selections(prefs, flags):
         "analysis_date": analysis_date,
         "analysts": selected_analysts,
         "research_depth": selected_research_depth,
-        "llm_provider": selected_llm_provider.lower(),
-        "backend_url": backend_url,
+        "llm_provider": "claude-code",
         "quick_think_llm": selected_shallow_thinker,
         "deep_think_llm": selected_deep_thinker,
-        "google_thinking_level": thinking_level,
-        "openai_reasoning_effort": reasoning_effort,
-        "anthropic_effort": anthropic_effort,
+        "effort": selected_deep_effort,
+        "quick_effort": selected_quick_effort,
         "output_language": output_language,
     }
 
 
 def get_analysis_date():
-    """Get the analysis date from user input."""
+    """사용자 입력에서 분석 날짜를 받음."""
     while True:
         date_str = typer.prompt(
             "", default=datetime.datetime.now().strftime("%Y-%m-%d")

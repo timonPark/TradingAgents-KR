@@ -13,16 +13,16 @@ import cli.main as m
 import cli.run as cli_run
 
 # Minimal selections dict shaped like get_user_selections()'s return value.
+# Task 2 (#21): provider 는 claude-code 고정, backend_url/provider-specific
+# effort 키 제거, effort/quick_effort 로 통일.
 SELECTIONS = {
     "research_depth": 5,
-    "quick_think_llm": "gpt-5.4-mini",
-    "deep_think_llm": "gpt-5.5",
-    "backend_url": None,
-    "llm_provider": "openai",
-    "google_thinking_level": None,
-    "openai_reasoning_effort": None,
-    "anthropic_effort": None,
-    "output_language": "English",
+    "quick_think_llm": "haiku",
+    "deep_think_llm": "sonnet",
+    "llm_provider": "claude-code",
+    "effort": "high",
+    "quick_effort": "medium",
+    "output_language": "Korean",
 }
 
 
@@ -70,20 +70,9 @@ def test_checkpoint_flag_overrides_env(flag):
     assert cfg["checkpoint_enabled"] is flag
 
 
-@pytest.mark.unit
-def test_glm_resolves_to_the_endpoint_its_key_belongs_to():
-    """The provider table, the client registry and the key mapping must name the
-    same platform: glm is Z.AI international (ZHIPU_API_KEY) and glm-cn is
-    BigModel China. A mismatch sends the key to the other platform and every
-    call fails auth."""
-    from cli.prompts import resolve_backend_url
-    from tradingagents.llm_clients.api_key_env import get_api_key_env
-    from tradingagents.llm_clients.openai_client import OPENAI_COMPATIBLE_PROVIDERS
-
-    assert resolve_backend_url("glm", None, None) == OPENAI_COMPATIBLE_PROVIDERS["glm"].base_url
-    assert get_api_key_env("glm") == "ZHIPU_API_KEY"
-    assert "z.ai" in OPENAI_COMPATIBLE_PROVIDERS["glm"].base_url
-    assert "bigmodel.cn" in OPENAI_COMPATIBLE_PROVIDERS["glm-cn"].base_url
+# test_glm_resolves_to_the_endpoint_its_key_belongs_to 는 Task 2 (#21) 에서
+# 삭제되었습니다 — GLM/Zhipu 지역 provider 는 하드 포크로 제거되었고 Claude Code
+# 는 로컬 CLI 호출이라 백엔드 URL 자체가 없습니다.
 
 
 @pytest.mark.unit
@@ -97,23 +86,17 @@ def test_a_half_set_round_count_says_which_value_won(capsys, monkeypatch):
     monkeypatch.setattr(m.console, "print", lambda *a, **k: printed.append(str(a[0]) if a else ""))
 
     config = cli_run._build_run_config({
-        "ticker": "NVDA", "analysis_date": "2026-09-01", "asset_type": "stock",
-        "analysts": [], "research_depth": 5, "llm_provider": "openai",
-        "quick_think_llm": "gpt-5.6-luna", "deep_think_llm": "gpt-5.6",
-        "backend_url": None, "output_language": "English",
+        "ticker": "005930", "analysis_date": "2026-09-01", "asset_type": "stock",
+        "analysts": [], "research_depth": 5, "llm_provider": "claude-code",
+        "quick_think_llm": "haiku", "deep_think_llm": "sonnet",
+        "effort": "high", "quick_effort": "medium", "output_language": "Korean",
     }, None)
 
     assert config["max_risk_discuss_rounds"] == 5
     assert any("TRADINGAGENTS_MAX_DEBATE_ROUNDS" in line for line in printed), printed
 
 
-@pytest.mark.unit
-def test_a_tier_s_thinking_setting_survives_a_main_provider_that_has_none(monkeypatch):
-    """A run on Google with an OpenAI tier (#1440): the run's selections carry no
-    OpenAI reasoning effort, so the configured one must reach that tier."""
-    monkeypatch.setitem(cli_run.DEFAULT_CONFIG, "openai_reasoning_effort", "high")
-    monkeypatch.setitem(cli_run.DEFAULT_CONFIG, "anthropic_effort", "low")
-    cfg = cli_run._build_run_config({**SELECTIONS, "llm_provider": "google", "google_thinking_level": "high"},
-                                    checkpoint=None)
-    assert (cfg["openai_reasoning_effort"], cfg["anthropic_effort"], cfg["google_thinking_level"]) == \
-        ("high", "low", "high")
+# test_a_tier_s_thinking_setting_survives_a_main_provider_that_has_none 는
+# Task 2 (#21) 에서 삭제되었습니다 — provider-specific thinking/reasoning 설정
+# (google_thinking_level, openai_reasoning_effort, anthropic_effort) 은 전부
+# 제거되었고 Claude Code 의 effort/quick_effort 로 통일되었습니다.

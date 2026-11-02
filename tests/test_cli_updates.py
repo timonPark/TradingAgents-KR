@@ -47,12 +47,13 @@ def test_only_a_person_at_a_terminal_is_told(monkeypatch, stdin_tty, stdout_tty,
 
 
 ENV = {
-    "TRADINGAGENTS_LLM_PROVIDER": "openai",
-    "TRADINGAGENTS_DEEP_THINK_LLM": "gpt-6-sol",
-    "TRADINGAGENTS_QUICK_THINK_LLM": "gpt-6-luna",
-    "TRADINGAGENTS_OUTPUT_LANGUAGE": "English",
+    "TRADINGAGENTS_DEEP_THINK_LLM": "sonnet",
+    "TRADINGAGENTS_QUICK_THINK_LLM": "haiku",
+    "TRADINGAGENTS_OUTPUT_LANGUAGE": "Korean",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS": "1",
     "TRADINGAGENTS_MAX_RISK_ROUNDS": "1",
+    "TRADINGAGENTS_EFFORT": "high",
+    "TRADINGAGENTS_QUICK_EFFORT": "medium",
 }
 
 
@@ -63,9 +64,8 @@ def test_an_unattended_run_contacts_no_server(monkeypatch):
     monkeypatch.setattr(updates.requests, "get", lambda *a, **k: calls.append(a))
     started = []
     monkeypatch.setattr(updates.threading, "Thread", lambda *a, **k: started.append(1))
-    with mock.patch.dict(os.environ, ENV, clear=False), \
-         mock.patch.object(cli_selections, "ensure_api_key"):
-        cli_selections.get_user_selections({"ticker": "AAPL", "date": "2026-09-01", "analysts": "market"})
+    with mock.patch.dict(os.environ, ENV, clear=False):
+        cli_selections.get_user_selections({"ticker": "005930", "date": "2026-09-01", "analysts": "market"})
     assert calls == [] and started == []
 
 
