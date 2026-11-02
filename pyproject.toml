@@ -5,15 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tradingagents"
 dynamic = ["version"]
-description = "TradingAgents: Multi-Agents LLM Financial Trading Framework"
+description = "TradingAgents-KR: Multi-Agents LLM Financial Trading Framework (Korean Market, Claude Code backend)"
 readme = "README.md"
 requires-python = ">=3.11"
+# TradingAgents-KR 는 Claude Code 헤드리스를 유일 LLM 백엔드로 사용합니다
+# (ADR-0001). langchain-anthropic / langchain-openai / langchain-google-genai /
+# langchain-aws 는 Task 2 (#21) 에서 제거되었습니다. 어댑터는 subprocess 호출
+# 로 claude CLI 를 구동하며 langchain-core 의 BaseChatModel 인터페이스만
+# 사용합니다.
 dependencies = [
     "cryptography>=42.0",
     "langchain-core>=1.6.5",
-    "langchain-anthropic>=1.7.4",
-    "langchain-google-genai>=4.4.0",
-    "langchain-openai>=1.6.6",
     "langgraph>=1.2.12",
     "langgraph-checkpoint-sqlite>=3.1.1",
     "markdown-it-py>=4.0",
@@ -35,11 +37,6 @@ dev = [
     "ruff>=0.16",
     "pytest>=8.0",
     "pytest-subtests>=0.13",
-]
-# Amazon Bedrock support (AWS SigV4 auth + boto3). Optional so the core install
-# stays lean: pip install "tradingagents[bedrock]".
-bedrock = [
-    "langchain-aws>=1.7.9",
 ]
 
 [project.scripts]
