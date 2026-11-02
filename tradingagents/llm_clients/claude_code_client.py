@@ -7,8 +7,9 @@ Max/Pro 플랜 쿼터로 추론한다 (ADR-0001 참조).
 구현 범위:
 - Task 1a (#2): 기본 subprocess 래퍼 + JSON 응답 파싱 + AIMessage 반환
 - Task 1b (#3): with_structured_output(Schema) → --json-schema 매핑
+- Task 1c (#4): 어댑터 격리 플래그 전체 세트 + SystemMessage 분리 전달
 
-세마포어·타임아웃·재시도·추가 격리 플래그는 하위 이슈에서 확장된다.
+세마포어·타임아웃·재시도는 하위 이슈에서 확장된다.
 """
 
 from __future__ import annotations
@@ -27,25 +28,42 @@ from pydantic import BaseModel, ValidationError
 from .base_client import BaseLLMClient
 
 
-def _messages_to_prompt(messages: list[BaseMessage]) -> str:
-    """LangChain 메시지 리스트를 단일 프롬프트 문자열로 변환.
+def _split_messages(messages: list[BaseMessage]) -> tuple[str, str]:
+    """LangChain 메시지 리스트를 (system_prompt, conversation_prompt) 로 분리.
 
-    Claude Code `-p` 는 단일 텍스트 입력만 받으므로 역할 접두사(System/User/
-    Assistant) 로 대화 흐름을 표기해 전달한다. 역할 분리는 Task 1c (#4) 에서
-    `--append-system-prompt` 로 더 정교화된다.
+    SystemMessage 는 `--append-system-prompt` 로 Claude Code 의 시스템 영역에
+    주입되고, Human/AI 메시지는 `-p` 로 전달되는 대화 영역에 배치된다. Task 1a
+    에서 사용하던 역할 접두사 단일 문자열 포맷 (`System: ...\\n\\nUser: ...`) 보다
+    정확한 역할 전달이 가능하다.
+
+    여러 SystemMessage 는 합쳐지며, 하나도 없으면 빈 문자열을 반환해 호출부가
+    `--append-system-prompt` 플래그를 생략할 수 있게 한다.
     """
-    parts: list[str] = []
+    system_parts: list[str] = []
+    conversation_parts: list[str] = []
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
         if isinstance(msg, SystemMessage):
-            parts.append(f"System: {content}")
+            system_parts.append(content)
         elif isinstance(msg, HumanMessage):
-            parts.append(f"User: {content}")
+            conversation_parts.append(f"User: {content}")
         elif isinstance(msg, AIMessage):
-            parts.append(f"Assistant: {content}")
+            conversation_parts.append(f"Assistant: {content}")
         else:
-            parts.append(content)
-    return "\n\n".join(parts)
+            conversation_parts.append(content)
+    return "\n\n".join(system_parts), "\n\n".join(conversation_parts)
+
+
+# Task 1a 호환 별칭 — 외부 코드/테스트에서 참조 중일 수 있어 유지. 신규 호출
+# 코드는 `_split_messages` 사용 권장. 이 함수는 single-string 포맷이 필요한
+# 상황에서만 쓰고, SystemMessage 를 "System:" 접두사와 함께 섞어 반환한다.
+def _messages_to_prompt(messages: list[BaseMessage]) -> str:
+    """레거시 호환: 역할 접두사 단일 문자열. 신규 코드는 `_split_messages` 사용."""
+    system_prompt, conversation = _split_messages(messages)
+    if not system_prompt:
+        return conversation
+    system_block = f"System: {system_prompt}"
+    return system_block if not conversation else f"{system_block}\n\n{conversation}"
 
 
 def _coerce_input_to_messages(input_: Any) -> list[BaseMessage]:
@@ -98,16 +116,36 @@ class ChatClaudeCodeHeadless(BaseChatModel):
     def _llm_type(self) -> str:
         return "claude-code"
 
-    def _base_cli_args(self, prompt: str) -> list[str]:
-        """구조화/비구조화 호출 공통 CLI 인자."""
-        return [
+    def _base_cli_args(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+    ) -> list[str]:
+        """구조화/비구조화 호출 공통 CLI 인자. 격리 플래그 전체 세트 포함.
+
+        격리 플래그 (ADR-0001 §4.5, CLAUDE.md):
+        - `--permission-mode plan`: 호스트 파일/Bash 수정 전면 차단
+        - `--no-session-persistence`: 세션 디스크 저장 끔
+        - `--disable-slash-commands`: SKILLS / slash command 로딩 차단
+        - `--exclude-dynamic-system-prompt-sections`: cwd/env/git status 등
+          호스트 종속 섹션을 시스템 프롬프트에서 제거 (프롬프트 캐시 재사용성
+          향상 및 호스트 상태 유출 방지)
+        - `--append-system-prompt`: SystemMessage 가 있을 때만 추가. 상위
+          `~/.claude/CLAUDE.md` 자동 발견 내용을 TradingAgents 지침으로 희석.
+        """
+        args = [
             "claude",
             "-p", prompt,
             "--output-format", "json",
             "--model", self.model,
             "--no-session-persistence",
             "--permission-mode", "plan",
+            "--disable-slash-commands",
+            "--exclude-dynamic-system-prompt-sections",
         ]
+        if system_prompt:
+            args.extend(["--append-system-prompt", system_prompt])
+        return args
 
     def _generate(
         self,
@@ -116,7 +154,8 @@ class ChatClaudeCodeHeadless(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        args = self._base_cli_args(_messages_to_prompt(messages))
+        system_prompt, conversation = _split_messages(messages)
+        args = self._base_cli_args(conversation, system_prompt=system_prompt)
         payload = _run_claude_subprocess(args)
         text = payload.get("result", "")
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
@@ -156,9 +195,12 @@ class _StructuredClaudeCode:
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> BaseModel | None:
         messages = _coerce_input_to_messages(input)
-        prompt = _messages_to_prompt(messages)
+        system_prompt, conversation = _split_messages(messages)
         schema_json = json.dumps(self._schema.model_json_schema())
-        args = self._llm._base_cli_args(prompt) + ["--json-schema", schema_json]
+        args = self._llm._base_cli_args(conversation, system_prompt=system_prompt) + [
+            "--json-schema",
+            schema_json,
+        ]
 
         payload = _run_claude_subprocess(args)
         return _parse_structured_output(payload, self._schema)

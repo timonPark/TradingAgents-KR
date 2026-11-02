@@ -2,9 +2,10 @@
 
 Task 1a (#2): 기본 subprocess 래퍼
 Task 1b (#3): with_structured_output → --json-schema 매핑
+Task 1c (#4): 격리 플래그 전체 세트 + SystemMessage 분리 전달
 
 subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다. 하위 이슈
-에서 테스트가 확장된다 (세마포어, 타임아웃, 재시도, 429, 격리 플래그 전수).
+에서 테스트가 확장된다 (세마포어, 타임아웃, 재시도, 429).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from tradingagents.llm_clients.claude_code_client import (
     _coerce_input_to_messages,
     _messages_to_prompt,
     _parse_structured_output,
+    _split_messages,
 )
 
 
@@ -61,7 +63,8 @@ class _Decision(BaseModel):
 
 
 @pytest.mark.unit
-def test_messages_to_prompt_formats_roles():
+def test_messages_to_prompt_legacy_format_still_works():
+    """레거시 호환: _messages_to_prompt 는 System: 접두사 포함 단일 문자열 유지."""
     prompt = _messages_to_prompt(
         [
             SystemMessage(content="You are helpful."),
@@ -80,7 +83,7 @@ def test_messages_to_prompt_formats_roles():
 def test_messages_to_prompt_handles_non_string_content():
     msg = HumanMessage(content=[{"type": "text", "text": "block"}])
     out = _messages_to_prompt([msg])
-    # 리스트형 content 는 str() 로 처리되어 깨지지 않음을 확인 (내용 포맷은 Task 1c 범위)
+    # 리스트형 content 는 str() 로 변환됨
     assert "User:" in out
 
 
@@ -116,9 +119,14 @@ def test_generate_passes_cli_args(mock_run):
     assert "json" in args_list
     assert "--model" in args_list
     assert "haiku" in args_list
+    # Task 1c 격리 플래그 전체 세트
     assert "--no-session-persistence" in args_list
     assert "--permission-mode" in args_list
     assert "plan" in args_list
+    assert "--disable-slash-commands" in args_list
+    assert "--exclude-dynamic-system-prompt-sections" in args_list
+    # SystemMessage 없으므로 --append-system-prompt 는 포함되지 않아야 함
+    assert "--append-system-prompt" not in args_list
     assert kwargs.get("capture_output") is True
     assert kwargs.get("text") is True
     assert kwargs.get("check") is True
@@ -126,7 +134,8 @@ def test_generate_passes_cli_args(mock_run):
 
 @pytest.mark.unit
 @patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
-def test_generate_prompt_contains_message_text(mock_run):
+def test_generate_system_message_goes_to_append_system_prompt(mock_run):
+    """Task 1c: SystemMessage 는 -p 가 아니라 --append-system-prompt 로 전달."""
     mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
 
     ChatClaudeCodeHeadless(model="sonnet")._generate(
@@ -137,9 +146,34 @@ def test_generate_prompt_contains_message_text(mock_run):
     )
 
     (args_list,), _ = mock_run.call_args
+    # 대화 영역 (-p)
     prompt = args_list[args_list.index("-p") + 1]
-    assert "System: System rule." in prompt
     assert "User: User ask." in prompt
+    assert "System rule." not in prompt  # System 은 -p 가 아니라 append 로 가야 함
+    # 시스템 영역 (--append-system-prompt)
+    assert "--append-system-prompt" in args_list
+    sys_arg = args_list[args_list.index("--append-system-prompt") + 1]
+    assert sys_arg == "System rule."
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_generate_multiple_system_messages_concatenated(mock_run):
+    """여러 SystemMessage 는 하나의 --append-system-prompt 로 합쳐짐."""
+    mock_run.return_value = MagicMock(stdout=_success_payload(), returncode=0)
+
+    ChatClaudeCodeHeadless(model="sonnet")._generate(
+        [
+            SystemMessage(content="Rule A."),
+            SystemMessage(content="Rule B."),
+            HumanMessage(content="Hi"),
+        ]
+    )
+
+    (args_list,), _ = mock_run.call_args
+    sys_arg = args_list[args_list.index("--append-system-prompt") + 1]
+    assert "Rule A." in sys_arg
+    assert "Rule B." in sys_arg
 
 
 @pytest.mark.unit
@@ -316,6 +350,79 @@ def test_structured_output_returns_none_on_missing_structured_field(mock_run):
     result = llm.with_structured_output(_Decision).invoke("hi")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Task 1c (#4): 격리 플래그 + SystemMessage 분리 전달
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_split_messages_separates_system_from_conversation():
+    system_prompt, conversation = _split_messages(
+        [
+            SystemMessage(content="You are helpful."),
+            HumanMessage(content="Hello"),
+            AIMessage(content="Hi."),
+            HumanMessage(content="Say pong."),
+        ]
+    )
+    assert system_prompt == "You are helpful."
+    assert "User: Hello" in conversation
+    assert "Assistant: Hi." in conversation
+    assert "User: Say pong." in conversation
+    assert "System:" not in conversation
+
+
+@pytest.mark.unit
+def test_split_messages_empty_when_no_system():
+    system_prompt, conversation = _split_messages(
+        [HumanMessage(content="only user")]
+    )
+    assert system_prompt == ""
+    assert "User: only user" in conversation
+
+
+@pytest.mark.unit
+def test_split_messages_empty_when_only_system():
+    system_prompt, conversation = _split_messages(
+        [SystemMessage(content="just rules")]
+    )
+    assert system_prompt == "just rules"
+    assert conversation == ""
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_also_uses_isolation_flags_and_system_split(mock_run):
+    """structured 경로도 격리 플래그 + SystemMessage 분리를 똑같이 적용."""
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "x"}),
+        returncode=0,
+    )
+
+    tmpl = ChatPromptTemplate.from_messages(
+        [("system", "Analyst persona."), ("human", "Decide {ticker}.")]
+    )
+    prompt_value = tmpl.format_prompt(ticker="005930")
+
+    ChatClaudeCodeHeadless(model="sonnet").with_structured_output(_Decision).invoke(
+        prompt_value
+    )
+
+    (args_list,), _ = mock_run.call_args
+    # 격리 플래그
+    assert "--disable-slash-commands" in args_list
+    assert "--exclude-dynamic-system-prompt-sections" in args_list
+    # SystemMessage 분리
+    assert "--append-system-prompt" in args_list
+    sys_arg = args_list[args_list.index("--append-system-prompt") + 1]
+    assert "Analyst persona." in sys_arg
+    # 대화는 -p 에
+    prompt = args_list[args_list.index("-p") + 1]
+    assert "User: Decide 005930." in prompt
+    # --json-schema 도 여전히 포함
+    assert "--json-schema" in args_list
 
 
 @pytest.mark.unit
