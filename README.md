@@ -36,6 +36,7 @@ TauricResearch 의 원본 프레임워크 대비 다음 레이어를 한국 환�
 
 | 영역 | upstream (원본) | TradingAgents-KR |
 |---|---|---|
+| LLM 백엔드 | Anthropic/OpenAI/Google/Azure/Bedrock 등 15+ provider | **Claude Code 헤드리스 단일** (OAuth, Max/Pro 플랜 쿼터, ADR-0001) |
 | 티커 포맷 | `^[A-Z]{1,5}$` (AAPL, NVDA) | `^\d{6}$` (005930, 035720) |
 | 재무/공시 | SEC EDGAR | 금융감독원 Open DART (`OpenDartReader`) |
 | 시세/보조지표 | Alpha Vantage, Yahoo Finance | `pykrx` (일봉 OHLCV + 투자자별 수급) |
@@ -115,20 +116,25 @@ source .venv/bin/activate
 pip install .
 ```
 
-### 4. 한국 데이터 소스용 추가 라이브러리
+### 4. Claude Code CLI 설치 및 로그인 (필수)
+
+TradingAgents-KR 은 Claude Code 헤드리스를 **유일한 LLM 백엔드**로 사용합니다 (ADR-0001). 로컬에 Claude Code CLI 를 설치하고 로그인하면 `.env` 에 LLM API 키를 둘 필요가 없습니다 — OAuth 토큰이 자격증명 역할을 합니다.
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude login            # Max/Pro 플랜 또는 Pro 구독으로 OAuth 로그인
+claude -p "ping"        # 설치 및 인증 확인
+```
+
+### 5. 한국 데이터 소스용 추가 라이브러리
 
 ```bash
 pip install pykrx OpenDartReader finance-datareader
 ```
 
-### 5. API 키 발급 및 `.env` 설정
+### 6. 데이터 API 키 발급 및 `.env` 설정
 
 ```bash
-# LLM (아래 중 하나 이상 필수)
-export OPENAI_API_KEY=...          # OpenAI (GPT)
-export ANTHROPIC_API_KEY=...       # Anthropic (Claude)
-export GOOGLE_API_KEY=...          # Google (Gemini)
-
 # 한국 데이터 소스
 export DART_API_KEY=...            # 금융감독원 Open DART 인증키 (필수)
 export ECOS_API_KEY=...            # 한국은행 ECOS API 인증키 (선택)
@@ -137,11 +143,7 @@ export ECOS_API_KEY=...            # 한국은행 ECOS API 인증키 (선택)
 - **DART 인증키 발급**: [opendart.fss.or.kr](https://opendart.fss.or.kr/) 에서 무료 발급
 - **ECOS 인증키 발급**: [ecos.bok.or.kr](https://ecos.bok.or.kr/) 에서 무료 발급
 
-또는 `.env.example` 을 `.env` 로 복사하여 작성:
-
-```bash
-cp .env.example .env
-```
+> ⚠️ **LLM API 키는 설정하지 마세요.** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` 등은 Task 2 (#21) 로 코드베이스에서 제거되었고 참조되지 않습니다. 유일한 예외는 디버깅용 `TRADINGAGENTS_CLAUDE_BARE=1` escape hatch 가 `ANTHROPIC_API_KEY` 를 요구하는 경우입니다 (CLAUDE.md §4.6).
 
 ---
 
@@ -191,11 +193,13 @@ ta.save_reports(state, "005930")
 
 ```python
 config = DEFAULT_CONFIG.copy()
-config["llm_provider"] = "anthropic"
-config["deep_think_llm"] = "claude-opus-5-5"
-config["quick_think_llm"] = "claude-haiku-5-0"
+# llm_provider 는 "claude-code" 로 고정 (ADR-0001) — config 로 변경 불가.
+config["deep_think_llm"] = "opus"       # sonnet / opus / haiku 또는 전체 ID
+config["quick_think_llm"] = "haiku"
+config["effort"] = "max"                # deep 티어: low/medium/high/xhigh/max
+config["quick_effort"] = "medium"       # quick 티어
 config["max_debate_rounds"] = 2
-config["output_language"] = "Korean"
+config["output_language"] = "Korean"    # 디폴트도 Korean
 
 ta = TradingAgentsGraph(debug=True, config=config)
 _, decision = ta.propagate("005930", "2026-11-01")
