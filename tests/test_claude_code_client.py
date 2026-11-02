@@ -1,4 +1,7 @@
-"""Task 1a (#2): ChatClaudeCodeHeadless 기본 subprocess 래퍼 유닛 테스트.
+"""ChatClaudeCodeHeadless 유닛 테스트.
+
+Task 1a (#2): 기본 subprocess 래퍼
+Task 1b (#3): with_structured_output → --json-schema 매핑
 
 subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다. 하위 이슈
 에서 테스트가 확장된다 (세마포어, 타임아웃, 재시도, 429, 격리 플래그 전수).
@@ -7,15 +10,20 @@ subprocess 는 모킹한다 — 실제 `claude` CLI 는 호출하지 않는다. 
 from __future__ import annotations
 
 import json
+from typing import Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
 
 from tradingagents.llm_clients.claude_code_client import (
     ChatClaudeCodeHeadless,
     ClaudeCodeClient,
+    _coerce_input_to_messages,
     _messages_to_prompt,
+    _parse_structured_output,
 )
 
 
@@ -30,6 +38,26 @@ def _success_payload(result_text: str = "pong") -> str:
             "stop_reason": "end_turn",
         }
     )
+
+
+def _structured_payload(data: dict | None) -> str:
+    """--json-schema 응답 포맷: result 는 빈 문자열, structured_output 에 데이터."""
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "",
+        "session_id": "test-session",
+        "stop_reason": "end_turn",
+    }
+    if data is not None:
+        payload["structured_output"] = data
+    return json.dumps(payload)
+
+
+class _Decision(BaseModel):
+    action: Literal["BUY", "SELL", "HOLD"]
+    reason: str
 
 
 @pytest.mark.unit
@@ -146,3 +174,162 @@ def test_client_validates_known_models():
     assert ClaudeCodeClient(model="opus").validate_model() is True
     assert ClaudeCodeClient(model="haiku").validate_model() is True
     assert ClaudeCodeClient(model="gpt-5").validate_model() is False
+
+
+# ---------------------------------------------------------------------------
+# Task 1b (#3): with_structured_output → --json-schema 매핑
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_coerce_input_to_messages_from_string():
+    msgs = _coerce_input_to_messages("hello")
+    assert len(msgs) == 1
+    assert isinstance(msgs[0], HumanMessage)
+    assert msgs[0].content == "hello"
+
+
+@pytest.mark.unit
+def test_coerce_input_to_messages_from_list_passthrough():
+    inputs = [SystemMessage(content="s"), HumanMessage(content="h")]
+    assert _coerce_input_to_messages(inputs) == inputs
+
+
+@pytest.mark.unit
+def test_coerce_input_to_messages_from_prompt_value():
+    tmpl = ChatPromptTemplate.from_messages(
+        [("system", "sys"), ("human", "hum")]
+    )
+    pv = tmpl.format_prompt()
+    msgs = _coerce_input_to_messages(pv)
+    assert len(msgs) == 2
+    assert isinstance(msgs[0], SystemMessage)
+    assert isinstance(msgs[1], HumanMessage)
+
+
+@pytest.mark.unit
+def test_parse_structured_output_success():
+    data = {"action": "BUY", "reason": "trend up"}
+    result = _parse_structured_output({"structured_output": data}, _Decision)
+    assert isinstance(result, _Decision)
+    assert result.action == "BUY"
+    assert result.reason == "trend up"
+
+
+@pytest.mark.unit
+def test_parse_structured_output_missing_field_returns_none():
+    assert _parse_structured_output({}, _Decision) is None
+
+
+@pytest.mark.unit
+def test_parse_structured_output_non_dict_returns_none():
+    assert _parse_structured_output({"structured_output": "not a dict"}, _Decision) is None
+
+
+@pytest.mark.unit
+def test_parse_structured_output_schema_violation_returns_none():
+    # action must be one of BUY/SELL/HOLD
+    assert _parse_structured_output(
+        {"structured_output": {"action": "MAYBE", "reason": "x"}}, _Decision
+    ) is None
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_returns_schema_instance(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "trend up"}),
+        returncode=0,
+    )
+
+    llm = ChatClaudeCodeHeadless(model="sonnet")
+    structured = llm.with_structured_output(_Decision)
+    result = structured.invoke("Analyze this.")
+
+    assert isinstance(result, _Decision)
+    assert result.action == "BUY"
+    assert result.reason == "trend up"
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_passes_json_schema_arg(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "HOLD", "reason": "x"}),
+        returncode=0,
+    )
+
+    ChatClaudeCodeHeadless(model="haiku").with_structured_output(_Decision).invoke("hi")
+
+    (args_list,), _ = mock_run.call_args
+    assert "--json-schema" in args_list
+    schema_arg = args_list[args_list.index("--json-schema") + 1]
+    schema_data = json.loads(schema_arg)
+    # Pydantic 이 생성한 JSON Schema 에 action/reason 필드가 포함되어야 함
+    assert "action" in schema_data.get("properties", {})
+    assert "reason" in schema_data.get("properties", {})
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_accepts_message_list(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "SELL", "reason": "overvalued"}),
+        returncode=0,
+    )
+
+    llm = ChatClaudeCodeHeadless(model="sonnet")
+    result = llm.with_structured_output(_Decision).invoke(
+        [SystemMessage(content="Be concise."), HumanMessage(content="Decide.")]
+    )
+
+    assert isinstance(result, _Decision)
+    assert result.action == "SELL"
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_accepts_chat_prompt_template(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "growth"}),
+        returncode=0,
+    )
+
+    tmpl = ChatPromptTemplate.from_messages(
+        [("system", "You are an analyst."), ("human", "Decide on {ticker}.")]
+    )
+    prompt_value = tmpl.format_prompt(ticker="005930")
+
+    llm = ChatClaudeCodeHeadless(model="sonnet")
+    result = llm.with_structured_output(_Decision).invoke(prompt_value)
+
+    assert isinstance(result, _Decision)
+    assert result.action == "BUY"
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_returns_none_on_missing_structured_field(mock_run):
+    mock_run.return_value = MagicMock(stdout=_structured_payload(None), returncode=0)
+
+    llm = ChatClaudeCodeHeadless(model="sonnet")
+    result = llm.with_structured_output(_Decision).invoke("hi")
+
+    assert result is None
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_raises_on_is_error(mock_run):
+    payload = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error",
+            "is_error": True,
+            "session_id": "err",
+        }
+    )
+    mock_run.return_value = MagicMock(stdout=payload, returncode=0)
+
+    with pytest.raises(RuntimeError, match="Claude Code returned error"):
+        ChatClaudeCodeHeadless(model="sonnet").with_structured_output(_Decision).invoke("hi")
