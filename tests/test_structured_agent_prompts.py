@@ -10,7 +10,6 @@ sends, not merely that the constant is referenced in the module.
 """
 from __future__ import annotations
 
-import inspect
 from unittest.mock import MagicMock
 
 import pytest
@@ -130,18 +129,10 @@ def test_sentiment_prompt_states_constraint(monkeypatch):
     assert "tool-call date ranges" not in text
 
 
-@pytest.mark.unit
-def test_tool_using_analysts_keep_their_date_guidance():
-    # The analysts that really do call tools keep the wording that anchors their
-    # tool date ranges (#836) — this fix is scoped to no-tool agents.
-    #
-    # Task 3 (#32) 로 각 분석가가 순차적으로 사전조회 패턴으로 전환됩니다 — 전환된
-    # 분석가는 이 리스트에서 빠집니다. Task 3a (#33) 에서 market 전환. Task 3b/3c
-    # 가 fundamentals/news 를 전환하고 Task 3d 가 완전 삭제하면 이 테스트도 함께
-    # 삭제됩니다.
-    import tradingagents.agents.analysts.news_analyst as news
-    for module in (news,):
-        assert "tool-call date ranges" in inspect.getsource(module)
+# test_tool_using_analysts_keep_their_date_guidance 는 Task 3c (#35) 에서
+# 삭제되었습니다 — 모든 분석가가 사전조회 패턴으로 전환되어 더 이상 tool-call
+# date range 가 필요한 분석가가 없습니다. Task 3d (#36) 가 ToolNode/take_turn
+# 전체 삭제 시 관련 로직을 함께 정리합니다.
 
 
 @pytest.mark.unit
