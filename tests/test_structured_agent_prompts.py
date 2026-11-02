@@ -143,21 +143,8 @@ def test_constraint_text_is_unambiguous():
     assert "{" not in NO_EXTERNAL_TOOLS and "}" not in NO_EXTERNAL_TOOLS
 
 
-@pytest.mark.unit
-def test_the_sentiment_prompt_names_the_subreddits_searched(monkeypatch):
-    from tradingagents.agents.schemas import SentimentBand, SentimentReport
-
-    monkeypatch.setattr(sentiment, "fetch_stocktwits_messages", lambda *a, **k: "st")
-    monkeypatch.setattr(sentiment, "fetch_reddit_posts", lambda *a, **k: "rd")
-    monkeypatch.setattr(sentiment.get_news, "func", lambda *a, **k: "news", raising=False)
-    captured = {}
-    llm = _capturing_llm(captured, SentimentReport(
-        overall_band=SentimentBand.NEUTRAL, overall_score=5.0, confidence="low", narrative="n",
-    ))
-    sentiment.create_sentiment_analyst(llm)({
-        "company_of_interest": "BTC-USD", "trade_date": "2026-01-15",
-        "asset_type": "crypto", "messages": [],
-    })
-    text = _prompt_text(captured["prompt"])
-    assert "r/Bitcoin, r/CryptoCurrency, r/CryptoMarkets" in text
-    assert "wallstreetbets" not in text
+# Task 4a (#42): test_the_sentiment_prompt_names_the_subreddits_searched 는
+# crypto 전용 subreddit 매핑 (BTC-USD → r/Bitcoin, r/CryptoCurrency 등) 을
+# 테스트했으나, 하드 포크로 crypto 자산 모드가 삭제되고 crypto_base() 가 항상
+# None 을 반환하도록 바뀌면서 crypto subreddit 분기가 트리거되지 않습니다.
+# Reddit vendor 자체가 Task 7 (뉴스 vendor 네이버 교체) 에서 삭제 예정.

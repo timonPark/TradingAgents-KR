@@ -45,18 +45,9 @@ def test_a_ticker_held_under_another_spelling_is_matched():
     assert "No current position" not in text and "5" in text
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("held, analyzed, canonical", [
-    ("BTCUSDT", "BTC-USD", "BTC-USD"),
-    ("XAUUSD+", "GC=F", "GC=F"),
-    ("700.HK", "0700.HK", "0700.HK"),
-    ("0700.HK", "700.HK", "0700.HK"),
-])
-def test_a_holding_under_a_broker_alias_is_the_analyzed_instrument(held, analyzed, canonical):
-    book = PortfolioContext.model_validate({"positions": [{"ticker": held, "quantity": 2}, {"ticker": "ethusdt", "quantity": 1}]})
-    text = book.render(analyzed)
-    assert f"Current position in {canonical}: 2 units" in text
-    assert "Other positions: ETHUSDT 1" in text   # as listed
+# Task 4a (#42): broker-alias 매핑 테스트 (BTCUSDT → BTC-USD, XAUUSD+ → GC=F,
+# 700.HK → 0700.HK) 는 상류의 Yahoo 심볼 변환 테이블과 함께 삭제되었습니다.
+# KRX 포크는 6자리 숫자 체계라 broker-alias 가 발생하지 않습니다.
 
 
 @pytest.mark.unit
@@ -80,13 +71,9 @@ def test_load_rejects_a_malformed_file_with_a_clear_error(tmp_path):
         load_portfolio(bad)
 
 
-@pytest.mark.unit
-def test_one_instrument_held_under_two_spellings_shows_both_holdings():
-    book = PortfolioContext.model_validate({"positions": [
-        {"ticker": "BTCUSDT", "quantity": 1}, {"ticker": "BTC-USD", "quantity": 2}]})
-    text = book.render("BTC-USD")
-    assert "Current position in BTC-USD: 1 units (listed as BTCUSDT)" in text
-    assert "Current position in BTC-USD: 2 units" in text and "Other positions" not in text
+# Task 4a (#42): test_one_instrument_held_under_two_spellings_shows_both_holdings
+# 는 crypto broker-alias (BTCUSDT ≡ BTC-USD) 변환을 테스트했으나 해당 로직이
+# 삭제되었습니다.
 
 
 @pytest.mark.unit
