@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from tradingagents.dataflows.date_window import is_historical
-from tradingagents.dataflows.vendors.yahoo.fundamentals import get_company_profile
+from tradingagents.dataflows.vendors.dart import get_company_profile
 
 logger = logging.getLogger(__name__)
 

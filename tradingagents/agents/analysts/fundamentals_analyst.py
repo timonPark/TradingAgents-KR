@@ -13,6 +13,7 @@ from tradingagents.agents.context import get_instrument_context_from_state, get_
 from tradingagents.agents.tools import (
     get_balance_sheet,
     get_cashflow,
+    get_convertible_bonds,
     get_fundamentals,
     get_income_statement,
     get_insider_transactions,
@@ -25,6 +26,9 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
     분기별 (`freq="quarterly"`) 재무제표를 선조회 — 분기 리포팅이 최신 트렌드를
     더 잘 반영하고 LLM 이 선호하는 세분화 수준. 실패 시 각 섹션에 에러 메시지만
     담아 반환 — 분석가 전체 중단 방지 (market_analyst 와 동일 fail-safe 패턴).
+
+    Task 5b (#48): KRX 전용 `get_convertible_bonds` (CB 발행 공시) 선조회 추가.
+    CB 는 희석 리스크 지표라 분석가가 투자 판단에 반영해야 함.
     """
     def _safe(fn, payload: dict) -> str:
         try:
@@ -59,12 +63,17 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
         "ticker": ticker,
         "trade_date": trade_date,
     })
+    convertible_bonds = _safe(get_convertible_bonds, {
+        "ticker": ticker,
+        "trade_date": trade_date,
+    })
     return {
         "fundamentals": fundamentals,
         "balance_sheet": balance_sheet,
         "cashflow": cashflow,
         "income_statement": income_statement,
         "insider_transactions": insider_transactions,
+        "convertible_bonds": convertible_bonds,
     }
 
 
@@ -81,7 +90,9 @@ def _render_prefetched(data: dict[str, str]) -> str:
         "### Income Statement (quarterly)\n"
         f"{data['income_statement']}\n\n"
         "### Insider Transactions (recent)\n"
-        f"{data['insider_transactions']}\n"
+        f"{data['insider_transactions']}\n\n"
+        "### Convertible Bonds (최근 1년 CB 발행 공시)\n"
+        f"{data['convertible_bonds']}\n"
     )
 
 
