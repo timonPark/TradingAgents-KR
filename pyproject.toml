@@ -30,6 +30,14 @@ dependencies = [
     "stockstats>=0.6.5",
     "typing-extensions>=4.14.0",
     "yfinance>=1.7.0",
+    # Task 5 (#46): 금융감독원 Open DART 를 통해 KRX 상장사의 재무/공시 데이터
+    # 조회. ``DART_API_KEY`` 환경변수로 인증. 0.3+ 는 py3.13+ 요구, 그 이전 py
+    # 버전은 0.2.x 로 폴백되며 패키지 레이아웃이 다름 (0.3: ``opendartreader``,
+    # 0.2: ``OpenDartReader``). ``vendors/dart.py`` 가 두 레이아웃 모두 처리.
+    "OpenDartReader>=0.2",
+    # Task 5 (#46): ``pandas.DataFrame.to_markdown`` 가 백엔드로 요구하는 포매터.
+    # DART vendor 가 재무제표를 Markdown 표로 렌더링할 때 사용.
+    "tabulate>=0.9",
 ]
 
 [project.optional-dependencies]
