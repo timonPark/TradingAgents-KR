@@ -9,18 +9,9 @@ from datetime import datetime, timedelta
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from tradingagents.agents.analysts.turn import invoke_once
+from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.tools import get_indicators, get_stock_data, get_verified_market_snapshot
-
-# 사전조회 패턴 전환으로 `TOOLS` 상수는 더 이상 LangGraph ToolNode 에 바인딩되지
-# 않지만, Task 3d (#36) 가 ToolNode/take_turn 을 최종 삭제할 때까지 명시적으로
-# "이 분석가가 쓰는 데이터 함수들" 을 문서화하는 용도로 유지.
-TOOLS = (
-    get_stock_data,
-    get_indicators,
-    get_verified_market_snapshot,
-)
 
 # 모든 기술적 지표를 선계산 — Claude Code 가 지표를 선택할 수 없으니 Python 이
 # 전량 계산해 프롬프트에 주입하고, LLM 은 보고서에서 어느 지표를 다룰지 선택.
