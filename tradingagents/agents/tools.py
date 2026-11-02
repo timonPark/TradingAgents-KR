@@ -230,6 +230,18 @@ def get_insider_transactions(
 
 
 @tool
+def get_convertible_bonds(
+    ticker: Annotated[str, InjectedState("company_of_interest")],
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    최근 1년간 전환사채(CB) 발행 공시 목록 (KRX 전용).
+    CB 는 신주 발행 가능성이라 희석 리스크 평가에 중요.
+    """
+    return route_to_vendor("get_convertible_bonds", ticker, trade_date or None)
+
+
+@tool
 def get_macro_indicators(
     indicator: Annotated[
         str,

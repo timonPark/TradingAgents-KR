@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 from tradingagents.dataflows import files
-from tradingagents.dataflows.vendors import sec_edgar
 from tradingagents.dataflows.vendors.yahoo import ohlcv
 
 
@@ -22,21 +21,6 @@ def _recording_replace(monkeypatch):
 
     monkeypatch.setattr(os, "replace", replace)
     return moves
-
-
-@pytest.mark.unit
-def test_sec_edgar_writers_never_share_a_temp_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(sec_edgar, "get_config", lambda: {"data_cache_dir": str(tmp_path)})
-    monkeypatch.setattr(sec_edgar, "_fetch_json", lambda url: {"url": url})
-    moves = _recording_replace(monkeypatch)
-
-    sec_edgar._cached_json("https://example/a", "facts.json")
-    (tmp_path / "sec_edgar" / "facts.json").unlink()
-    sec_edgar._cached_json("https://example/a", "facts.json")
-
-    temps = [src for src, _ in moves]
-    assert len(set(temps)) == 2
-    assert all(src.parent == dst.parent for src, dst in moves)
 
 
 @pytest.mark.unit

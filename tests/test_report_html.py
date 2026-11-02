@@ -91,17 +91,17 @@ def _fields(fragment):
 @pytest.mark.unit
 def test_run_details_show_each_value_as_its_own_field(tmp_path):
     # Task 2 (#21): deep_think_provider 는 제거됨. 모든 티어가 claude-code.
+    # Task 5b (#48): fundamental_data 는 DART 단일 vendor.
     settings = {**SETTINGS, "deep_think_llm": "opus",
-                "data_vendors": {"core_stock_apis": "yfinance", "fundamental_data": "sec_edgar,yfinance"}}
+                "data_vendors": {"core_stock_apis": "yfinance", "fundamental_data": "dart"}}
     write_report_tree(_state(), "NVDA", tmp_path, settings=settings, html=True)
     page = (tmp_path / "complete_report.html").read_text(encoding="utf-8")
     header = page[page.index("<header"):page.index("</header>")]
     for value in ("claude-code", "opus", "haiku", "market", "news",
-                  "sec_edgar", "yfinance"):
+                  "dart", "yfinance"):
         assert value in _fields(header)
-    # Vendors are named by what they serve, and a chain keeps its order.
+    # Vendors are named by what they serve.
     assert "Prices" in header and "Fundamentals" in header and "fundamental_data" not in header
-    assert header.index(">sec_edgar<") < header.rindex(">yfinance<")
 
 
 @pytest.mark.unit

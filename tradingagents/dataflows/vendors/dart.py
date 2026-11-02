@@ -308,6 +308,33 @@ def get_insider_transactions(ticker: str, trade_date: str = "") -> str:
         return f"[지분변동 포맷 실패: {exc}]"
 
 
+def get_company_profile(ticker: str) -> dict:
+    """``context.py`` 의 identity 해석을 위한 KRX 기업 프로필 dict.
+
+    상류 `yahoo.fundamentals.get_company_profile` 과 같은 shape (``longName``,
+    ``shortName``, ``exchange``, ``quoteType``) 를 돌려주지만 KRX corp_cls 를
+    거래소 라벨 (KOSPI/KOSDAQ) 로 매핑. DART 호출 실패 시 빈 dict 반환해
+    ``resolve_instrument_identity`` 가 안전하게 폴백.
+    """
+    try:
+        company = _dart().company(ticker)
+    except Exception:  # noqa: BLE001 — identity 해석 실패는 항상 fail-open
+        return {}
+    if not isinstance(company, dict):
+        return {}
+    name = (company.get("corp_name") or "").strip()
+    name_eng = (company.get("corp_name_eng") or "").strip()
+    corp_cls = (company.get("corp_cls") or "").strip()
+    # DART `corp_cls` 코드 — Y: KOSPI, K: KOSDAQ, N: KONEX, E: 기타
+    exchange_map = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX", "E": "기타"}
+    return {
+        "longName": name or name_eng,
+        "shortName": name_eng or name,
+        "exchange": exchange_map.get(corp_cls, corp_cls),
+        "quoteType": "EQUITY",
+    }
+
+
 def get_convertible_bonds(ticker: str, trade_date: str = "") -> str:
     """최근 전환사채(CB) 발행 공시 목록 (Task 5 신규 KRX 전용 지표).
 

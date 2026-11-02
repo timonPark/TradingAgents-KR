@@ -126,9 +126,9 @@ def build_default_config() -> dict:
         "data_vendors": {
             "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
             "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-            # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
-        # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
-        "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
+            # Task 5 (#46): KRX 상장사의 재무/공시는 금융감독원 Open DART 단일 vendor.
+            # 상류의 SEC EDGAR / Alpha Vantage / Yahoo fundamentals 는 전부 제거됨.
+            "fundamental_data": "dart",
             "news_data": "yfinance",             # Options: alpha_vantage, yfinance
             "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
             "prediction_markets": "polymarket",  # Options: polymarket (keyless)
