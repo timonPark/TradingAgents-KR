@@ -1,8 +1,6 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from tradingagents.agents.analysts import news_analyst
-
 
 @dataclass(frozen=True)
 class AnalystNodeSpec:
@@ -33,10 +31,10 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         report_key="sentiment_report",
     ),
     "news": AnalystNodeSpec(
+        # Task 3c (#35): 사전조회 패턴으로 전환되어 ToolNode 바인딩 불필요.
         key="news",
         agent_node="News Analyst",
         report_key="news_report",
-        tools=news_analyst.TOOLS,
     ),
     "fundamentals": AnalystNodeSpec(
         # Task 3b (#34): 사전조회 패턴으로 전환되어 ToolNode 바인딩 불필요.
