@@ -22,12 +22,29 @@ run 자체는 완결되도록).
 
 from __future__ import annotations
 
+import importlib
 import os
 from datetime import datetime
 from typing import Any
 
 _DART_INSTANCE: Any = None
 _DART_INIT_ERROR: Exception | None = None
+
+
+def _resolve_opendartreader_class() -> type:
+    """``OpenDartReader`` 클래스를 찾아 반환. 0.3+ (``opendartreader``) 와 0.2.x
+    (``OpenDartReader``, ``__init__`` 가 ``sys.modules`` 를 class 로 교체) 패키지
+    레이아웃을 모두 지원합니다. py3.13+ 환경은 0.3+ 로, 그 이전 py 버전은 0.2.x
+    로 설치되므로 호환성을 한 모듈에서 흡수합니다.
+    """
+    try:
+        mod = importlib.import_module("opendartreader")
+        return mod.OpenDartReader
+    except (ImportError, AttributeError):
+        pass
+    # 0.2.x 는 ``sys.modules['OpenDartReader']`` 를 OpenDartReader 클래스 자체로
+    # 교체합니다 (`__init__.py` 참조). 따라서 import 결과가 바로 클래스.
+    return importlib.import_module("OpenDartReader")
 
 
 def _dart() -> Any:
@@ -50,14 +67,14 @@ def _dart() -> Any:
         )
         raise _DART_INIT_ERROR
     try:
-        from opendartreader import OpenDartReader
+        cls = _resolve_opendartreader_class()
     except ImportError as exc:
         _DART_INIT_ERROR = RuntimeError(
             f"OpenDartReader 패키지가 설치되지 않았습니다: {exc}. "
             "`pip install OpenDartReader` 로 설치하세요."
         )
         raise _DART_INIT_ERROR from exc
-    _DART_INSTANCE = OpenDartReader(api_key)
+    _DART_INSTANCE = cls(api_key)
     return _DART_INSTANCE
 
 

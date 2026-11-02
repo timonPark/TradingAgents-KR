@@ -46,8 +46,10 @@ def test_dart_init_requires_api_key(monkeypatch):
 @pytest.mark.unit
 def test_dart_init_caches_instance():
     """``_dart()`` 가 lazy singleton 으로 OpenDartReader 를 한 번만 생성."""
-    with patch("opendartreader.OpenDartReader") as mock_cls:
-        mock_cls.return_value = MagicMock()
+    with patch.object(dart, "_resolve_opendartreader_class") as mock_resolve:
+        instance = MagicMock()
+        mock_cls = MagicMock(return_value=instance)
+        mock_resolve.return_value = mock_cls
         a = dart._dart()
         b = dart._dart()
         assert a is b
@@ -65,7 +67,7 @@ def test_get_fundamentals_renders_overview_and_recent_statements():
         "est_dt": "19690113",
     }
     fake.finstate_all.return_value = _finstate_df()
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_fundamentals("005930", "2026-11-03")
 
     assert "기업 개황" in result
@@ -82,7 +84,7 @@ def test_get_fundamentals_handles_missing_statement_gracefully():
     fake = MagicMock()
     fake.company.return_value = {"corp_name": "삼성전자"}
     fake.finstate_all.return_value = pd.DataFrame()  # empty
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_fundamentals("005930", "2026-11-03")
 
     assert "조회된 공시가 없습니다" in result or "최근 재무제표: 조회된 공시가 없습니다" in result
@@ -94,7 +96,7 @@ def test_get_fundamentals_absorbs_vendor_exceptions():
     fake = MagicMock()
     fake.company.side_effect = RuntimeError("boom")
     fake.finstate_all.return_value = _finstate_df()
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_fundamentals("005930", "2026-11-03")
 
     assert "조회 실패" in result or "boom" in result
@@ -105,7 +107,7 @@ def test_get_fundamentals_absorbs_vendor_exceptions():
 def test_get_balance_sheet_formats_bs_section():
     fake = MagicMock()
     fake.finstate_all.return_value = _finstate_df()
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_balance_sheet("005930", freq="quarterly", curr_date="2026-11-03")
 
     assert "재무상태표" in result
@@ -117,7 +119,7 @@ def test_get_balance_sheet_formats_bs_section():
 def test_get_cashflow_formats_cf_section():
     fake = MagicMock()
     fake.finstate_all.return_value = _finstate_df()
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_cashflow("005930", freq="quarterly", curr_date="2026-11-03")
 
     assert "현금흐름표" in result
@@ -130,7 +132,7 @@ def test_get_income_statement_falls_back_to_is_when_cis_absent():
     df = _finstate_df()  # has IS but no CIS
     fake = MagicMock()
     fake.finstate_all.return_value = df
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_income_statement("005930", freq="quarterly", curr_date="2026-11-03")
 
     assert "매출액" in result
@@ -146,7 +148,7 @@ def test_get_insider_transactions_formats_shareholder_rows():
         "sp_stock_lmp_cnt": ["97,414,196", "11,739,000"],
         "trde_dt": ["20250115", "20250220"],
     })
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_insider_transactions("005930")
 
     assert "이재용" in result
@@ -157,7 +159,7 @@ def test_get_insider_transactions_formats_shareholder_rows():
 def test_get_insider_transactions_handles_empty():
     fake = MagicMock()
     fake.major_shareholders_exec.return_value = pd.DataFrame()
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_insider_transactions("005930")
 
     assert "지분변동" in result or "없습니다" in result
@@ -176,7 +178,7 @@ def test_get_convertible_bonds_filters_report_names():
         ],
         "flr_nm": ["이사회", "회사", "이사회"],
     })
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_convertible_bonds("005930")
 
     assert "전환사채" in result
@@ -194,7 +196,7 @@ def test_get_convertible_bonds_handles_no_cb():
         "report_nm": ["분기보고서"],
         "flr_nm": ["회사"],
     })
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         result = dart.get_convertible_bonds("005930")
 
     assert "전환사채" in result and "없습니다" in result
@@ -204,7 +206,7 @@ def test_get_convertible_bonds_handles_no_cb():
 def test_balance_sheet_and_cashflow_error_messages_when_no_data():
     fake = MagicMock()
     fake.finstate_all.return_value = pd.DataFrame()  # empty
-    with patch("opendartreader.OpenDartReader", return_value=fake):
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
         bs = dart.get_balance_sheet("005930", freq="quarterly", curr_date="2026-11-03")
         cf = dart.get_cashflow("005930", freq="quarterly", curr_date="2026-11-03")
 
