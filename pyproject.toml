@@ -43,6 +43,10 @@ dependencies = [
     # 선언하지만 OHLCV 경로는 pandas 3.x 와 호환 — 설치 시 경고 뜨지만 vendor
     # 는 정상 동작. 상충은 ``vendors/pykrx.py`` 가 흡수.
     "pykrx>=1.0.49",
+    # Task 6 (#51): pykrx 가 ``pkg_resources`` (레거시 setuptools API) 를
+    # import — py3.12+ 는 setuptools 를 기본 번들하지 않아 ``ModuleNotFoundError``
+    # 발생. setuptools 를 명시 의존성으로 추가해 pykrx import 성공시킴.
+    "setuptools>=68",
 ]
 
 [project.optional-dependencies]
