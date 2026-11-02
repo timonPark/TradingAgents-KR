@@ -197,22 +197,26 @@ class TestCheckpointSignature(unittest.TestCase):
 
         g = object.__new__(TradingAgentsGraph)
         g.selected_analysts = ("market", "news")
-        base_config = {"max_debate_rounds": 1, "max_risk_discuss_rounds": 1, "llm_provider": "openai",
-                       "quick_think_llm": "q", "deep_think_llm": "d", "output_language": "English",
+        base_config = {"max_debate_rounds": 1, "max_risk_discuss_rounds": 1, "llm_provider": "claude-code",
+                       "quick_think_llm": "haiku", "deep_think_llm": "sonnet",
+                       "effort": "high", "quick_effort": "medium",
+                       "output_language": "Korean",
                        "data_vendors": {"core_stock_apis": "yfinance"}, "tool_vendors": {}}
         g.config = dict(base_config)
         base = g._run_signature("stock")
-        for key, value in (("llm_provider", "google"), ("quick_think_llm", "q2"), ("deep_think_llm", "d2"),
-                           ("output_language", "Deutsch"),
+        # Task 2 (#21): backend_url/temperature/openai_reasoning_effort/llm_max_retries
+        # 는 제거됨. 대신 effort/quick_effort 가 signature 에 포함.
+        for key, value in (("quick_think_llm", "sonnet"), ("deep_think_llm", "opus"),
+                           ("output_language", "English"),
+                           ("effort", "max"), ("quick_effort", "low"),
                            ("data_vendors", {"core_stock_apis": "alpha_vantage"}),
                            ("tool_vendors", {"get_news": "alpha_vantage"}),
-                           ("backend_url", "http://other-endpoint/v1"), ("max_tool_rounds", 30),
-                           ("temperature", 0.2), ("openai_reasoning_effort", "high")):
+                           ("max_tool_rounds", 30)):
             g.config = {**base_config, key: value}
             self.assertNotEqual(base, g._run_signature("stock"), key)
-        # Where a run keeps its files, and how it retries, do not change what it writes.
+        # Where a run keeps its files and whether it checkpoints do not change what it writes.
         for key, value in (("results_dir", "/elsewhere"), ("data_cache_dir", "/cache"),
-                           ("memory_log_path", "/log.md"), ("checkpoint_enabled", True), ("llm_max_retries", 9)):
+                           ("memory_log_path", "/log.md"), ("checkpoint_enabled", True)):
             g.config = {**base_config, key: value}
             self.assertEqual(base, g._run_signature("stock"), key)
         g.config = dict(base_config)

@@ -2,39 +2,29 @@ import os
 
 _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
 
-# Single source of truth for env-var → config-key overrides. To expose
-# a new config key for environment-based override, add a row here — no
-# entry-point script changes required. Coercion is driven by the type
-# of the existing default, so users can keep writing plain strings in
-# their .env file.
+# Single source of truth for env-var → config-key overrides. To expose a new
+# config key for environment-based override, add a row here — no entry-point
+# script changes required. Coercion is driven by the type of the existing
+# default, so users can keep writing plain strings in their .env file.
+#
+# Task 2 (#21): 외부 LLM provider 관련 env 매핑들 (TRADINGAGENTS_LLM_PROVIDER,
+# TRADINGAGENTS_LLM_BACKEND_URL, TRADINGAGENTS_DEEP_THINK_PROVIDER, QUICK_THINK_
+# PROVIDER, DEEP_THINK_BACKEND_URL, QUICK_THINK_BACKEND_URL, TEMPERATURE,
+# LLM_MAX_RETRIES, MAX_TOKENS, GOOGLE_THINKING_LEVEL, OPENAI_REASONING_EFFORT,
+# ANTHROPIC_EFFORT) 는 하드 포크 결정(ADR-0001)으로 모두 제거되었습니다. provider
+# 는 claude-code 로 고정이며 어댑터는 effort/quick_effort 로만 제어됩니다.
 _ENV_OVERRIDES = {
-    "TRADINGAGENTS_LLM_PROVIDER":         "llm_provider",
     "TRADINGAGENTS_DEEP_THINK_LLM":       "deep_think_llm",
     "TRADINGAGENTS_QUICK_THINK_LLM":      "quick_think_llm",
-    "TRADINGAGENTS_DEEP_THINK_PROVIDER":       "deep_think_provider",
-    "TRADINGAGENTS_QUICK_THINK_PROVIDER":      "quick_think_provider",
-    "TRADINGAGENTS_DEEP_THINK_BACKEND_URL":    "deep_think_backend_url",
-    "TRADINGAGENTS_QUICK_THINK_BACKEND_URL":   "quick_think_backend_url",
-    "TRADINGAGENTS_LLM_BACKEND_URL":      "backend_url",
     "TRADINGAGENTS_OUTPUT_LANGUAGE":      "output_language",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_MAX_TOOL_ROUNDS":      "max_tool_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
-    "TRADINGAGENTS_TEMPERATURE":          "temperature",
-    "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
-    "TRADINGAGENTS_MAX_TOKENS":           "max_tokens",
-    # Provider-specific reasoning/thinking knobs (None = each provider's own
-    # default). Settable here for non-interactive runs; the CLI also offers an
-    # interactive choice, which is skipped when the matching var is set.
-    "TRADINGAGENTS_GOOGLE_THINKING_LEVEL":   "google_thinking_level",
-    "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
-    "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
     # Claude Code 어댑터용 티어별 effort (Task 1f #7). `effort` 는 deep 티어
     # (리서처/매니저/트레이더/디베이터), `quick_effort` 는 quick 티어 (분석가).
-    # `factory.create_tier_client` 가 호출 티어에 맞는 값을 선택해 어댑터로
-    # 넘긴다.
+    # `factory.create_tier_client` 가 호출 티어에 맞는 값을 선택해 어댑터로 넘긴다.
     "TRADINGAGENTS_EFFORT":        "effort",
     "TRADINGAGENTS_QUICK_EFFORT":  "quick_effort",
 }
@@ -103,43 +93,13 @@ def build_default_config() -> dict:
         # Claude Code `--effort` 티어별 디폴트. Task 1f (#7).
         "effort": "high",            # deep 티어 (리서처/매니저/트레이더/디베이터)
         "quick_effort": "medium",    # quick 티어 (분석가)
-        # When None, each provider's client falls back to its own default endpoint
-        # (api.openai.com for OpenAI, generativelanguage.googleapis.com for Gemini, ...).
-        # The CLI overrides this per provider when the user picks one. Keeping a
-        # provider-specific URL here would leak (e.g. OpenAI's /v1 was previously
-        # being forwarded to Gemini, producing malformed request URLs).
-        "backend_url": None,
-        # A tier may name its own provider and endpoint (#1440): the quick tier serves
-        # the analysts, researchers, debaters and trader, the deep tier the managers.
-        # None means the tier uses llm_provider and backend_url.
-        "quick_think_provider": None,
-        "deep_think_provider": None,
-        "quick_think_backend_url": None,
-        "deep_think_backend_url": None,
-        # Provider-specific thinking configuration
-        "google_thinking_level": None,      # "high", "minimal", etc.
-        "openai_reasoning_effort": None,    # "medium", "high", "low"
-        "anthropic_effort": None,           # "high", "medium", "low"
-        # Sampling temperature, forwarded to every provider when set. None leaves
-        # each provider at its own default. Lower values reduce run-to-run
-        # variation on models that honor it; reasoning models largely ignore it
-        # and no setting makes LLM output bit-identical across runs (see README).
-        "temperature": None,
-        # SDK retry budget forwarded to every provider chat client. None leaves each
-        # provider/SDK at its own default (usually 2). Raise it to ride out bursty
-        # 429 throttling on rate-limited deployments instead of aborting a run (#1091).
-        "llm_max_retries": None,
-        # Cap on output tokens forwarded to every provider chat client. None leaves
-        # each provider at its own default. Set it to bound a model that emits
-        # unbounded reasoning/output and hangs or trips a gateway idle timeout
-        # (e.g. some deepseek-v4-flash deployments, #1204).
-        "max_tokens": None,
         # Checkpoint/resume: when True, LangGraph saves state after each node
         # so a crashed run can resume from the last successful step.
         "checkpoint_enabled": False,
-        # Output language for analyst reports and final decision
-        # Internal agent debate stays in English for reasoning quality
-        "output_language": "English",
+        # Output language for analyst reports and final decision.
+        # Task 2 (#21): 디폴트는 한국어. 다른 언어 는 TRADINGAGENTS_OUTPUT_LANGUAGE
+        # 또는 CLI 메뉴로 변경 가능.
+        "output_language": "Korean",
         # Debate and discussion settings
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
