@@ -124,8 +124,10 @@ def build_default_config() -> dict:
         # routed to vendors you didn't choose. For ordered fallback, list several,
         # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
         "data_vendors": {
-            "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-            "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
+            # Task 6 (#51): KRX 전용 pykrx 단일 vendor. OHLCV / 기술지표 / 투자자별
+            # 수급 전부 pykrx 가 서브. 상류의 Yahoo Finance / Alpha Vantage 는 제거됨.
+            "core_stock_apis": "pykrx",
+            "technical_indicators": "pykrx",
             # Task 5 (#46): KRX 상장사의 재무/공시는 금융감독원 Open DART 단일 vendor.
             # 상류의 SEC EDGAR / Alpha Vantage / Yahoo fundamentals 는 전부 제거됨.
             "fundamental_data": "dart",

@@ -8,9 +8,7 @@ from tradingagents.dataflows.errors import (
 )
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_global_news as get_alpha_vantage_global_news,
-    get_indicator as get_alpha_vantage_indicator,
     get_news as get_alpha_vantage_news,
-    get_stock as get_alpha_vantage_stock,
 )
 from tradingagents.dataflows.vendors.dart import (
     get_balance_sheet as get_dart_balance_sheet,
@@ -24,9 +22,10 @@ from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macr
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
-from tradingagents.dataflows.vendors.yahoo.market import (
-    get_stock_stats_indicators_window,
-    get_YFin_data_online,
+from tradingagents.dataflows.vendors.pykrx import (
+    get_investor_net_purchases as get_pykrx_investor_net_purchases,
+    get_stock_data as get_pykrx_stock_data,
+    get_stock_stats_indicators_window as get_pykrx_indicators_window,
 )
 from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
 
@@ -35,13 +34,16 @@ logger = logging.getLogger(__name__)
 # Tools organized by category
 TOOLS_CATEGORIES = {
     "core_stock_apis": {
-        "description": "OHLCV stock price data",
+        "description": "OHLCV stock price data (KRX via pykrx)",
         "tools": [
-            "get_stock_data"
+            "get_stock_data",
+            # Task 6b (#53): KRX 전용 투자자별 수급 — 외국인/기관/개인 순매수. 가격
+            # 변동 선행 지표라 core 가격 범주에 포함.
+            "get_investor_net_purchases",
         ]
     },
     "technical_indicators": {
-        "description": "Technical analysis indicators",
+        "description": "Technical analysis indicators (stockstats on pykrx OHLCV)",
         "tools": [
             "get_indicators"
         ]
@@ -90,15 +92,16 @@ OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
-    # core_stock_apis
+    # core_stock_apis — Task 6 (#51): KRX 전용 pykrx 단일 vendor
     "get_stock_data": {
-        "alpha_vantage": get_alpha_vantage_stock,
-        "yfinance": get_YFin_data_online,
+        "pykrx": get_pykrx_stock_data,
     },
-    # technical_indicators
+    "get_investor_net_purchases": {
+        "pykrx": get_pykrx_investor_net_purchases,
+    },
+    # technical_indicators — pykrx OHLCV 에 stockstats 적용
     "get_indicators": {
-        "alpha_vantage": get_alpha_vantage_indicator,
-        "yfinance": get_stock_stats_indicators_window,
+        "pykrx": get_pykrx_indicators_window,
     },
     # fundamental_data — DART (금융감독원 Open DART) 단일 vendor (Task 5, KRX 전용 하드 포크)
     "get_fundamentals": {
