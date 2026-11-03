@@ -21,15 +21,15 @@ from tradingagents.agents.tools import (
 # 뉴스 선조회 창 — 최근 1주일.
 _NEWS_WINDOW_DAYS = 7
 
-# 사전조회할 거시 지표. 원래 프롬프트에 나열된 핵심 지표를 전부 선조회해 LLM 이
-# 보고서에서 어느 것을 다룰지 선택.
+# 사전조회할 거시 지표. 한국 거시 환경에 맞춘 핵심 지표를 전부 선조회해 LLM 이
+# 보고서에서 어느 것을 다룰지 선택. Task 7d (#65): FRED alias → ECOS alias.
 _MACRO_INDICATORS = (
-    "cpi",
-    "core_pce",
-    "unemployment",
-    "fed_funds_rate",
-    "10y_treasury",
-    "yield_curve",
+    "base_rate",        # 한국은행 기준금리
+    "cpi",              # 소비자물가지수
+    "unemployment_rate",  # 실업률
+    "treasury_10y",     # 국고채 10년 금리
+    "usd_krw",          # 원/달러 환율
+    "consumer_sentiment",  # 소비자심리지수 (CSI)
 )
 
 # 사전조회할 예측 시장 토픽. LLM 이 자유 입력 topic 을 선택할 수 없으니 공통
@@ -109,7 +109,7 @@ def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
         f"{data['ticker_news']}\n\n"
         "### Global / Macroeconomic News\n"
         f"{data['global_news']}\n\n"
-        "### Macroeconomic Indicators (FRED, by series)\n"
+        "### Korean Macroeconomic Indicators (한국은행 ECOS, by series)\n"
         f"{data['macro']}\n\n"
         "### Prediction Markets (live market-implied probabilities)\n"
         f"{data['prediction_markets']}\n"
@@ -131,13 +131,13 @@ def create_news_analyst(llm):
         system_message = (
             f"You are a news researcher tasked with analyzing recent news and trends over the past "
             f"week. The data has been **pre-fetched for you** — recent news about the {asset_label} "
-            "under analysis, broader global / macroeconomic news, core macro indicators from FRED "
-            "(cpi, core_pce, unemployment, fed_funds_rate, 10y_treasury, yield_curve), and live "
-            "prediction-market probabilities for common macro events (Fed rate cuts, 2026 recession). "
-            "You will **not** call tools; write a comprehensive report of the current state of the "
-            "world relevant for trading and macroeconomics grounded in the pre-fetched data below. "
-            "Provide specific, actionable insights with supporting evidence to help traders make "
-            "informed decisions."
+            "under analysis, broader global / macroeconomic news, core Korean macro indicators from "
+            "한국은행 ECOS (기준금리, 소비자물가지수, 실업률, 국고채 10년, 원/달러 환율, 소비자심리지수), "
+            "and live prediction-market probabilities for common macro events (Fed rate cuts, 2026 "
+            "recession). You will **not** call tools; write a comprehensive report of the current "
+            "state of the world relevant for trading and macroeconomics grounded in the pre-fetched "
+            "data below. Provide specific, actionable insights with supporting evidence to help "
+            "traders make informed decisions."
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
         )

@@ -14,7 +14,7 @@ from tradingagents.dataflows.vendors.dart import (
     get_income_statement as get_dart_income_statement,
     get_insider_transactions as get_dart_insider_transactions,
 )
-from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macro_data
+from tradingagents.dataflows.vendors.ecos import get_macro_data as get_ecos_macro_data
 from tradingagents.dataflows.vendors.naver_news import (
     get_global_news as get_naver_global_news,
     get_news as get_naver_news,
@@ -128,9 +128,9 @@ VENDOR_METHODS = {
     "get_insider_transactions": {
         "dart": get_dart_insider_transactions,
     },
-    # macro_data
+    # macro_data — Task 7d (#65): KRX 전용 한국은행 ECOS 단일 vendor
     "get_macro_indicators": {
-        "fred": get_fred_macro_data,
+        "ecos": get_ecos_macro_data,
     },
     # prediction_markets
     "get_prediction_markets": {
