@@ -212,3 +212,30 @@ def test_balance_sheet_and_cashflow_error_messages_when_no_data():
 
     assert "없습니다" in bs
     assert "없습니다" in cf
+
+
+# ============================================================================
+# Integration tests (Task 11b, #93) — 실제 Open DART API 호출. CI 는 skip.
+#   로컬 실행: ``DART_API_KEY=... pytest tests/test_dart_vendor.py -m integration``
+# ============================================================================
+
+
+@pytest.mark.integration
+def test_live_dart_fundamentals_for_005930(dart_api_key):
+    """DART 에서 삼성전자 기업 개황 + 최근 재무제표 조회."""
+    out = dart.get_fundamentals("005930", "2026-11-03")
+    # 기업 개황 섹션 (성공 또는 vendor 에러 메시지)
+    assert "기업 개황" in out or "DART 조회 실패" in out
+    if "DART 조회 실패" not in out:
+        assert "삼성전자" in out
+
+
+@pytest.mark.integration
+def test_live_dart_company_profile_for_005930(dart_api_key):
+    """get_company_profile 이 KOSPI 분류를 돌려줌."""
+    profile = dart.get_company_profile("005930")
+    assert isinstance(profile, dict)
+    # 성공 시 longName + exchange, 실패 시 빈 dict
+    if profile:
+        assert profile.get("exchange") in ("KOSPI", "KOSDAQ", "KONEX", "기타")
+        assert profile.get("longName")

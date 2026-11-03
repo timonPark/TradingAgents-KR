@@ -1,7 +1,7 @@
 """Task 6a (#52): pykrx vendor 유닛 테스트.
 
 실제 pykrx / KRX API 는 호출하지 않고 전부 모킹. 통합 테스트 (네트워크) 는
-Task 11 로 분산.
+파일 하단 ``@pytest.mark.integration`` 섹션 참조 (Task 11 #92).
 """
 
 from __future__ import annotations
@@ -181,3 +181,39 @@ def test_build_market_snapshot_renders_ground_truth_sections():
     # 11개 지표 전부 포함
     for ind in ("close_10_ema", "rsi", "boll", "macd", "atr"):
         assert ind in snapshot
+
+
+# ============================================================================
+# Integration tests (Task 11a, #92) — 실제 KRX / pykrx 호출. CI 는 skip.
+#   로컬 실행: ``pytest tests/test_pykrx_vendor.py -m integration``
+#   keyless 라 환경변수 불필요.
+# ============================================================================
+
+
+@pytest.mark.integration
+def test_live_ohlcv_for_005930_has_recent_rows():
+    """2024-01-01 이후 005930 OHLCV 가 비어있지 않고 영어 컬럼으로 변환됨."""
+    frame = pykrx.load_ohlcv("005930", "2026-11-03")
+    assert not frame.empty
+    assert set(frame.columns) >= {"Date", "Open", "High", "Low", "Close", "Volume"}
+    # 최근 데이터가 as_of_date 범위 안
+    assert frame["Date"].max() <= pd.Timestamp("2026-11-03")
+    # 최소 몇 백 영업일 (5년 look-back 디폴트)
+    assert len(frame) >= 100
+
+
+@pytest.mark.integration
+def test_live_stock_data_csv_for_005930():
+    """get_stock_data 가 CSV 문자열을 돌려주고 KRX 헤더 포함."""
+    out = pykrx.get_stock_data("005930", "2026-10-01", "2026-10-31")
+    assert "# KRX OHLCV for 005930 from 2026-10-01 to 2026-10-31" in out
+    assert "Open,High,Low,Close,Volume" in out
+
+
+@pytest.mark.integration
+def test_live_indicator_window_renders_rsi_values():
+    """최근 영업일 RSI 창 — 숫자 값 또는 N/A 가 포함."""
+    out = pykrx.get_indicator("005930", "rsi", "2026-11-03", 10)
+    assert "rsi" in out.lower()
+    # 영업일/주말 라인 둘 다 가능
+    assert "2026-11-03" in out or "2026-11-02" in out

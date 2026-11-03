@@ -234,3 +234,33 @@ def test_get_global_news_dedupes_titles(monkeypatch):
 
     # "기준금리 동결" 이 하루 3페이지 × 3일 = 9회 반복되어도 1회만
     assert out.count("기준금리 동결") == 1
+
+
+# ============================================================================
+# Integration tests (Task 11a, #92) — 실제 네이버 금융 크롤. CI 는 skip.
+#   로컬 실행: ``pytest tests/test_naver_news_vendor.py -m integration``
+#   keyless 라 환경변수 불필요.
+# ============================================================================
+
+
+@pytest.mark.integration
+def test_live_item_news_for_005930_returns_markdown_header():
+    """실제 네이버 금융에서 005930 뉴스를 크롤 — 최근 3일 범위."""
+    from datetime import datetime, timedelta
+
+    today = datetime.now()
+    end = today.strftime("%Y-%m-%d")
+    start = (today - timedelta(days=3)).strftime("%Y-%m-%d")
+    out = naver_news.get_news("005930", start, end)
+    # 네트워크 성공 또는 특정 범위에 뉴스 없음 두 경우 모두 Markdown 헤더는 포함.
+    assert f"## 005930 뉴스 ({start} ~ {end})" in out
+
+
+@pytest.mark.integration
+def test_live_global_news_returns_markdown_header():
+    """실제 네이버 금융 주요뉴스 — 최근 1일."""
+    from datetime import datetime
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    out = naver_news.get_global_news(today, look_back_days=1, limit=5)
+    assert "## 주요뉴스" in out

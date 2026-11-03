@@ -110,6 +110,36 @@ def _dummy_api_keys(monkeypatch):
         monkeypatch.setenv(env_var, os.environ.get(env_var) or "placeholder")
 
 
+# Task 11 (#91): opt-in 통합 테스트 공용 헬퍼. API 키 요구 vendor 테스트가
+# 환경변수 없을 때 깔끔히 skip 하도록. unit 테스트에는 영향 없음 (autouse 아님).
+@pytest.fixture
+def dart_api_key():
+    """``DART_API_KEY`` 가 없으면 통합 테스트 skip."""
+    key = os.environ.get("DART_API_KEY", "").strip()
+    if not key:
+        pytest.skip("DART_API_KEY 환경변수 필요 — 로컬 .env 에 설정하세요")
+    return key
+
+
+@pytest.fixture
+def ecos_api_key():
+    """``ECOS_API_KEY`` 가 없으면 통합 테스트 skip."""
+    key = os.environ.get("ECOS_API_KEY", "").strip()
+    if not key:
+        pytest.skip("ECOS_API_KEY 환경변수 필요 — 로컬 .env 에 설정하세요")
+    return key
+
+
+@pytest.fixture
+def claude_cli_available():
+    """``claude`` CLI 가 PATH 에 없으면 skip."""
+    import shutil
+
+    if shutil.which("claude") is None:
+        pytest.skip("claude CLI 를 PATH 에서 찾을 수 없음 — @anthropic-ai/claude-code 설치 필요")
+    return True
+
+
 @pytest.fixture(autouse=True)
 def _isolate_config():
     """Reset the global dataflows config before and after each test.
