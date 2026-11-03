@@ -154,19 +154,28 @@ def test_cli_run_uses_the_memory_log_like_propagate(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("resuming, said", [(True, "resuming"), (False, "starting fresh")])
-def test_the_cli_run_says_whether_it_resumed(tmp_path, monkeypatch, resuming, said):
+# Task 9f (#85): CLI UI 한국어화. 하위 호환으로 영어/한국어 모두 수용.
+@pytest.mark.parametrize("resuming, phrases", [
+    (True, ("resuming", "저장된 run 을 이어서")),
+    (False, ("starting fresh", "분석을 새로 시작")),
+])
+def test_the_cli_run_says_whether_it_resumed(tmp_path, monkeypatch, resuming, phrases):
     """The README promises the run view tells a resumed run from a fresh one."""
     buffer = _run_cli(monkeypatch, tmp_path, _FakeGraph(resuming=resuming))
 
-    assert any(said in text.lower() for _, kind, text in buffer.messages if kind == "System")
+    assert any(any(p in text.lower() if p.isascii() else p in text for p in phrases)
+               for _, kind, text in buffer.messages if kind == "System")
 
 
 @pytest.mark.unit
 def test_a_run_without_checkpointing_says_nothing_about_resuming(tmp_path, monkeypatch):
     buffer = _run_cli(monkeypatch, tmp_path, _FakeGraph())
 
-    assert not any("resum" in text.lower() or "fresh" in text.lower() for _, _, text in buffer.messages)
+    assert not any(
+        "resum" in text.lower() or "fresh" in text.lower()
+        or "이어서" in text or "새로 시작" in text
+        for _, _, text in buffer.messages
+    )
 
 
 @pytest.mark.unit

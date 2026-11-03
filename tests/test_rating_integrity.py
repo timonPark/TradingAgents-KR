@@ -167,7 +167,8 @@ def test_the_cli_says_when_a_run_produced_no_usable_rating(monkeypatch, tmp_path
 
     cli_run.run_analysis()
 
-    assert any("review" in line.lower() for line in printed), printed[-5:]
+    # Task 9f (#85): CLI 메시지 한국어화 — "재검토" 로도 체크.
+    assert any("review" in line.lower() or "재검토" in line for line in printed), printed[-5:]
 
 
 @pytest.mark.unit
