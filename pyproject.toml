@@ -50,6 +50,9 @@ dependencies = [
     # 80.x 이하로 묶어 pkg_resources 를 유지. pykrx 가 1.2+ 로 안정화되면 (pandas
     # 3.0 지원) 이 핀은 제거 가능.
     "setuptools>=68,<81",
+    # Task 7 (#61): 네이버 금융 HTML 파싱. yfinance 등의 transitive 로 이미 설치
+    # 되어 있지만 vendors/naver_news.py 가 직접 의존하므로 명시.
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
