@@ -24,10 +24,13 @@ def test_grid_spacing_and_canonical_dates():
 
 @pytest.mark.unit
 def test_grid_stops_at_today(monkeypatch):
+    """Task 8 (#74): KRX 영업일만 반환하므로 "today" 는 영업일로 고정 — 토요일인
+    2026-01-10 은 그리드에 포함되지 않음."""
     import tradingagents.backtest as bt
 
-    monkeypatch.setattr(bt, "get_current_date", lambda: "2026-01-10")
-    assert iter_grid("2026-01-05", "2026-02-20", every_n_days=5) == ["2026-01-05", "2026-01-10"]
+    # 2026-01-12 (Mon, 영업일) 를 today 로 고정. Jan 5 Mon → +5 days → Jan 10 Sat (제외) → +5 → Jan 15 Thu (today 넘김).
+    monkeypatch.setattr(bt, "get_current_date", lambda: "2026-01-12")
+    assert iter_grid("2026-01-05", "2026-02-20", every_n_days=7) == ["2026-01-05", "2026-01-12"]
 
 
 @pytest.mark.unit

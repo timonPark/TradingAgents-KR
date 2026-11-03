@@ -53,6 +53,9 @@ dependencies = [
     # Task 7 (#61): 네이버 금융 HTML 파싱. yfinance 등의 transitive 로 이미 설치
     # 되어 있지만 vendors/naver_news.py 가 직접 의존하므로 명시.
     "beautifulsoup4>=4.12",
+    # Task 8 (#74): KRX 거래소 캘린더. ``XKRX`` 로 한국 공휴일 (설날/추석/광복절
+    # 등) 과 영업일을 지원. 순수 Python, API 키 불필요.
+    "exchange_calendars>=4.0",
 ]
 
 [project.optional-dependencies]

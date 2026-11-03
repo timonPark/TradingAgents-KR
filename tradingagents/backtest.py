@@ -25,6 +25,7 @@ from pathlib import Path
 
 from tradingagents.agents.rating import RATING_REVIEW
 from tradingagents.dataflows.date_window import get_current_date
+from tradingagents.dataflows.krx_calendar import is_trading_day
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.memory import TradingMemoryLog
@@ -33,10 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 def iter_grid(start_date: str, end_date: str, every_n_days: int = 1) -> list[str]:
-    """Analysis dates from ``start_date``, never past today.
+    """``start_date`` 부터 ``every_n_days`` 캘린더 간격으로, KRX 영업일만 반환.
 
-    A future date has no outcome to settle against, and the graph rejects one, so
-    the grid stops at the present rather than producing cells that cannot score.
+    Task 8 (#74): 캘린더 간격으로 샘플링한 뒤 KRX 영업일 (주말/공휴일 제외) 만
+    유지. ``--every 7`` 로 월요일 샘플링 시 그 월요일이 광복절·추석 같은 공휴일
+    이면 해당 셀만 자동 생략. 미래 날짜는 settle 할 결과가 없고 그래프가 거부하
+    므로 그리드가 오늘에서 멈춤.
+
+    Args:
+        start_date, end_date: ``YYYY-MM-DD``. 범위 끝점 포함.
+        every_n_days: 캘린더 일 간격. 1 → 매일 (영업일만), 7 → 주간 샘플.
     """
     start, end = _canonical(start_date), _canonical(end_date)
     if every_n_days < 1:
@@ -47,7 +54,9 @@ def iter_grid(start_date: str, end_date: str, every_n_days: int = 1) -> list[str
     last = min(end, datetime.strptime(get_current_date(), "%Y-%m-%d"))
     dates, cursor = [], start
     while cursor <= last:
-        dates.append(cursor.strftime("%Y-%m-%d"))
+        date_str = cursor.strftime("%Y-%m-%d")
+        if is_trading_day(date_str):
+            dates.append(date_str)
         cursor += timedelta(days=every_n_days)
     return dates
 

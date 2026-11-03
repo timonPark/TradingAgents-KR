@@ -3,17 +3,27 @@
 - ``as_of`` / ``as_of_window`` clamp a date or window the model asks for to the
   trade date, so no tool reaches a vendor with a later one, and always hand it
   over as ``YYYY-MM-DD``: vendors compare dates as text.
-- ``in_window`` trims dated items (news, StockTwits, Reddit) to the analysis
-  window: timestamps normalized to UTC, the upper bound exclusive at midnight
-  after ``end``, and an undated item kept only when the window reaches the
-  present, since a backtest cannot prove it is not from the future (#1126, #1220).
+- ``in_window`` trims dated items (news) to the analysis window: timestamps
+  normalized to UTC, the upper bound exclusive at midnight after ``end``, and an
+  undated item kept only when the window reaches the present, since a backtest
+  cannot prove it is not from the future (#1126, #1220).
 - ``coverage_gap`` reports a window a feed cannot reach as unavailable, not empty.
-- ``withhold_live_profile`` withholds present-day snapshots from historical runs.
+- ``get_current_date`` returns today's KST calendar date (not KRX trading day;
+  for the latest KRX session, use ``krx_calendar.current_trading_date``).
+
+Task 8 (#74): ``get_current_date`` 가 KST 타임존 기준으로 동작. 레거시
+``withhold_live_profile`` / ``withhold_undisclosed_trades`` /
+``withhold_undated_statements`` 는 Yahoo/AV/SEC EDGAR 전용 dead code 라
+Task 7 vendor 삭제 이후 호출 사이트가 사라져 제거됨.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
+
+import pytz
+
+_KST = pytz.timezone("Asia/Seoul")
 
 
 def to_utc(dt: datetime) -> datetime:
@@ -33,8 +43,12 @@ def in_window(pub_dt: datetime | None, start_dt: datetime, end_dt: datetime) -> 
 
 
 def get_current_date() -> str:
-    """Today's date, YYYY-MM-DD."""
-    return date.today().strftime("%Y-%m-%d")
+    """오늘 날짜 (KST 기준), ``YYYY-MM-DD``.
+
+    Task 8 (#74): 시스템 로컬 타임존이 UTC 등 다른 시간대라도 KST (``Asia/Seoul``)
+    기준으로 결정. KRX 세션 (09:00-15:30 KST) 과 "오늘" 개념이 일치하도록.
+    """
+    return datetime.now(_KST).strftime("%Y-%m-%d")
 
 
 def is_historical(run_date) -> bool:
@@ -111,66 +125,8 @@ def as_of_window(start_date: str, end_date: str, trade_date: str) -> tuple[str, 
     return f"{end_dt - span:%Y-%m-%d}", end
 
 
-def withhold_live_profile(as_of_date: str | None, label: str) -> str | None:
-    """Notice to serve instead of a live-only company profile, or None to serve it.
-
-    Vendor "company overview" endpoints (yfinance ``Ticker.info``, Alpha Vantage
-    ``OVERVIEW``) carry no historical vintage — not even name, sector and
-    industry, which move when a company renames or is reclassified — so serving
-    one into a run dated in the past leaks post-decision information (#1300).
-    Every fundamentals vendor withholds on this rule, so switching between them
-    cannot reintroduce the leak.
-    """
-    if not is_historical(as_of_date):
-        return None
-    return (
-        f"# Company Fundamentals for {label}\n"
-        f"# Point-in-time as of: {as_of_date}\n\n"
-        f"Profile fundamentals are withheld for this date. This vendor serves "
-        f"only present-day values with no historical vintage: market "
-        f"cap, valuation multiples, the 52-week range and TTM income move with "
-        f"today's quote, and even the name, sector and industry reflect today "
-        f"rather than {as_of_date} (companies rename and get reclassified). "
-        f"Serving them would put post-decision information into a {as_of_date} "
-        f"analysis. Statements filed by {as_of_date} are served as filed where "
-        f"the filing date is known (SEC EDGAR, for US filers)."
-    )
-
-
-def withhold_undisclosed_trades(as_of_date: str | None, label: str) -> str | None:
-    """Notice to serve instead of insider trades with no filing date, or None to serve them.
-
-    A vendor that dates an insider trade by when it happened (Yahoo, Alpha
-    Vantage) cannot say when it became public: its Form 4 is filed up to two
-    business days later. A past run is told so rather than served trades that
-    may not yet have been disclosed.
-    """
-    if not is_historical(as_of_date):
-        return None
-    return (
-        f"# Insider Transactions for {label}\n"
-        f"# Point-in-time as of: {as_of_date}\n\n"
-        f"Insider transactions are withheld for this date. This vendor dates a trade "
-        f"by when it happened and reports no filing date, so it cannot show which "
-        f"trades were public on {as_of_date}."
-    )
-
-
-def withhold_undated_statements(as_of_date: str | None, label: str, title: str) -> str | None:
-    """Notice to serve instead of a statement with no filing date, or None to serve it.
-
-    A vendor that dates a statement by the period it covers (Yahoo, Alpha
-    Vantage) cannot say when its figures became public: a company files weeks
-    after the period ends, so a run dated in that gap would read figures that
-    were not yet known. A past run is told so; SEC EDGAR, which dates every
-    filing, serves US filers as filed.
-    """
-    if not is_historical(as_of_date):
-        return None
-    return (
-        f"# {title} for {label}\n"
-        f"# Point-in-time as of: {as_of_date}\n\n"
-        f"{title} data is withheld for this date. This vendor dates a statement by "
-        f"the period it covers and reports no filing date, so it cannot show which "
-        f"figures were public on {as_of_date}. SEC EDGAR serves US filers as filed."
-    )
+# Task 8 (#74): withhold_live_profile / withhold_undisclosed_trades /
+# withhold_undated_statements 함수는 Yahoo / Alpha Vantage / SEC EDGAR 전용
+# dead code 라 Task 7 vendor 삭제 이후 호출 사이트가 사라져 제거됨.
+# KRX 전용 vendor (DART, pykrx, 네이버뉴스, ECOS) 는 공시일 또는 영업일 기반
+# 자체 point-in-time 로직을 가지므로 공통 withhold_ 추상화 불필요.
