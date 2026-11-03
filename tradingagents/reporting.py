@@ -18,13 +18,18 @@ def analyst_names(keys) -> list[str]:
 
 
 def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
-    """The report's title and what produced it: analysis date, version, models, analysts, vendors."""
-    lines = [f"# Trading Analysis Report: {ticker}", ""]
+    """리포트 제목과 생성 내역: 분석일, 버전, 모델, 분석가, vendor.
+
+    Task 9c (#82): KRX 하드 포크 (ADR-0003) 에 따라 사용자 노출 라벨은 한국어.
+    내부 state 키 (``trade_date``, ``market_report`` 등) 는 영어 유지 — 코드
+    식별자 i18n 경계.
+    """
+    lines = [f"# 트레이딩 분석 보고서: {ticker}", ""]
     if final_state.get("trade_date"):
-        lines.append(f"- Analysis date: {final_state['trade_date']}")
+        lines.append(f"- 분석일: {final_state['trade_date']}")
     if final_state.get("final_trade_decision"):
-        lines.append(f"- Rating: {run_rating(final_state)}")
-    lines.append(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"- 등급: {run_rating(final_state)}")
+    lines.append(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if settings:
         s = settings.get
         # Task 2 (#21): deep_think_provider / quick_think_provider 는 제거됨.
@@ -35,40 +40,43 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
                   f"quick {s('quick_think_llm', '?')} "
                   f"(effort {s('quick_effort', '?')})")
         lines.append(f"- TradingAgents {s('version', '?')}: {models}")
-        lines.append(f"- Analysts: {', '.join(analyst_names(s('analysts')))}; "
-                     f"research debate rounds {s('max_debate_rounds', '?')}, "
-                     f"risk debate rounds {s('max_risk_discuss_rounds', '?')}")
+        lines.append(f"- 분석가: {', '.join(analyst_names(s('analysts')))}; "
+                     f"리서치 토론 라운드 {s('max_debate_rounds', '?')}, "
+                     f"리스크 토론 라운드 {s('max_risk_discuss_rounds', '?')}")
         vendors = {**(s("data_vendors") or {}), **(s("tool_vendors") or {})}
         if vendors:
-            lines.append("- Data vendors: " + ", ".join(f"{k} {v}" for k, v in vendors.items()))
+            lines.append("- 데이터 vendor: " + ", ".join(f"{k} {v}" for k, v in vendors.items()))
     if final_state.get("memory_note"):
-        lines.append(f"- Memory log: {final_state['memory_note']}")
+        lines.append(f"- 메모리 로그: {final_state['memory_note']}")
     return "\n".join(lines) + "\n\n"
 
 
-# The report's sections in order: (heading, folder, [(agent, file, state path)]).
+# 리포트 섹션 순서: (한국어 헤딩, 폴더 영문, [(에이전트 한국어 표시명, 파일명 영문,
+# state 경로 영문)]).
+# Task 9c (#82): 사용자 노출 라벨/표시명은 한국어, 파일시스템 경로와 state 키는
+# 영어 유지 (i18n 경계).
 _SECTIONS = (
-    ("I. Analyst Team Reports", "1_analysts", (
-        ("Market Analyst", "market.md", ("market_report",)),
-        ("Sentiment Analyst", "sentiment.md", ("sentiment_report",)),
-        ("News Analyst", "news.md", ("news_report",)),
-        ("Fundamentals Analyst", "fundamentals.md", ("fundamentals_report",)),
+    ("I. 분석가 팀 보고서", "1_analysts", (
+        ("시장 분석가", "market.md", ("market_report",)),
+        ("감성 분석가", "sentiment.md", ("sentiment_report",)),
+        ("뉴스 분석가", "news.md", ("news_report",)),
+        ("재무 분석가", "fundamentals.md", ("fundamentals_report",)),
     )),
-    ("II. Research Team Decision", "2_research", (
-        ("Bull Researcher", "bull.md", ("investment_debate_state", "bull_history")),
-        ("Bear Researcher", "bear.md", ("investment_debate_state", "bear_history")),
-        ("Research Manager", "manager.md", ("investment_plan",)),
+    ("II. 리서치 팀 결정", "2_research", (
+        ("강세 리서처", "bull.md", ("investment_debate_state", "bull_history")),
+        ("약세 리서처", "bear.md", ("investment_debate_state", "bear_history")),
+        ("리서치 매니저", "manager.md", ("investment_plan",)),
     )),
-    ("III. Trading Team Plan", "3_trading", (
-        ("Trader", "trader.md", ("trader_investment_plan",)),
+    ("III. 트레이딩 팀 계획", "3_trading", (
+        ("트레이더", "trader.md", ("trader_investment_plan",)),
     )),
-    ("IV. Risk Management Team Decision", "4_risk", (
-        ("Aggressive Analyst", "aggressive.md", ("risk_debate_state", "aggressive_history")),
-        ("Conservative Analyst", "conservative.md", ("risk_debate_state", "conservative_history")),
-        ("Neutral Analyst", "neutral.md", ("risk_debate_state", "neutral_history")),
+    ("IV. 리스크 관리 팀 결정", "4_risk", (
+        ("공격적 분석가", "aggressive.md", ("risk_debate_state", "aggressive_history")),
+        ("보수적 분석가", "conservative.md", ("risk_debate_state", "conservative_history")),
+        ("중립적 분석가", "neutral.md", ("risk_debate_state", "neutral_history")),
     )),
-    ("V. Portfolio Manager Decision", "5_portfolio", (
-        ("Portfolio Manager", "decision.md", ("final_trade_decision",)),
+    ("V. 포트폴리오 매니저 결정", "5_portfolio", (
+        ("포트폴리오 매니저", "decision.md", ("final_trade_decision",)),
     )),
 )
 
