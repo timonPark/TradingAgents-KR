@@ -1,0 +1,38 @@
+---
+/**
+ * 모든 페이지의 공통 레이아웃.
+ *
+ * Impeccable Neo Kinpaku 디자인 시스템의 토큰 (`kinpaku-tokens.css`) 과 kit
+ * (`kinpaku-kit.css`) 을 먼저 로드한 뒤 페이지 전역 스타일 (`app.css`) 을
+ * 올린다. 순서가 중요: 토큰 → 키트 → 앱 커스텀.
+ */
+
+import "../styles/kinpaku-tokens.css";
+import "../styles/kinpaku-kit.css";
+import "../styles/app.css";
+
+interface Props {
+	title?: string;
+	description?: string;
+}
+
+const {
+	title = "TradingAgents-KR",
+	description = "한국 증시(KOSPI/KOSDAQ) 전용 멀티 에이전트 트레이딩 프레임워크",
+} = Astro.props;
+---
+<html lang="ko">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<meta name="description" content={description} />
+		<title>{title}</title>
+	</head>
+	<body>
+		<div class="page">
+			<slot />
+		</div>
+	</body>
+</html>

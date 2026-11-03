@@ -1,0 +1,159 @@
+---
+/**
+ * 홈 — 종목 분석을 시작하는 랜딩.
+ *
+ * Task 14c (#108): 스캐폴드 단계 — 워드마크 + hero + 플레이스홀더 CTA 만. 실제
+ * 종목 검색/분석 설정 UI 는 14d 이후 티켓에서 붙인다.
+ */
+
+import Base from "../layouts/Base.astro";
+---
+<Base title="TradingAgents-KR">
+	<header class="site-header">
+		<a class="ks-brand" href="/" aria-label="TradingAgents-KR 홈">
+			<span class="ks-mark" aria-hidden="true"></span>
+			<span class="ks-wordmark">TRADINGAGENTS KR</span>
+		</a>
+	</header>
+
+	<main>
+		<section class="hero">
+			<p class="hero-eyebrow">KOSPI · KOSDAQ</p>
+			<h1 class="hero-title">
+				한국 증시를 위한<br />
+				멀티 에이전트 트레이딩 프레임워크
+			</h1>
+			<p class="hero-lead">
+				펀더멘털·센티먼트·뉴스·기술적 분석가가 토론을 거쳐 매매 결정을 도출합니다.
+				종목 검색으로 시작하세요.
+			</p>
+			<div class="ks-button-row hero-ctas">
+				<button
+					type="button"
+					class="ks-button ks-button-primary"
+					disabled
+					aria-describedby="cta-note"
+				>
+					분석 시작
+				</button>
+				<a class="ks-button ks-button-ghost" href="#about">프레임워크 소개</a>
+			</div>
+			<p id="cta-note" class="hero-note">
+				· 종목 검색 UI 는 다음 릴리스 (#109) 에서 활성화됩니다.
+			</p>
+		</section>
+
+		<section id="about" class="ks-section about-section">
+			<div class="ks-section-head">
+				<p class="ks-section-eyebrow">PROOF</p>
+				<h2>작은 흔적, 깊은 신호.</h2>
+				<p class="ks-section-sub">
+					분석가·리서처·트레이더·리스크 매니저의 역할이 나뉘어 있고, 각 결정은
+					점검 가능한 리포트로 남습니다.
+				</p>
+			</div>
+		</section>
+	</main>
+
+	<footer class="site-footer">
+		<span class="footer-mark" aria-hidden="true"></span>
+		<span class="footer-text">
+			TradingAgents-KR · 한국 증시 포크 ·
+			<a
+				href="https://github.com/timonPark/TradingAgents-KR"
+				target="_blank"
+				rel="noreferrer"
+			>GitHub</a>
+		</span>
+	</footer>
+</Base>
+
+<style>
+	.site-header {
+		display: flex;
+		align-items: center;
+		padding: 24px 40px;
+		border-bottom: 1px solid var(--ks-rule);
+	}
+
+	.ks-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		color: var(--ks-ink);
+	}
+
+	.ks-mark {
+		display: inline-block;
+		width: 22px;
+		height: 22px;
+		background: var(--ks-kinpaku);
+		clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 100%);
+	}
+
+	.hero {
+		max-width: 920px;
+		margin: 0 auto;
+		padding: 96px 40px 64px;
+	}
+
+	.hero-eyebrow {
+		font-family: var(--ks-font);
+		font-size: var(--ks-type-eyebrow-size);
+		letter-spacing: var(--ks-type-eyebrow-track);
+		text-transform: uppercase;
+		color: var(--ks-text-muted);
+		margin: 0 0 24px;
+	}
+
+	.hero-title {
+		font-family: var(--ks-font-display);
+		font-size: var(--ks-type-display-size);
+		font-weight: var(--ks-type-display-weight);
+		line-height: var(--ks-type-display-line);
+		letter-spacing: var(--ks-type-display-track);
+		margin: 0;
+		color: var(--ks-ink);
+	}
+
+	.hero-lead {
+		max-width: 60ch;
+		margin: 32px 0 40px;
+		font-size: 1.0625rem;
+		color: var(--ks-text);
+	}
+
+	.hero-ctas {
+		margin-top: 8px;
+	}
+
+	.hero-note {
+		margin-top: 32px;
+		font-size: var(--ks-type-mono-size);
+		color: var(--ks-text-faint);
+		font-family: var(--ks-font);
+	}
+
+	.about-section {
+		padding: 80px 40px 112px;
+		border-top: 1px solid var(--ks-rule);
+	}
+
+	.site-footer {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 32px 40px;
+		border-top: 1px solid var(--ks-rule);
+		color: var(--ks-text-muted);
+		font-size: 0.875rem;
+	}
+
+	.footer-mark {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		background: var(--ks-patina);
+		border-radius: 50%;
+	}
+</style>
