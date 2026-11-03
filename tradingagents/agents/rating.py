@@ -11,6 +11,9 @@ Centralising it here avoids drift between those call sites.
 caller turns that into ``REVIEW`` rather than a tradeable position: a decision
 nobody can read is not a Hold, and a Hold recorded in its place is quoted back to
 the next run as a call that was never made (#1170).
+
+Task 9b (#81): KRX 하드 포크 (ADR-0003) 에 따라 한국어 라벨 ("등급", "최종 거래
+제안") 도 수용. 값 (BUY/SELL/HOLD) 은 영어 유지라 값 추출 로직 불변.
 """
 
 from __future__ import annotations
@@ -31,34 +34,50 @@ RATING_REVIEW = "REVIEW"
 
 _RATING_SET = {r.lower() for r in RATINGS_5_TIER}
 
-# Matches "Rating: X" / "rating - X" / "Rating — **X**" — tolerates markdown
-# bold wrappers and any dash or colon a model writes as the separator. "rating"
-# must start a word, so "Operating margin: Sell-side" is not a label.
-_RATING_LABEL_RE = re.compile(r"(?<![a-z])rating\b[^:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*(\w+)",
-                              re.IGNORECASE)
+# 라벨 토큰: 영어 ("rating\b", 단어 경계 필수) + 한국어 ("등급" / "최종 거래 제안",
+# 자연 경계). "최종 거래 제안" 은 공백 / 가운뎃점 (·) 구분자 수용.
+_LABEL_TOKEN = r"(?:rating\b|등급|최종[\s·]*거래[\s·]*제안)"
 
-# The decision's own rating line, in the shape the Portfolio Manager is asked to
-# open with ("- **Rating**: X", "**Final Rating**: X", "## Our rating - X"): an
-# optional list marker, emphasis and heading marks, and only words naming the
-# decision itself before "rating". "Consensus rating: Buy" or "Trader's rating:
-# Buy" is someone else's rating.
-_OWN_QUALIFIER = r"(?:(?:final|our|overall|my|recommended|updated|revised|new|current)\s+)*"
-_RATING_LINE_RE = re.compile(
-    r"\s*(?P<item>(?:[-+*\u2022]|\d+[.)])\s+)?[\s*_#]*" + _OWN_QUALIFIER
-    + r"rating[^\w:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*(?P<value>\w+)",
+# Matches "Rating: X" / "rating - X" / "Rating — **X**" / "등급: X" /
+# "최종 거래 제안: X" — tolerates markdown bold wrappers and any dash or colon
+# a model writes as the separator. "rating" 영어는 단어 경계 (lookbehind +
+# `\b`) 로 "Operating margin: Sell-side" 를 걸러냄.
+_RATING_LABEL_RE = re.compile(
+    r"(?<![a-z])" + _LABEL_TOKEN + r"[^:\-‐-―]*[:\-‐-―][\s*]*(\w+)",
     re.IGNORECASE,
 )
 
-# A line presenting the scale rather than a decision ("Rating Scale: Buy, ...").
-_RATING_SCALE_RE = re.compile(r"rating\s*(scale|options|legend)", re.IGNORECASE)
+# The decision's own rating line, in the shape the Portfolio Manager is asked to
+# open with ("- **Rating**: X", "**Final Rating**: X", "## Our rating - X",
+# "**등급**: X", "**최종 등급**: X", "- **최종 거래 제안**: X"): an optional
+# list marker, emphasis and heading marks, and only words naming the decision
+# itself before the label. "Consensus rating: Buy" ("합의 등급: Buy") 는 다른
+# 당사자의 것이라 수식어 리스트에서 제외.
+_OWN_QUALIFIER = (
+    r"(?:(?:final|our|overall|my|recommended|updated|revised|new|current|"
+    r"최종|우리|전체|권장|수정|갱신|신규|현재)\s*)*"
+)
+_RATING_LINE_RE = re.compile(
+    r"\s*(?P<item>(?:[-+*•]|\d+[.)])\s+)?[\s*_#]*" + _OWN_QUALIFIER
+    + _LABEL_TOKEN + r"[^\w:\-‐-―]*[:\-‐-―][\s*]*(?P<value>\w+)",
+    re.IGNORECASE,
+)
+
+# A line presenting the scale rather than a decision ("Rating Scale: Buy, ...",
+# "등급 척도: Buy, ..."): 스케일/옵션/범례 라인은 결정이 아니라 모델이 복붙한 범례.
+_RATING_SCALE_RE = re.compile(
+    r"(?:rating\s*(scale|options|legend)|등급\s*(?:척도|옵션|범례))",
+    re.IGNORECASE,
+)
 
 def extract_rating(text: str) -> str | None:
     """Extract a 5-tier rating from its label, or ``None`` if there is none.
 
-    Reads an explicit "Rating: X" label (tolerant of markdown bold) in the
-    NFKC-normalized text, so fullwidth punctuation like ``Rating：Overweight``
-    matches as ASCII does: the decision's opening rating line, else its own
-    rating lines or, failing those, every label, when they agree.
+    Reads an explicit "Rating: X" / "등급: X" / "최종 거래 제안: X" label
+    (tolerant of markdown bold) in the NFKC-normalized text, so fullwidth
+    punctuation like ``Rating：Overweight`` matches as ASCII does: the decision's
+    opening rating line, else its own rating lines or, failing those, every
+    label, when they agree.
     """
     if not text:
         return None

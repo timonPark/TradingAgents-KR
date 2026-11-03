@@ -188,27 +188,49 @@ class TraderProposal(BaseModel):
         return _coerce_optional_float(v)
 
 
+def _output_language() -> str:
+    """현재 설정된 ``output_language``. 설정 접근 실패 시 "Korean" (하드 포크 디폴트)."""
+    try:
+        from tradingagents.dataflows.config import get_config
+        return (get_config().get("output_language") or "Korean").strip()
+    except Exception:  # noqa: BLE001 — config 없는 테스트 환경 fallback
+        return "Korean"
+
+
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
 
-    The trailing ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` line is
-    preserved for backward compatibility with the analyst stop-signal text
-    and any external code that greps for it.
+    The trailing ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` (영어) 또는
+    ``최종 거래 제안: **BUY/HOLD/SELL**`` (한국어) 라인은 분석가 스톱 시그널
+    텍스트와 외부 grep 과의 하위 호환을 위해 유지. 라벨만 ``output_language`` 에
+    따라 번역, 값 (BUY/HOLD/SELL) 은 영어 유지 — 파서 호환성.
     """
+    is_korean = _output_language().lower() == "korean"
+    labels = {
+        "action": "액션" if is_korean else "Action",
+        "reasoning": "근거" if is_korean else "Reasoning",
+        "entry_price": "진입가" if is_korean else "Entry Price",
+        "stop_loss": "손절가" if is_korean else "Stop Loss",
+        "position_sizing": "포지션 사이징" if is_korean else "Position Sizing",
+        "not_provided": "제공되지 않음" if is_korean else "not provided",
+    }
+    final_label = "최종 거래 제안" if is_korean else "FINAL TRANSACTION PROPOSAL"
+
     parts = [
-        f"**Action**: {proposal.action.value}",
+        f"**{labels['action']}**: {proposal.action.value}",
         "",
-        f"**Reasoning**: {proposal.reasoning}",
+        f"**{labels['reasoning']}**: {proposal.reasoning}",
     ]
     # Named even when absent, so a reader can tell a level the trader chose not
     # to give from one the schema never asked for.
-    for label, value in (("Entry Price", proposal.entry_price),
-                         ("Stop Loss", proposal.stop_loss),
-                         ("Position Sizing", proposal.position_sizing)):
-        parts.extend(["", f"**{label}**: {value if value is not None and value != '' else 'not provided'}"])
+    for key, value in (("entry_price", proposal.entry_price),
+                       ("stop_loss", proposal.stop_loss),
+                       ("position_sizing", proposal.position_sizing)):
+        shown = value if value is not None and value != "" else labels["not_provided"]
+        parts.extend(["", f"**{labels[key]}**: {shown}"])
     parts.extend([
         "",
-        f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
+        f"{final_label}: **{proposal.action.value.upper()}**",
     ])
     return "\n".join(parts)
 
@@ -270,21 +292,33 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
 
     Memory log, CLI display, and saved report files all read this markdown,
     so the rendered output preserves the exact section headers (``**Rating**``,
-    ``**Executive Summary**``, ``**Investment Thesis**``) that downstream
-    parsers and the report writers already handle.
+    ``**Executive Summary**``, ``**Investment Thesis**`` 또는 Korean 등가체)
+    that downstream parsers and the report writers already handle. 라벨만
+    ``output_language`` 에 따라 번역, 값 (BUY/HOLD/SELL/Overweight 등) 은 영어
+    유지 — 파서 호환성.
     """
+    is_korean = _output_language().lower() == "korean"
+    labels = {
+        "rating": "등급" if is_korean else "Rating",
+        "executive_summary": "요약 전략" if is_korean else "Executive Summary",
+        "investment_thesis": "투자 논리" if is_korean else "Investment Thesis",
+        "price_target": "목표가" if is_korean else "Price Target",
+        "time_horizon": "투자 기간" if is_korean else "Time Horizon",
+        "not_provided": "제공되지 않음" if is_korean else "not provided",
+    }
+
     parts = [
-        f"**Rating**: {decision.rating.value}",
+        f"**{labels['rating']}**: {decision.rating.value}",
         "",
-        f"**Executive Summary**: {decision.executive_summary}",
+        f"**{labels['executive_summary']}**: {decision.executive_summary}",
         "",
-        f"**Investment Thesis**: {decision.investment_thesis}",
+        f"**{labels['investment_thesis']}**: {decision.investment_thesis}",
     ]
     # Named even when absent: a missing line reads as a field nobody asked for,
     # so a reader cannot tell "no target" from "target not reported".
-    target = decision.price_target if decision.price_target is not None else "not provided"
-    parts.extend(["", f"**Price Target**: {target}"])
-    parts.extend(["", f"**Time Horizon**: {decision.time_horizon or 'not provided'}"])
+    target = decision.price_target if decision.price_target is not None else labels["not_provided"]
+    parts.extend(["", f"**{labels['price_target']}**: {target}"])
+    parts.extend(["", f"**{labels['time_horizon']}**: {decision.time_horizon or labels['not_provided']}"])
     return "\n".join(parts)
 
 

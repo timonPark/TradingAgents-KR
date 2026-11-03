@@ -762,11 +762,13 @@ class TestPortfolioManagerInjection:
         pm_node = create_portfolio_manager(llm)
         result = pm_node(_make_pm_state())
         md = result["final_trade_decision"]
-        assert "**Rating**: Overweight" in md
-        assert "**Executive Summary**: Build position gradually" in md
-        assert "**Investment Thesis**: AI capex cycle" in md
-        assert "**Price Target**: 215.0" in md
-        assert "**Time Horizon**: 3-6 months" in md
+        # Task 9b (#81): Korean 디폴트 라벨 (등급/요약 전략/투자 논리/목표가/투자 기간),
+        # 값 (Overweight 등) 은 영어 유지로 파서 호환.
+        assert "**등급**: Overweight" in md
+        assert "**요약 전략**: Build position gradually" in md
+        assert "**투자 논리**: AI capex cycle" in md
+        assert "**목표가**: 215.0" in md
+        assert "**투자 기간**: 3-6 months" in md
 
     def test_pm_falls_back_to_freetext_when_structured_unavailable(self):
         """If a provider does not support with_structured_output, the agent
