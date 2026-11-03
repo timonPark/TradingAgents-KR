@@ -29,24 +29,29 @@ def create_aggressive_debator(llm):
 
         trader_decision = state["trader_investment_plan"]
 
-        prompt = f"""As the Aggressive Risk Analyst, your role is to actively champion high-reward, high-risk opportunities, emphasizing bold strategies and competitive advantages. When evaluating the trader's decision or plan, focus intently on the potential upside, growth potential, and innovative benefits—even when these come with elevated risk. Use the provided market data and sentiment analysis to strengthen your arguments and challenge the opposing views. Specifically, respond directly to each point made by the conservative and neutral analysts, countering with data-driven rebuttals and persuasive reasoning. Highlight where their caution might miss critical opportunities or where their assumptions may be overly conservative. Here is the trader's decision:
+        prompt = f"""당신은 공격적 리스크 분석가입니다. 당신의 역할은 고수익·고위험 기회를 적극 옹호하고 대담한 전략과 경쟁 우위를 강조하는 것입니다. 트레이더의 결정이나 계획을 평가할 때, 리스크가 높더라도 잠재적 상승 여력, 성장 잠재력, 혁신적 이익에 집중하세요. 제공된 시장 데이터와 센티먼트 분석을 활용해 당신의 논증을 강화하고 반대 관점에 도전하세요. 특히 보수적·중립적 분석가가 제기한 각 지점에 직접 응답하고, 데이터 기반 반박과 설득력 있는 논리로 맞서세요. 그들의 신중함이 중요한 기회를 놓칠 수 있는 지점이나 그들의 가정이 지나치게 보수적일 수 있는 지점을 강조하세요. 다음은 트레이더의 결정입니다:
 
 {trader_decision}
 
-Your task is to create a compelling case for the trader's decision by questioning and critiquing the conservative and neutral stances to demonstrate why your high-reward perspective offers the best path forward. Incorporate insights from the following sources into your arguments:
+당신의 임무는 트레이더의 결정에 대한 설득력 있는 논거를 구축하는 것입니다 — 보수적·중립적 입장을 의심하고 비판해 당신의 고수익 관점이 왜 최선의 길인지 보여주세요. 다음 소스의 인사이트를 논증에 통합하세요:
 
 {instrument_context}
 {portfolio_context}
-Market Research Report: {market_research_report}
-Social Media Sentiment Report: {sentiment_report}
-Latest World Affairs Report: {news_report}
-Company Fundamentals Report: {fundamentals_report}
-Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
+시장 분석 보고서: {market_research_report}
+센티먼트 보고서: {sentiment_report}
+최신 뉴스 보고서: {news_report}
+기업 재무 보고서: {fundamentals_report}
+현재 대화 기록: {history}
+보수적 분석가의 최근 논증: {current_conservative_response}
+중립적 분석가의 최근 논증: {current_neutral_response}
 
-Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.""" + get_language_instruction()
+다른 관점의 응답이 아직 없으면 가용 데이터를 바탕으로 당신의 논증을 제시하세요.
+
+제기된 구체적 우려에 적극 대응하고, 그들의 논리적 약점을 반박하며, 시장 평균을 뛰어넘기 위해 리스크를 감수하는 이익을 주장하세요. 데이터 나열이 아닌 토론과 설득에 초점을 맞추세요. 각 반론에 도전해 왜 고위험 접근이 최적인지 강조하세요. 특별한 포맷 없이 말하듯 대화체로 출력하세요.""" + get_language_instruction()
 
         response = llm.invoke(prompt)
 
+        # 토론 로그 발화자 라벨은 영어 식별자 유지 (i18n 경계, ADR-0003).
         argument = f"Aggressive Analyst: {response.content}"
 
         new_risk_debate_state = {

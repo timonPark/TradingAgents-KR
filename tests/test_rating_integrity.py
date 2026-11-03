@@ -172,9 +172,12 @@ def test_the_cli_says_when_a_run_produced_no_usable_rating(monkeypatch, tmp_path
 
 @pytest.mark.unit
 @pytest.mark.parametrize("module, factory, must_name", [
-    ("tradingagents.agents.managers.portfolio_manager", "create_portfolio_manager", "Rating"),
-    ("tradingagents.agents.managers.research_manager", "create_research_manager", "Recommendation"),
-    ("tradingagents.agents.trader.trader", "create_trader", "Action"),
+    # Task 9d (#83): 한국어 라벨로 프롬프트 재작성됨. 파서는 영어 "Rating" / 한국어
+    # "등급" 모두 수용 (Task 9b, rating.py 참조). 프롬프트 라벨은 Korean 디폴트
+    # 에서 한국어 사용.
+    ("tradingagents.agents.managers.portfolio_manager", "create_portfolio_manager", "등급"),
+    ("tradingagents.agents.managers.research_manager", "create_research_manager", "추천"),
+    ("tradingagents.agents.trader.trader", "create_trader", "액션"),
 ])
 def test_a_decision_prompt_states_the_shape_of_its_answer(module, factory, must_name):
     """The field descriptions live in the schema, which a provider without
@@ -210,8 +213,9 @@ def test_a_decision_prompt_states_the_shape_of_its_answer(module, factory, must_
     getattr(mod, factory)(_LLM())(state)
 
     prompt = " ".join(seen)
-    assert "## Output" in prompt, "no output-format section in the prompt"
-    section = prompt.split("## Output", 1)[1]
+    # Task 9d (#83): 섹션 헤딩이 Korean 디폴트에서 "## 출력". 하위 호환으로 영어도 수용.
+    assert "## 출력" in prompt or "## Output" in prompt, "no output-format section in the prompt"
+    section = prompt.split("## 출력", 1)[-1].split("## Output", 1)[-1]
     assert f"**{must_name}**" in section, section[:300]
 
 

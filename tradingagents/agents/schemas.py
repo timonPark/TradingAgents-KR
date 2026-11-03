@@ -128,13 +128,23 @@ class ResearchPlan(BaseModel):
 
 
 def render_research_plan(plan: ResearchPlan) -> str:
-    """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
+    """Render a ResearchPlan to markdown for storage and the trader's prompt context.
+
+    Task 9b (#81): Korean 디폴트에서 라벨 (추천/근거/전략적 조치) 한국어화. 값
+    (Buy/Overweight/Hold 등) 은 영어 유지.
+    """
+    is_korean = _output_language().lower() == "korean"
+    labels = {
+        "recommendation": "추천" if is_korean else "Recommendation",
+        "rationale": "근거" if is_korean else "Rationale",
+        "strategic_actions": "전략적 조치" if is_korean else "Strategic Actions",
+    }
     return "\n".join([
-        f"**Recommendation**: {plan.recommendation.value}",
+        f"**{labels['recommendation']}**: {plan.recommendation.value}",
         "",
-        f"**Rationale**: {plan.rationale}",
+        f"**{labels['rationale']}**: {plan.rationale}",
         "",
-        f"**Strategic Actions**: {plan.strategic_actions}",
+        f"**{labels['strategic_actions']}**: {plan.strategic_actions}",
     ])
 
 

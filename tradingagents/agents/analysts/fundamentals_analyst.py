@@ -80,18 +80,18 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
 def _render_prefetched(data: dict[str, str]) -> str:
     """선조회된 데이터를 프롬프트에 주입할 Markdown 블록으로 포맷."""
     return (
-        "## Pre-fetched Fundamentals Data\n\n"
-        "### Company Fundamentals (overview)\n"
+        "## 사전 조회된 재무 데이터\n\n"
+        "### 기업 개황\n"
         f"{data['fundamentals']}\n\n"
-        "### Balance Sheet (quarterly)\n"
+        "### 재무상태표 (분기)\n"
         f"{data['balance_sheet']}\n\n"
-        "### Cash Flow Statement (quarterly)\n"
+        "### 현금흐름표 (분기)\n"
         f"{data['cashflow']}\n\n"
-        "### Income Statement (quarterly)\n"
+        "### 손익계산서 (분기)\n"
         f"{data['income_statement']}\n\n"
-        "### Insider Transactions (recent)\n"
+        "### 임원·주요주주 지분변동 (최근)\n"
         f"{data['insider_transactions']}\n\n"
-        "### Convertible Bonds (최근 1년 CB 발행 공시)\n"
+        "### 전환사채(CB) 발행 공시 (최근 1년)\n"
         f"{data['convertible_bonds']}\n"
     )
 
@@ -107,15 +107,14 @@ def create_fundamentals_analyst(llm):
         prefetched_block = _render_prefetched(prefetched)
 
         system_message = (
-            "You are a researcher tasked with analyzing fundamental information about a company. "
-            "The data has been **pre-fetched for you** — company fundamentals overview, quarterly "
-            "balance sheet / cash flow / income statement, and recent insider transactions. You "
-            "will **not** call tools; write a comprehensive report of the company's fundamentals "
-            "grounded in the pre-fetched data below. Include financial-document highlights, company "
-            "profile, basic financials, and historical trends to inform traders. Provide specific, "
-            "actionable insights with supporting evidence."
-            " Make sure to append a Markdown table at the end of the report to organize key points, "
-            "organized and easy to read."
+            "당신은 기업의 기본 정보를 분석하는 재무 분석가입니다. "
+            "데이터는 이미 **사전 조회되어 프롬프트에 주입**되어 있습니다 — 기업 개황, "
+            "분기별 재무상태표 / 현금흐름표 / 손익계산서, 최근 임원·주요주주 지분변동, "
+            "그리고 KRX 전용 전환사채(CB) 공시. **툴을 호출하지 말고** 주어진 데이터를 "
+            "기반으로 종합적인 재무 분석 보고서를 작성하세요. 공시 하이라이트, 기업 프로필, "
+            "핵심 재무지표, 시계열 트렌드를 포함해 트레이더가 판단할 수 있는 구체적이고 "
+            "실행 가능한 인사이트를 근거와 함께 제시하세요."
+            " 보고서 말미에 핵심 포인트를 정리한 Markdown 표를 반드시 첨부해 가독성을 높이세요."
             + get_language_instruction()
         )
 
@@ -123,10 +122,10 @@ def create_fundamentals_analyst(llm):
             [
                 (
                     "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " The data you need has been pre-fetched below; do not call tools."
-                    " Report what the pre-fetched data supports; another agent decides the trade."
-                    " Today's date is {current_date}; treat it as 'now' for all analysis. {instrument_context}\n"
+                    "당신은 다른 분석가들과 협업하는 AI 어시스턴트입니다."
+                    " 필요한 데이터는 이미 아래에 사전 조회되어 있으므로 툴을 호출하지 마세요."
+                    " 사전 조회된 데이터가 뒷받침하는 내용만 보고하고 — 거래 결정은 다른 에이전트의 몫입니다."
+                    " 오늘 날짜는 {current_date} 입니다; 모든 분석에서 이 날짜를 '현재' 로 간주하세요. {instrument_context}\n"
                     "{system_message}\n\n"
                     "{prefetched}",
                 ),

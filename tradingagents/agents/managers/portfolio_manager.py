@@ -34,12 +34,12 @@ def create_portfolio_manager(llm):
 
         past_context = state.get("past_context", "")
         lessons_line = (
-            f"- Lessons from prior decisions and outcomes:\n{past_context}\n"
+            f"- 과거 결정과 결과로부터의 교훈:\n{past_context}\n"
             if past_context
             else ""
         )
 
-        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading decision.
+        prompt = f"""포트폴리오 매니저로서, 리스크 분석가들의 토론을 종합하고 최종 거래 결정을 전달하세요.
 
 {instrument_context}
 
@@ -47,31 +47,31 @@ def create_portfolio_manager(llm):
 
 ---
 
-**Rating Scale** (use exactly one):
-- **Buy**: Strong conviction to enter or add to position
-- **Overweight**: Favorable outlook, gradually increase exposure
-- **Hold**: Maintain current position, no action needed
-- **Underweight**: Reduce exposure, take partial profits
-- **Sell**: Exit position or avoid entry
+**등급 체계** (정확히 하나 사용 — 값은 영어 유지, 파서 호환):
+- **Buy**: 신규 매수 또는 비중 확대에 강한 확신
+- **Overweight**: 긍정적 전망, 점진적 노출 확대
+- **Hold**: 현재 포지션 유지, 조치 없음
+- **Underweight**: 노출 축소, 일부 차익 실현
+- **Sell**: 청산 또는 진입 회피
 
-**Context:**
-- Research Manager's investment plan: **{research_plan}**
-- Trader's transaction proposal: **{trader_plan}**
+**컨텍스트:**
+- 리서치 매니저의 투자 계획: **{research_plan}**
+- 트레이더의 거래 제안: **{trader_plan}**
 {lessons_line}
-**Risk Analysts Debate History:**
+**리스크 분석가 토론 기록:**
 {history}
 
 ---
 
-Ground every conclusion in specific evidence from the analysts. The risk debate always contains conflicting stances; deciding which is stronger is the job, so conflict alone is not a reason to Hold. Commit to the stronger case, sized by how decisively it wins. Choose Hold only when the evidence is still balanced after that weighing, or too thin to support a call; do not force a direction to appear decisive. Weigh the analysts on their merits, independent of speaking order.
+모든 결론을 분석가들의 구체적 증거에 뿌리내리세요. 리스크 토론에는 항상 상충하는 입장이 포함되며, 어느 쪽이 더 강력한지 결정하는 것이 당신의 임무입니다. 따라서 상충 자체는 Hold 사유가 아닙니다. 더 설득력 있는 쪽에 결단을 내리고 승리의 정도에 비례해 사이징하세요. 그러한 가늠 후에도 증거가 균형잡혀 있거나 판정하기에 너무 얇을 때에만 Hold 를 선택하세요; 결단력 있어 보이려고 방향을 강제하지 마세요. 발언 순서와 무관하게 분석가들을 가치만으로 평가하세요.
 
-## Output
+## 출력
 
-Write these sections, in this order, starting with the rating on its own line:
+다음 섹션을 이 순서로, 등급 라인부터 시작해 작성하세요:
 
-- **Rating**: exactly one of Buy / Overweight / Hold / Underweight / Sell
-- **Executive Summary**: the call and how to act on it
-- **Investment Thesis**: the evidence that decided it, and what would change it
+- **등급**: Buy / Overweight / Hold / Underweight / Sell 중 **정확히 하나** (값은 영어 유지)
+- **요약 전략**: 결정과 실행 방법
+- **투자 논리**: 결정의 근거와 뒤집힐 수 있는 조건
 
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 
