@@ -109,8 +109,9 @@ def test_the_contents_name_each_section_once_and_list_its_agents_beneath(tmp_pat
     page = _html(tmp_path)
     nav = page[page.index('<nav class="contents"'):page.index("</nav>")]
     assert "<ol" not in nav                     # no list numbers beside the sections' own I-V
-    assert re.search(r'<a href="#s1"><span class="num">I</span>\s*<span class="label">Analyst Team Reports</span></a>', nav)
-    assert re.search(r'<a href="#s1-1"><span class="bar"></span>\s*<span class="label">Market Analyst</span></a>', nav)
+    # Task 9c (#82): 섹션/에이전트 표시명 한국어화. 로마 숫자는 영어 유지.
+    assert re.search(r'<a href="#s1"><span class="num">I</span>\s*<span class="label">분석가 팀 보고서</span></a>', nav)
+    assert re.search(r'<a href="#s1-1"><span class="bar"></span>\s*<span class="label">시장 분석가</span></a>', nav)
 
 
 @pytest.mark.unit

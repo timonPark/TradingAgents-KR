@@ -38,7 +38,7 @@ def test_write_report_tree_creates_files(tmp_path):
     assert (tmp_path / "3_trading" / "trader.md").read_text() == "TRADE"
     assert (tmp_path / "5_portfolio" / "decision.md").read_text() == "PM DECISION"
     complete = out.read_text()
-    assert "Trading Analysis Report: AAPL" in complete
+    assert "트레이딩 분석 보고서: AAPL" in complete
     assert "MKT" in complete and "PM DECISION" in complete
 
 
@@ -87,7 +87,7 @@ def test_empty_report_removes_previous_sections_and_disabled_html(tmp_path):
 
     assert list(tmp_path.rglob("*.md")) == [out]
     assert not (tmp_path / "complete_report.html").exists()
-    assert "Trading Analysis Report: AAPL" in out.read_text()
+    assert "트레이딩 분석 보고서: AAPL" in out.read_text()
 
 
 @pytest.mark.unit
@@ -108,11 +108,11 @@ def test_the_report_names_the_analysis_date_and_what_produced_it(tmp_path):
 
     header = write_report_tree(state, "NVDA", tmp_path, settings=SETTINGS).read_text().split("## ")[0]
 
-    assert "Analysis date: 2026-09-23" in header
+    assert "분석일: 2026-09-23" in header
     assert "TradingAgents 0.5.2" in header
     assert "claude-code, deep sonnet (effort high), quick haiku (effort medium)" in header
-    assert "Analysts: market, news" in header
-    assert "research debate rounds 1, risk debate rounds 2" in header
+    assert "분석가: market, news" in header
+    assert "리서치 토론 라운드 1, 리스크 토론 라운드 2" in header
     assert "core_stock_apis yfinance" in header
 
 
@@ -163,7 +163,7 @@ def test_the_report_header_names_the_rating(tmp_path, decision, rating):
 
     header = write_report_tree(state, "NVDA", tmp_path, settings=SETTINGS).read_text().split("## ")[0]
 
-    assert f"- Rating: {rating}" in header
+    assert f"- 등급: {rating}" in header
 
 
 @pytest.mark.unit

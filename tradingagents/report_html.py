@@ -223,26 +223,31 @@ def _group(name: str, values_html: str) -> str:
 
 
 def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, str]]:
-    """The run details as (label, value HTML); every value from the run is escaped."""
-    details = [("Generated", escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
+    """리포트 헤더의 run 내역 — (라벨, 값 HTML).
+
+    Task 9c (#82): 사용자 노출 라벨 한국어화. 코드 식별자 (티어명 deep/quick,
+    vendor 카테고리 키 등) 는 영어 유지.
+    """
+    details = [("생성 시각", escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
     if settings:
         s = settings.get
+        tier_labels = {"deep": "심층 모델", "quick": "빠른 모델"}
         for tier in ("deep", "quick"):
             provider = s(f"{tier}_think_provider") or s("llm_provider", "?")
-            details.append((f"{tier.capitalize()} model", _fields([provider, s(f"{tier}_think_llm", "?")])))
-        details.append(("Analysts", _fields(analyst_names(s("analysts")))))
-        details.append(("Debate rounds", " ".join((
-            _group("research", _fields([s("max_debate_rounds", "?")])),
-            _group("risk", _fields([s("max_risk_discuss_rounds", "?")])),
+            details.append((tier_labels[tier], _fields([provider, s(f"{tier}_think_llm", "?")])))
+        details.append(("분석가", _fields(analyst_names(s("analysts")))))
+        details.append(("토론 라운드", " ".join((
+            _group("리서치", _fields([s("max_debate_rounds", "?")])),
+            _group("리스크", _fields([s("max_risk_discuss_rounds", "?")])),
         ))))
         vendors = {**(s("data_vendors") or {}), **(s("tool_vendors") or {})}
         if vendors:
-            details.append(("Data vendors", " ".join(
+            details.append(("데이터 vendor", " ".join(
                 _group(_CATEGORY.get(k, k), _chain(v)) for k, v in vendors.items()
             )))
-        details.append(("Version", escape(f"TradingAgents {s('version', '?')}")))
+        details.append(("버전", escape(f"TradingAgents {s('version', '?')}")))
     if final_state.get("memory_note"):
-        details.append(("Memory log", escape(final_state["memory_note"])))
+        details.append(("메모리 로그", escape(final_state["memory_note"])))
     return details
 
 
@@ -257,7 +262,7 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
     if rating:
         title += f' <span class="rating {tone}">{escape(rating)}</span>'
     details = "".join(
-        f'<div class="{"note" if label == "Memory log" else "detail"}">'
+        f'<div class="{"note" if label == "메모리 로그" else "detail"}">'
         f"<dt>{escape(label)}</dt><dd>{value}</dd></div>"
         for label, value in _run_details(final_state, settings)
     )
@@ -278,12 +283,12 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
 
     page_title = " ".join(x for x in (ticker, date, rating) if x)
     return f"""<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-<title>{escape(page_title)}: TradingAgents report</title>
+<title>{escape(page_title)}: TradingAgents 보고서</title>
 <style>{_CSS}</style>
 </head>
 <body>
@@ -291,10 +296,10 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
 <header class="masthead">
 <a class="logo" href="{_COMPANY}" rel="noopener" aria-label="Tauric Research">{_LOGO}</a>
 <h1>{title}</h1>
-<p class="date">{escape(f"Analysis of {date}" if date else "Analysis")}</p>
+<p class="date">{escape(f"{date} 분석" if date else "분석")}</p>
 <dl class="run">{details}</dl>
 </header>
-<nav class="contents" aria-label="Sections"><ul>{"".join(contents)}</ul></nav>
+<nav class="contents" aria-label="섹션"><ul>{"".join(contents)}</ul></nav>
 <main>
 {"".join(body)}
 </main>

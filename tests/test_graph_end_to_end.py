@@ -311,7 +311,8 @@ def test_a_settlement_failure_is_noted_and_the_run_goes_on(tmp_path, monkeypatch
     assert rating == "Overweight"
     assert "could not be settled" in final_state["memory_note"]
     report = write_report_tree(final_state, "NVDA", tmp_path / "report").read_text()
-    assert "Memory log: Past decisions could not be settled" in report
+    # Task 9c (#82): "Memory log" → "메모리 로그" 한국어화
+    assert "메모리 로그: Past decisions could not be settled" in report
 
 
 @pytest.mark.unit
