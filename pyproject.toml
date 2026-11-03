@@ -38,6 +38,18 @@ dependencies = [
     # Task 5 (#46): ``pandas.DataFrame.to_markdown`` 가 백엔드로 요구하는 포매터.
     # DART vendor 가 재무제표를 Markdown 표로 렌더링할 때 사용.
     "tabulate>=0.9",
+    # Task 6 (#51): KRX 시세·기술지표·투자자별 수급. OHLCV 는 keyless, 수급은
+    # ``KRX_ID`` / ``KRX_PW`` 환경변수 요구. pykrx 1.2.x 는 pandas<3.0 을
+    # 선언하지만 OHLCV 경로는 pandas 3.x 와 호환 — 설치 시 경고 뜨지만 vendor
+    # 는 정상 동작. 상충은 ``vendors/pykrx.py`` 가 흡수.
+    "pykrx>=1.0.49",
+    # Task 6 (#51): pykrx 가 ``pkg_resources`` (레거시 setuptools API) 를
+    # import. py3.12+ 는 setuptools 를 기본 번들하지 않고, setuptools 81+ 는
+    # ``pkg_resources`` 를 제거함. 우리 pandas>=3.0 제약과 상충해 pip 가 자동으로
+    # 선택하는 pykrx 1.0.x (레거시) 가 pkg_resources 를 요구하므로 setuptools 를
+    # 80.x 이하로 묶어 pkg_resources 를 유지. pykrx 가 1.2+ 로 안정화되면 (pandas
+    # 3.0 지원) 이 핀은 제거 가능.
+    "setuptools>=68,<81",
 ]
 
 [project.optional-dependencies]
