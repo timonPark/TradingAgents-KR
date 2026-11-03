@@ -40,7 +40,8 @@ def test_missing_console_prints_actionable_message(monkeypatch):
 
     result = CliRunner().invoke(m.app, [])
     assert result.exit_code == 1
-    assert "no Windows console available" in result.output
+    # Task 9f (#85): 한국어 메시지로 변경.
+    assert "Windows 콘솔을 사용할 수 없습니다" in result.output
     # The raw prompt_toolkit traceback must not reach the user.
     assert "Traceback" not in result.output
 

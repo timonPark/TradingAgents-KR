@@ -19,10 +19,11 @@ TICKER_INPUT_EXAMPLES = (
 )
 
 ANALYST_CHOICES = [
-    ("Market Analyst", AnalystType.MARKET),
-    ("Sentiment Analyst", AnalystType.SOCIAL),
-    ("News Analyst", AnalystType.NEWS),
-    ("Fundamentals Analyst", AnalystType.FUNDAMENTALS),
+    # Task 9f (#85): 표시명은 한국어, enum 값 (AnalystType.MARKET 등) 영어 유지 (i18n 경계).
+    ("시장 분석가 (Market)", AnalystType.MARKET),
+    ("감성 분석가 (Sentiment)", AnalystType.SOCIAL),
+    ("뉴스 분석가 (News)", AnalystType.NEWS),
+    ("재무 분석가 (Fundamentals)", AnalystType.FUNDAMENTALS),
 ]
 
 # Task 4b (#43): KRX 포크는 암호자산을 지원하지 않습니다. CRYPTO_SUFFIXES 는
@@ -34,19 +35,19 @@ CRYPTO_SUFFIXES: tuple[str, ...] = ()
 # `claude --model` 이 받는 세 alias (sonnet/opus/haiku) 외의 모델 ID 도 Custom
 # 으로 입력 가능. 선택지는 Task 1f #7 의 균형 조합 (deep=sonnet, quick=haiku).
 _CLAUDE_MODELS = [
-    ("Sonnet — Claude Sonnet 4.6 (balanced, recommended for deep tier)", "sonnet"),
-    ("Opus — Claude Opus 4.7 (max reasoning depth)", "opus"),
-    ("Haiku — Claude Haiku 4.5 (fast, recommended for quick tier)", "haiku"),
-    ("Custom — enter a model ID", "custom"),
+    ("Sonnet — Claude Sonnet 4.6 (균형, 심층 티어 권장)", "sonnet"),
+    ("Opus — Claude Opus 4.7 (최대 추론 깊이)", "opus"),
+    ("Haiku — Claude Haiku 4.5 (빠름, 간이 티어 권장)", "haiku"),
+    ("Custom — 모델 ID 직접 입력", "custom"),
 ]
 
 # Claude Code 가 받는 `--effort` 레벨.
 _EFFORT_LEVELS = [
-    ("High — more thorough reasoning (recommended for deep tier)", "high"),
-    ("Medium — balanced (recommended for quick tier)", "medium"),
-    ("Low — faster, less thorough", "low"),
-    ("Xhigh — extra high reasoning depth", "xhigh"),
-    ("Max — maximum reasoning depth (slowest)", "max"),
+    ("High — 더 꼼꼼한 추론 (심층 티어 권장)", "high"),
+    ("Medium — 균형 (간이 티어 권장)", "medium"),
+    ("Low — 빠름, 덜 꼼꼼함", "low"),
+    ("Xhigh — 매우 높은 추론 깊이", "xhigh"),
+    ("Max — 최대 추론 깊이 (가장 느림)", "max"),
 ]
 
 
@@ -174,14 +175,14 @@ def select_analysts(asset_type: AssetType = AssetType.STOCK, default=None) -> li
         asset_type,
     )
     choices = questionary.checkbox(
-        "Select Your [Analysts Team]:",
+        "분석가 팀 선택:",
         choices=[
             questionary.Choice(display, value=value, checked=value.value in (default or []))
             for display, value in ANALYST_CHOICES
             if value in available_analysts
         ],
-        instruction="\n- Press Space to select/unselect analysts\n- Press 'a' to select/unselect all\n- Press Enter when done",
-        validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
+        instruction="\n- 스페이스 키로 분석가 선택/해제\n- 'a' 키로 전체 선택/해제\n- Enter 키로 완료",
+        validate=lambda x: len(x) > 0 or "분석가를 최소 1명 이상 선택해야 합니다.",
         style=questionary.Style(
             [
                 ("checkbox-selected", "fg:green"),
@@ -193,7 +194,7 @@ def select_analysts(asset_type: AssetType = AssetType.STOCK, default=None) -> li
     ).ask()
 
     if not choices:
-        console.print("\n[red]No analysts selected. Exiting...[/red]")
+        console.print("\n[red]분석가가 선택되지 않아 종료합니다.[/red]")
         exit(1)
 
     return choices
@@ -203,18 +204,18 @@ def select_research_depth(default=None) -> int:
     """대화형으로 리서치 깊이(토론 라운드 수) 선택."""
 
     DEPTH_OPTIONS = [
-        ("Shallow - Quick research, few debate and strategy discussion rounds", 1),
-        ("Medium - Middle ground, moderate debate rounds and strategy discussion", 3),
-        ("Deep - Comprehensive research, in depth debate and strategy discussion", 5),
+        ("얕음 — 빠른 리서치, 토론·전략 라운드 적음", 1),
+        ("중간 — 균형, 적당한 토론·전략 라운드", 3),
+        ("깊음 — 종합 리서치, 심층 토론·전략 라운드", 5),
     ]
 
     choice = questionary.select(
-        "Select Your [Research Depth]:",
+        "리서치 깊이 선택:",
         choices=[
             questionary.Choice(display, value=value) for display, value in DEPTH_OPTIONS
         ],
         default=_matching_choice(DEPTH_OPTIONS, default),
-        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        instruction="\n- 화살표 키로 이동\n- Enter 키로 선택",
         style=questionary.Style(
             [
                 ("selected", "fg:yellow noinherit"),
@@ -225,7 +226,7 @@ def select_research_depth(default=None) -> int:
     ).ask()
 
     if choice is None:
-        console.print("\n[red]No research depth selected. Exiting...[/red]")
+        console.print("\n[red]리서치 깊이가 선택되지 않아 종료합니다.[/red]")
         exit(1)
 
     return choice
@@ -238,7 +239,7 @@ def _require_text(message: str, hint: str) -> str:
         validate=lambda x: len(x.strip()) > 0 or hint,
     ).ask()
     if response is None:
-        console.print("\n[red]Cancelled. Exiting...[/red]")
+        console.print("\n[red]취소됨. 종료합니다.[/red]")
         exit(1)
     return response.strip()
 
@@ -246,26 +247,27 @@ def _require_text(message: str, hint: str) -> str:
 def _prompt_custom_model_id() -> str:
     """사용자가 커스텀 모델 ID 를 입력하도록 유도."""
     return _require_text(
-        "Enter Claude model ID (e.g. claude-opus-4-7, claude-sonnet-4-6):",
-        "Please enter a model ID.",
+        "Claude 모델 ID 입력 (예: claude-opus-4-7, claude-sonnet-4-6):",
+        "모델 ID 를 입력해 주세요.",
     )
 
 
 def _select_model(mode: str, default=None) -> str:
     """Claude Code 모델 선택 (deep 또는 quick)."""
+    tier_label = "심층 추론" if mode == "deep" else "간이 추론"
     choice = questionary.select(
-        f"Select Your [{mode.title()}-Thinking Claude Model]:",
+        f"{tier_label} Claude 모델 선택:",
         choices=[
             questionary.Choice(display, value=value)
             for display, value in _CLAUDE_MODELS
         ],
         default=_matching_choice(_CLAUDE_MODELS, default),
-        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        instruction="\n- 화살표 키로 이동\n- Enter 키로 선택",
         style=_MENU_STYLE,
     ).ask()
 
     if choice is None:
-        console.print(f"\n[red]No {mode} thinking llm engine selected. Exiting...[/red]")
+        console.print(f"\n[red]{tier_label} LLM 엔진이 선택되지 않아 종료합니다.[/red]")
         exit(1)
 
     if choice == "custom":
@@ -286,8 +288,9 @@ def select_deep_thinking_agent(default=None) -> str:
 
 def ask_effort(mode: str, default=None) -> str:
     """티어의 Claude Code `--effort` 레벨 선택 (deep 또는 quick)."""
+    tier_label = "심층 추론" if mode == "deep" else "간이 추론"
     choice = questionary.select(
-        f"Select Effort Level for [{mode.title()}-Thinking]:",
+        f"{tier_label} Effort 레벨 선택:",
         choices=[
             questionary.Choice(display, value=value)
             for display, value in _EFFORT_LEVELS
@@ -301,7 +304,7 @@ def ask_effort(mode: str, default=None) -> str:
     ).ask()
 
     if choice is None:
-        console.print(f"\n[red]No effort level selected for {mode}. Exiting...[/red]")
+        console.print(f"\n[red]{tier_label} Effort 레벨이 선택되지 않아 종료합니다.[/red]")
         exit(1)
     return choice
 
@@ -313,21 +316,21 @@ def ask_output_language(default=None) -> str:
     커스텀 언어는 자유 텍스트이므로 메뉴에서 preselect 할 수 없음.
     """
     choices = [
-        questionary.Choice("Korean (한국어, default)", "Korean"),
+        questionary.Choice("한국어 (Korean, 기본값)", "Korean"),
         questionary.Choice("English", "English"),
-        questionary.Choice("Chinese (中文)", "Chinese"),
-        questionary.Choice("Japanese (日本語)", "Japanese"),
-        questionary.Choice("Hindi (हिन्दी)", "Hindi"),
-        questionary.Choice("Spanish (Español)", "Spanish"),
-        questionary.Choice("Portuguese (Português)", "Portuguese"),
-        questionary.Choice("French (Français)", "French"),
-        questionary.Choice("German (Deutsch)", "German"),
-        questionary.Choice("Arabic (العربية)", "Arabic"),
-        questionary.Choice("Russian (Русский)", "Russian"),
-        questionary.Choice("Custom language", "custom"),
+        questionary.Choice("中文 (Chinese)", "Chinese"),
+        questionary.Choice("日本語 (Japanese)", "Japanese"),
+        questionary.Choice("हिन्दी (Hindi)", "Hindi"),
+        questionary.Choice("Español (Spanish)", "Spanish"),
+        questionary.Choice("Português (Portuguese)", "Portuguese"),
+        questionary.Choice("Français (French)", "French"),
+        questionary.Choice("Deutsch (German)", "German"),
+        questionary.Choice("العربية (Arabic)", "Arabic"),
+        questionary.Choice("Русский (Russian)", "Russian"),
+        questionary.Choice("직접 입력 (Custom)", "custom"),
     ]
     choice = questionary.select(
-        "Select Output Language:",
+        "출력 언어 선택:",
         choices=choices,
         default=_matching_choice([(c.title, c.value) for c in choices], default),
         style=questionary.Style([
@@ -342,8 +345,8 @@ def ask_output_language(default=None) -> str:
         return "Korean"
     if choice == "custom":
         return (questionary.text(
-            "Enter language name (e.g. Turkish, Vietnamese, Thai, Indonesian):",
-            validate=lambda x: len(x.strip()) > 0 or "Please enter a language name.",
+            "언어 이름을 입력하세요 (예: Turkish, Vietnamese, Thai, Indonesian):",
+            validate=lambda x: len(x.strip()) > 0 or "언어 이름을 입력해 주세요.",
         ).ask() or "").strip() or "Korean"
 
     return choice

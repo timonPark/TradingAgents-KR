@@ -229,8 +229,8 @@ def _answer(monkeypatch, answers):
 
 @pytest.mark.unit
 def test_an_interactive_run_asks_for_the_html_page_and_opens_it(monkeypatch, tmp_path):
-    asked = _answer(monkeypatch, {"Save report": "Y", "Save path": "rel/out", "HTML": "Y",
-                                  "browser": "Y", "Display full report": "N"})
+    asked = _answer(monkeypatch, {"보고서를 저장": "Y", "저장 경로": "rel/out", "HTML": "Y",
+                                  "브라우저": "Y", "전체 보고서를 화면에 표시": "N"})
     browser = _Browser()
     monkeypatch.setattr(run, "_graphical_browser", lambda: browser)
     monkeypatch.chdir(tmp_path)
@@ -239,31 +239,31 @@ def test_an_interactive_run_asks_for_the_html_page_and_opens_it(monkeypatch, tmp
 
     page = tmp_path / "rel" / "out" / "complete_report.html"
     assert page.exists() and browser.opened == [page.resolve().as_uri()]
-    assert [q for q in asked if "HTML" in q] and [q for q in asked if "browser" in q]
+    assert [q for q in asked if "HTML" in q] and [q for q in asked if "브라우저" in q]
 
 
 @pytest.mark.unit
 def test_without_a_browser_window_the_page_is_not_offered_for_opening(monkeypatch, tmp_path):
-    asked = _answer(monkeypatch, {"Save report": "Y", "Save path": None, "HTML": "Y",
-                                  "Display full report": "N"})
+    asked = _answer(monkeypatch, {"보고서를 저장": "Y", "저장 경로": None, "HTML": "Y",
+                                  "전체 보고서를 화면에 표시": "N"})
     monkeypatch.setattr(run, "_graphical_browser", lambda: None)
 
     run._offer_reports(STATE, _report_graph(tmp_path), "NVDA")
 
-    assert not [q for q in asked if "browser" in q]
+    assert not [q for q in asked if "브라우저" in q]
     assert list(tmp_path.glob("reports/NVDA_*/complete_report.html"))
 
 
 @pytest.mark.unit
 def test_declining_the_html_page_saves_only_the_markdown(monkeypatch, tmp_path):
-    asked = _answer(monkeypatch, {"Save report": "Y", "Save path": None, "HTML": "N",
-                                  "Display full report": "N"})
+    asked = _answer(monkeypatch, {"보고서를 저장": "Y", "저장 경로": None, "HTML": "N",
+                                  "전체 보고서를 화면에 표시": "N"})
     monkeypatch.setattr(run, "_graphical_browser", lambda: _Browser())
 
     run._offer_reports(STATE, _report_graph(tmp_path), "NVDA")
 
     assert not list(tmp_path.glob("reports/NVDA_*/complete_report.html"))
-    assert not [q for q in asked if "browser" in q]
+    assert not [q for q in asked if "브라우저" in q]
 
 
 @pytest.mark.unit
@@ -318,11 +318,12 @@ def test_a_page_the_browser_cannot_open_is_pointed_to(monkeypatch, tmp_path, cap
         def open(self, url):
             return False
 
-    _answer(monkeypatch, {"Save report": "Y", "Save path": None, "HTML": "Y", "browser": "Y",
-                          "Display full report": "N"})
+    _answer(monkeypatch, {"보고서를 저장": "Y", "저장 경로": None, "HTML": "Y", "브라우저": "Y",
+                          "전체 보고서를 화면에 표시": "N"})
     monkeypatch.setattr(run, "_graphical_browser", lambda: Failing())
     monkeypatch.setattr(run.console, "print", lambda *a, **k: print(*a))
 
     run._offer_reports(STATE, _report_graph(tmp_path), "NVDA")
 
-    assert "complete_report.html" in capsys.readouterr().out.split("the page is at:")[-1]
+    # Task 9f (#85): "the page is at:" → "페이지 경로:"
+    assert "complete_report.html" in capsys.readouterr().out.split("페이지 경로:")[-1]
