@@ -12,7 +12,9 @@ from langgraph.prebuilt import InjectedState
 from tradingagents.dataflows.date_window import as_of, as_of_window
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
-from tradingagents.dataflows.vendors.yahoo.snapshot import build_verified_market_snapshot
+from tradingagents.dataflows.vendors.pykrx import (
+    build_market_snapshot as build_verified_market_snapshot,
+)
 
 
 @tool
@@ -239,6 +241,22 @@ def get_convertible_bonds(
     CB 는 신주 발행 가능성이라 희석 리스크 평가에 중요.
     """
     return route_to_vendor("get_convertible_bonds", ticker, trade_date or None)
+
+
+@tool
+def get_investor_net_purchases(
+    ticker: Annotated[str, InjectedState("company_of_interest")],
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+    look_back_days: Annotated[int, "거슬러 올라갈 거래일 수 (기본 5)"] = 5,
+) -> str:
+    """
+    최근 ``look_back_days`` 거래일간 외국인·기관·개인 순매수 (KRX 전용).
+    수급은 가격 변동의 선행 지표라 시장 분석가가 활용해야 함.
+    KRX_ID / KRX_PW 환경변수 로그인 필요.
+    """
+    return route_to_vendor(
+        "get_investor_net_purchases", ticker, trade_date, look_back_days
+    )
 
 
 @tool
