@@ -1,20 +1,13 @@
-"""Sentiment analyst: one sentiment report from three sources.
+"""Sentiment analyst — 네이버 금융 뉴스 기반 감성 분석 (Task 7c, #64).
 
-The node fetches its sources before calling the model and puts them in the
-prompt, so the model reports on data it was given rather than inventing posts:
+Task 3 사전조회 패턴 (ADR-0002) 과 Task 7 KRX 하드 포크에 맞춰 재구성:
+- 원래 소스 3개 (Yahoo news + StockTwits + Reddit) → **네이버 금융 뉴스 단일**
+- StockTwits/Reddit 는 미국 증시 소셜 플랫폼이라 KRX 커버리지 없음 (하드 포크
+  결정 ADR-0001)
+- 네이버 금융 뉴스는 노이즈 필터 + 날짜 범위로 관련 기사만 남긴 상태
 
-  1. News headlines: Yahoo Finance
-  2. StockTwits messages: the cashtag stream, with Bullish/Bearish tags
-  3. Reddit posts: r/wallstreetbets, r/stocks, r/investing, or crypto communities for a crypto pair
-
-Each source is trimmed to the analysis window. With a TypeSafe key, the social
-posts are screened by Jev first (see post_screen). These feeds serve recent items
-and are not archived, so a historical run's sentiment inputs are not
-point-in-time.
-
-The report is a SentimentReport through structured output where the provider
-supports it and free text otherwise, so the band, score and confidence header
-reads the same across providers.
+여전히 SentimentReport (band/score/confidence/narrative) 를 반환해 다운스트림
+리서처/트레이더 노드가 변경 없이 소비 가능.
 """
 
 from datetime import datetime, timedelta
@@ -23,7 +16,6 @@ from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
-from tradingagents.agents.post_screen import jev_screen
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
 from tradingagents.agents.structured import (
     NO_EXTERNAL_TOOLS,
@@ -31,13 +23,6 @@ from tradingagents.agents.structured import (
     invoke_structured_or_freetext,
 )
 from tradingagents.agents.tools import get_news
-from tradingagents.dataflows.vendors.reddit import (
-    CRYPTO_SUBREDDITS,
-    DEFAULT_SUBREDDITS,
-    fetch_reddit_posts,
-    subreddits_for,
-)
-from tradingagents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -47,10 +32,9 @@ def _seven_days_back(trade_date: str) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches news + StockTwits + Reddit data, injects them into the
-    prompt as structured blocks, and produces a deterministic sentiment
-    report via structured output (with a free-text fallback for providers
-    that do not support it).
+    네이버 금융 뉴스를 사전조회해 프롬프트에 주입하고, SentimentReport (band,
+    score, confidence, narrative) 를 구조화 출력으로 생성. 구조화 미지원 provider
+    는 free-text 폴백.
     """
     structured_llm = bind_structured(llm, SentimentReport, "Sentiment Analyst")
 
@@ -60,29 +44,18 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        # Pass the analysis window so a historical run trims social posts to it
-        # instead of leaking today's chatter into a backtest (#1220).
-        screen = jev_screen(ticker)
-        stocktwits_block = fetch_stocktwits_messages(
-            ticker, limit=30, start_date=start_date, end_date=end_date, screen=screen
-        )
-        subreddits = subreddits_for(ticker)
-        reddit_block = fetch_reddit_posts(
-            ticker, subreddits, start_date=start_date, end_date=end_date, screen=screen
-        )
+        # 네이버 금융 뉴스 선조회. tool.func 로 호출해 Python 에서 결과를 받아
+        # 프롬프트에 주입 (사전조회 패턴 — ADR-0002).
+        try:
+            news_block = get_news.func(ticker, start_date, end_date)
+        except Exception as exc:  # noqa: BLE001 — 분석가 중단 방지
+            news_block = f"[prefetch failed: {type(exc).__name__}: {exc}]"
 
         system_message = _build_system_message(
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
             news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
-            subreddits=subreddits,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -91,9 +64,7 @@ def create_sentiment_analyst(llm):
                     "system",
                     "You are a helpful AI assistant, collaborating with other assistants."
                     " Report what your tools support; another agent decides the trade."
-                    # No tool-calling here: the data is pre-fetched into the
-                    # prompt, so tool-range wording would only invite a
-                    # hallucinated tool call (#1130).
+                    # 사전조회 패턴 — 데이터는 이미 프롬프트에 있음, 툴 호출 금지.
                     " Today's date is {current_date}; treat it as 'now' for all analysis. {instrument_context}"
                     " " + NO_EXTERNAL_TOOLS +
                     "\n{system_message}",
@@ -106,9 +77,6 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        # Format the template into a concrete message list so the structured
-        # and free-text paths receive the same input. No bind_tools — the
-        # data is already in the prompt.
         formatted_messages = prompt.format_messages(messages=state["messages"])
 
         report_text = invoke_structured_or_freetext(
@@ -133,67 +101,45 @@ def _build_system_message(
     start_date: str,
     end_date: str,
     news_block: str,
-    stocktwits_block: str,
-    reddit_block: str,
-    subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
 ) -> str:
-    """Assemble the sentiment-analyst system message with structured data blocks."""
-    if subreddits == DEFAULT_SUBREDDITS:
-        character = "r/wallstreetbets is often contrarian/exuberant; r/stocks more measured; r/investing longer-term"
-    elif len(subreddits) > len(CRYPTO_SUBREDDITS):
-        character = f"r/{subreddits[0]} leans toward the coin's holders; r/CryptoCurrency and r/CryptoMarkets are broader"
-    else:
-        character = "r/CryptoCurrency and r/CryptoMarkets are broad crypto communities"
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+    """감성 분석 시스템 메시지 조립.
 
-## Data sources (pre-fetched, in this prompt)
+    상류의 StockTwits/Reddit 소스는 미국 증시 전용이라 KRX 하드 포크 (ADR-0001)
+    에서 제거됨. 대신 네이버 금융 뉴스 단일 소스로 재구성.
+    """
+    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on the pre-fetched Korean financial news that has already been collected for you.
 
-### News headlines — Yahoo Finance, past 7 days
-Institutional framing. Fact-driven, slower-moving signal.
+## Data source (pre-fetched, in this prompt)
+
+### News headlines — 네이버 금융, past 7 days
+한국 주요 언론사의 종목 관련 보도. 사실 중심의 느린 변화 신호. 광고·묶음·인사
+기사 노이즈는 vendor 가 사전에 제거.
 
 <start_of_news>
 {news_block}
 <end_of_news>
 
-### StockTwits messages — retail-trader social platform indexed by cashtag
-Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
-
-<start_of_stocktwits>
-{stocktwits_block}
-<end_of_stocktwits>
-
-### Reddit posts — {", ".join(f"r/{sub}" for sub in subreddits)} (past 7 days)
-Community discussion, without vote or comment counts. Subreddit character matters ({character}).
-
-<start_of_reddit>
-{reddit_block}
-<end_of_reddit>
-
 ## How to analyze this data (best practices)
 
-1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
+1. **헤드라인의 톤 분류**: 개별 기사를 호재/악재/중립으로 나누고 비중을 세요. 재료 성격 (실적, 공시, 거시, 기관 리포트 등) 과 기자 톤 (단정형 vs 유보형) 양쪽을 봅니다.
 
-2. **Look for cross-source divergences.** If news framing is bearish but StockTwits is overwhelmingly bullish, that mismatch is itself a signal — it can mean retail is leaning into a thesis the news flow hasn't caught up to (or vice versa, that retail is chasing while institutions are cautious).
+2. **반복 테마 식별**: 어떤 주제가 여러 기사에서 반복되는지 — 현재 종목을 둘러싼 지배적 내러티브가 무엇인지 포착하세요. 공시 (실적 발표, 유상증자, 전환사채 등) 는 가격에 즉시 영향이 큼.
 
-3. **Read Reddit posts for substance.** The feed carries no vote or comment counts, so judge a post by its body excerpt, not its title alone, and do not infer engagement.
+3. **의견 vs 사실 구분**: 애널리스트 리포트/증권사 전망 같은 의견성 기사는 사실 보도와 다르게 가중치를 두세요.
 
-4. **Distinguish opinion from event.** A news headline ("Nvidia announces $500M Corning deal") is an event; a StockTwits post ("buying NVDA, this is going to moon") is opinion. Both are inputs but should be weighted differently in your conclusions.
+4. **데이터 한계 명시**: 뉴스가 소수 (5건 미만) 거나 `[prefetch failed]` 플레이스홀더가 포함되면 `confidence` 를 낮추고 narrative 에 명시하세요. 상류의 StockTwits/Reddit 등 소셜 소스는 KRX 하드 포크 (ADR-0001) 에서 제거됐으므로 신호 부재는 "소셜 데이터 없음" 이 아니라 "뉴스 단일 소스" 로 기술.
 
-5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
+5. **촉매·리스크 분리**: 다가올 실적 발표, 신제품/서비스, 규제, 경쟁사 동향 등 catalyst 를 분리해 추출. 관리종목 지정/감자/상장폐지 관련 뉴스는 즉시 심각 리스크로.
 
-6. **Be honest about data limits.** If StockTwits returned only a handful of messages, or one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative. If the sources are silent on a given subreddit, say so.
-
-7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
-
-8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
+6. **과거 센티먼트는 예측이 아님**: 결론은 "트레이더가 fundamentals/technicals 과 함께 참고할 신호" 로 제시, 가격 call 로 쓰지 마세요.
 
 ## Output fields
 
 Fill the following fields:
 
-- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when sources point in clearly different directions; Neutral only when all sources are genuinely silent.
+- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when headlines are clearly split; Neutral only when the feed is genuinely silent.
 - **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
 - **confidence**: low / medium / high, based on data quality and sample size.
-- **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
+- **narrative**: 섹션별 breakdown (호재/악재/중립 구성), 지배 내러티브, catalyst/리스크, markdown summary table 로 (방향, 소스, 근거).
 
 {get_language_instruction()}"""

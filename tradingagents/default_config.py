@@ -131,7 +131,8 @@ def build_default_config() -> dict:
             # Task 5 (#46): KRX 상장사의 재무/공시는 금융감독원 Open DART 단일 vendor.
             # 상류의 SEC EDGAR / Alpha Vantage / Yahoo fundamentals 는 전부 제거됨.
             "fundamental_data": "dart",
-            "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+            # Task 7c (#64): 네이버 금융 뉴스 단일 vendor (KRX 전용).
+            "news_data": "naver_news",
             "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
             "prediction_markets": "polymarket",  # Options: polymarket (keyless)
         },

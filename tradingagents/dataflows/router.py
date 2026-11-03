@@ -6,10 +6,6 @@ from tradingagents.dataflows.errors import (
     VendorNotConfiguredError,
     VendorUnavailableError,
 )
-from tradingagents.dataflows.vendors.alpha_vantage import (
-    get_global_news as get_alpha_vantage_global_news,
-    get_news as get_alpha_vantage_news,
-)
 from tradingagents.dataflows.vendors.dart import (
     get_balance_sheet as get_dart_balance_sheet,
     get_cashflow as get_dart_cashflow,
@@ -19,6 +15,10 @@ from tradingagents.dataflows.vendors.dart import (
     get_insider_transactions as get_dart_insider_transactions,
 )
 from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macro_data
+from tradingagents.dataflows.vendors.naver_news import (
+    get_global_news as get_naver_global_news,
+    get_news as get_naver_news,
+)
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
@@ -27,7 +27,6 @@ from tradingagents.dataflows.vendors.pykrx import (
     get_stock_data as get_pykrx_stock_data,
     get_stock_stats_indicators_window as get_pykrx_indicators_window,
 )
-from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +118,12 @@ VENDOR_METHODS = {
     "get_convertible_bonds": {
         "dart": get_dart_convertible_bonds,
     },
-    # news_data
+    # news_data — Task 7c (#64): KRX 전용 네이버 금융 뉴스 단일 vendor
     "get_news": {
-        "alpha_vantage": get_alpha_vantage_news,
-        "yfinance": get_news_yfinance,
+        "naver_news": get_naver_news,
     },
     "get_global_news": {
-        "yfinance": get_global_news_yfinance,
-        "alpha_vantage": get_alpha_vantage_global_news,
+        "naver_news": get_naver_global_news,
     },
     "get_insider_transactions": {
         "dart": get_dart_insider_transactions,

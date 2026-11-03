@@ -109,9 +109,7 @@ def test_portfolio_manager_prompt_states_constraint():
 def test_sentiment_prompt_states_constraint(monkeypatch):
     from tradingagents.agents.schemas import SentimentBand, SentimentReport
 
-    # Pre-fetched sources are stubbed so the prompt builds without network I/O.
-    monkeypatch.setattr(sentiment, "fetch_stocktwits_messages", lambda *a, **k: "st")
-    monkeypatch.setattr(sentiment, "fetch_reddit_posts", lambda *a, **k: "rd")
+    # Task 7c (#64): 소셜 소스는 제거됨. 네이버 뉴스 단일만 stubbing.
     monkeypatch.setattr(sentiment.get_news, "func", lambda *a, **k: "news", raising=False)
 
     captured = {}
