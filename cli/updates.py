@@ -216,5 +216,5 @@ def show(console) -> None:
 
     lines = messages(read_cache(), running=__version__, upgrade=upgrade_command)
     if lines:
-        console.print(Panel(Text("\n".join(lines)), border_style="cyan", padding=(1, 2), title="What's new"))
+        console.print(Panel(Text("\n".join(lines)), border_style="cyan", padding=(1, 2), title="새 소식"))
         console.print()

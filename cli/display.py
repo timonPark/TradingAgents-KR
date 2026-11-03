@@ -141,13 +141,13 @@ class MessageBuffer:
 
         if latest_section and latest_content:
             section_titles = {
-                "market_report": "Market Analysis",
-                "sentiment_report": "Social Sentiment",
-                "news_report": "News Analysis",
-                "fundamentals_report": "Fundamentals Analysis",
-                "investment_plan": "Research Team Decision",
-                "trader_investment_plan": "Trading Team Plan",
-                "final_trade_decision": "Portfolio Management Decision",
+                "market_report": "시장 분석",
+                "sentiment_report": "감성 분석",
+                "news_report": "뉴스 분석",
+                "fundamentals_report": "재무 분석",
+                "investment_plan": "리서치 팀 결정",
+                "trader_investment_plan": "트레이딩 팀 계획",
+                "final_trade_decision": "포트폴리오 매니저 결정",
             }
             self.current_report = (
                 f"### {section_titles[latest_section]}\n{latest_content}"
@@ -180,13 +180,44 @@ def format_tokens(n):
     return str(n)
 
 
+# Task 9f (#85): 에이전트 내부 식별자 (dict key) 는 영어 유지, 사용자 노출 표시명만 한국어.
+# agent_status / all_teams 의 keys 는 LangGraph 노드 이름과 일치해야 하므로 영어.
+_AGENT_DISPLAY_NAMES = {
+    "Market Analyst": "시장 분석가",
+    "Sentiment Analyst": "감성 분석가",
+    "News Analyst": "뉴스 분석가",
+    "Fundamentals Analyst": "재무 분석가",
+    "Bull Researcher": "강세 리서처",
+    "Bear Researcher": "약세 리서처",
+    "Research Manager": "리서치 매니저",
+    "Trader": "트레이더",
+    "Aggressive Analyst": "공격적 분석가",
+    "Neutral Analyst": "중립적 분석가",
+    "Conservative Analyst": "보수적 분석가",
+    "Portfolio Manager": "포트폴리오 매니저",
+}
+_TEAM_DISPLAY_NAMES = {
+    "Analyst Team": "분석가 팀",
+    "Research Team": "리서치 팀",
+    "Trading Team": "트레이딩 팀",
+    "Risk Management": "리스크 관리",
+    "Portfolio Management": "포트폴리오 관리",
+}
+_STATUS_DISPLAY_NAMES = {
+    "pending": "대기",
+    "in_progress": "진행 중",
+    "completed": "완료",
+    "error": "오류",
+}
+
+
 def update_display(layout, spinner_text=None, stats_handler=None, start_time=None):
     # Header with welcome message
     layout["header"].update(
         Panel(
-            "[bold green]Welcome to TradingAgents CLI[/bold green]\n"
+            "[bold green]TradingAgents-KR CLI 에 오신 것을 환영합니다[/bold green]\n"
             "[dim]© [Tauric Research](https://github.com/TauricResearch)[/dim]",
-            title="Welcome to TradingAgents",
+            title="TradingAgents-KR",
             border_style="green",
             padding=(1, 2),
             expand=True,
@@ -203,9 +234,9 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         padding=(0, 2),  # Add horizontal padding
         expand=True,  # Make table expand to fill available space
     )
-    progress_table.add_column("Team", style="cyan", justify="center", width=20)
-    progress_table.add_column("Agent", style="green", justify="center", width=20)
-    progress_table.add_column("Status", style="yellow", justify="center", width=20)
+    progress_table.add_column("팀", style="cyan", justify="center", width=20)
+    progress_table.add_column("에이전트", style="green", justify="center", width=20)
+    progress_table.add_column("상태", style="yellow", justify="center", width=20)
 
     # Group agents by team - filter to only include agents in agent_status
     all_teams = {
@@ -230,9 +261,10 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     for team, agents in teams.items():
         first_agent = agents[0]
         status = message_buffer.agent_status.get(first_agent, "pending")
+        status_display = _STATUS_DISPLAY_NAMES.get(status, status)
         if status == "in_progress":
             spinner = Spinner(
-                "dots", text="[blue]in_progress[/blue]", style="bold cyan"
+                "dots", text=f"[blue]{status_display}[/blue]", style="bold cyan"
             )
             status_cell = spinner
         else:
@@ -241,14 +273,19 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
                 "completed": "green",
                 "error": "red",
             }.get(status, "white")
-            status_cell = f"[{status_color}]{status}[/{status_color}]"
-        progress_table.add_row(team, first_agent, status_cell)
+            status_cell = f"[{status_color}]{status_display}[/{status_color}]"
+        progress_table.add_row(
+            _TEAM_DISPLAY_NAMES.get(team, team),
+            _AGENT_DISPLAY_NAMES.get(first_agent, first_agent),
+            status_cell,
+        )
 
         for agent in agents[1:]:
             status = message_buffer.agent_status.get(agent, "pending")
+            status_display = _STATUS_DISPLAY_NAMES.get(status, status)
             if status == "in_progress":
                 spinner = Spinner(
-                    "dots", text="[blue]in_progress[/blue]", style="bold cyan"
+                    "dots", text=f"[blue]{status_display}[/blue]", style="bold cyan"
                 )
                 status_cell = spinner
             else:
@@ -257,13 +294,15 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
                     "completed": "green",
                     "error": "red",
                 }.get(status, "white")
-                status_cell = f"[{status_color}]{status}[/{status_color}]"
-            progress_table.add_row("", agent, status_cell)
+                status_cell = f"[{status_color}]{status_display}[/{status_color}]"
+            progress_table.add_row(
+                "", _AGENT_DISPLAY_NAMES.get(agent, agent), status_cell
+            )
 
         progress_table.add_row("─" * 20, "─" * 20, "─" * 20, style="dim")
 
     layout["progress"].update(
-        Panel(progress_table, title="Progress", border_style="cyan", padding=(1, 2))
+        Panel(progress_table, title="진행 상황", border_style="cyan", padding=(1, 2))
     )
 
     # Messages panel showing recent messages and tool calls
@@ -276,10 +315,10 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         show_lines=True,  # Keep horizontal lines
         padding=(0, 1),  # Add some padding between columns
     )
-    messages_table.add_column("Time", style="cyan", width=8, justify="center")
-    messages_table.add_column("Type", style="green", width=10, justify="center")
+    messages_table.add_column("시각", style="cyan", width=8, justify="center")
+    messages_table.add_column("유형", style="green", width=10, justify="center")
     messages_table.add_column(
-        "Content", style="white", no_wrap=False, ratio=1
+        "내용", style="white", no_wrap=False, ratio=1
     )  # Make content column expand
 
     # Combine tool calls and messages
@@ -287,7 +326,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
 
     for timestamp, tool_name, args in message_buffer.tool_calls:
         formatted_args = format_tool_args(args)
-        all_messages.append((timestamp, "Tool", f"{tool_name}: {formatted_args}"))
+        all_messages.append((timestamp, "툴", f"{tool_name}: {formatted_args}"))
 
     for timestamp, msg_type, content in message_buffer.messages:
         content_str = str(content) if content else ""
@@ -309,7 +348,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     layout["messages"].update(
         Panel(
             messages_table,
-            title="Messages & Tools",
+            title="메시지 & 툴",
             border_style="blue",
             padding=(1, 2),
         )
@@ -320,7 +359,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         layout["analysis"].update(
             Panel(
                 Markdown(message_buffer.current_report),
-                title="Current Report",
+                title="현재 보고서",
                 border_style="green",
                 padding=(1, 2),
             )
@@ -328,8 +367,8 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     else:
         layout["analysis"].update(
             Panel(
-                "[italic]Waiting for analysis report...[/italic]",
-                title="Current Report",
+                "[italic]분석 보고서를 기다리는 중...[/italic]",
+                title="현재 보고서",
                 border_style="green",
                 padding=(1, 2),
             )
@@ -346,22 +385,22 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     reports_completed = message_buffer.get_completed_reports_count()
     reports_total = len(message_buffer.report_sections)
 
-    stats_parts = [f"Agents: {agents_completed}/{agents_total}"]
+    stats_parts = [f"\uc5d0\uc774\uc804\ud2b8: {agents_completed}/{agents_total}"]
 
     # LLM and tool stats from callback handler
     if stats_handler:
         stats = stats_handler.get_stats()
-        stats_parts.append(f"LLM: {stats['llm_calls']}")
-        stats_parts.append(f"Tools: {stats['tool_calls']}")
+        stats_parts.append(f"LLM \ud638\ucd9c: {stats['llm_calls']}")
+        stats_parts.append(f"\ud234 \ud638\ucd9c: {stats['tool_calls']}")
 
         # Token display with graceful fallback
         if stats["tokens_in"] > 0 or stats["tokens_out"] > 0:
-            tokens_str = f"Tokens: {format_tokens(stats['tokens_in'])}\u2191 {format_tokens(stats['tokens_out'])}\u2193"
+            tokens_str = f"\ud1a0\ud070: {format_tokens(stats['tokens_in'])}\u2191 {format_tokens(stats['tokens_out'])}\u2193"
         else:
-            tokens_str = "Tokens: --"
+            tokens_str = "\ud1a0\ud070: --"
         stats_parts.append(tokens_str)
 
-    stats_parts.append(f"Reports: {reports_completed}/{reports_total}")
+    stats_parts.append(f"\ubcf4\uace0\uc11c: {reports_completed}/{reports_total}")
 
     # Elapsed time
     if start_time:
@@ -370,7 +409,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         stats_parts.append(elapsed_str)
 
     stats_table = Table(show_header=False, box=None, padding=(0, 2), expand=True)
-    stats_table.add_column("Stats", justify="center")
+    stats_table.add_column("통계", justify="center")
     stats_table.add_row(" | ".join(stats_parts))
 
     layout["footer"].update(Panel(stats_table, border_style="grey50"))
@@ -379,20 +418,20 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
 def display_complete_report(final_state):
     """Display the complete analysis report sequentially (avoids truncation)."""
     console.print()
-    console.print(Rule("Complete Analysis Report", style="bold green"))
+    console.print(Rule("종합 분석 보고서", style="bold green"))
 
     # I. Analyst Team Reports
     analysts = []
     if final_state.get("market_report"):
-        analysts.append(("Market Analyst", final_state["market_report"]))
+        analysts.append(("시장 분석가", final_state["market_report"]))
     if final_state.get("sentiment_report"):
-        analysts.append(("Sentiment Analyst", final_state["sentiment_report"]))
+        analysts.append(("감성 분석가", final_state["sentiment_report"]))
     if final_state.get("news_report"):
-        analysts.append(("News Analyst", final_state["news_report"]))
+        analysts.append(("뉴스 분석가", final_state["news_report"]))
     if final_state.get("fundamentals_report"):
-        analysts.append(("Fundamentals Analyst", final_state["fundamentals_report"]))
+        analysts.append(("재무 분석가", final_state["fundamentals_report"]))
     if analysts:
-        console.print(Panel("[bold]I. Analyst Team Reports[/bold]", border_style="cyan"))
+        console.print(Panel("[bold]I. 분석가 팀 보고서[/bold]", border_style="cyan"))
         for title, content in analysts:
             console.print(Panel(Markdown(content), title=title, border_style="blue", padding=(1, 2)))
 
@@ -401,40 +440,40 @@ def display_complete_report(final_state):
         debate = final_state["investment_debate_state"]
         research = []
         if debate.get("bull_history"):
-            research.append(("Bull Researcher", debate["bull_history"]))
+            research.append(("강세 리서처", debate["bull_history"]))
         if debate.get("bear_history"):
-            research.append(("Bear Researcher", debate["bear_history"]))
+            research.append(("약세 리서처", debate["bear_history"]))
         if final_state.get("investment_plan"):
-            research.append(("Research Manager", final_state["investment_plan"]))
+            research.append(("리서치 매니저", final_state["investment_plan"]))
         if research:
-            console.print(Panel("[bold]II. Research Team Decision[/bold]", border_style="magenta"))
+            console.print(Panel("[bold]II. 리서치 팀 결정[/bold]", border_style="magenta"))
             for title, content in research:
                 console.print(Panel(Markdown(content), title=title, border_style="blue", padding=(1, 2)))
 
     # III. Trading Team
     if final_state.get("trader_investment_plan"):
-        console.print(Panel("[bold]III. Trading Team Plan[/bold]", border_style="yellow"))
-        console.print(Panel(Markdown(final_state["trader_investment_plan"]), title="Trader", border_style="blue", padding=(1, 2)))
+        console.print(Panel("[bold]III. 트레이딩 팀 계획[/bold]", border_style="yellow"))
+        console.print(Panel(Markdown(final_state["trader_investment_plan"]), title="트레이더", border_style="blue", padding=(1, 2)))
 
     # IV. Risk Management Team
     if final_state.get("risk_debate_state"):
         risk = final_state["risk_debate_state"]
         risk_reports = []
         if risk.get("aggressive_history"):
-            risk_reports.append(("Aggressive Analyst", risk["aggressive_history"]))
+            risk_reports.append(("공격적 분석가", risk["aggressive_history"]))
         if risk.get("conservative_history"):
-            risk_reports.append(("Conservative Analyst", risk["conservative_history"]))
+            risk_reports.append(("보수적 분석가", risk["conservative_history"]))
         if risk.get("neutral_history"):
-            risk_reports.append(("Neutral Analyst", risk["neutral_history"]))
+            risk_reports.append(("중립적 분석가", risk["neutral_history"]))
         if risk_reports:
-            console.print(Panel("[bold]IV. Risk Management Team Decision[/bold]", border_style="red"))
+            console.print(Panel("[bold]IV. 리스크 관리 팀 결정[/bold]", border_style="red"))
             for title, content in risk_reports:
                 console.print(Panel(Markdown(content), title=title, border_style="blue", padding=(1, 2)))
 
     # V. Portfolio Manager Decision
     if final_state.get("final_trade_decision"):
-        console.print(Panel("[bold]V. Portfolio Manager Decision[/bold]", border_style="green"))
-        console.print(Panel(Markdown(final_state["final_trade_decision"]), title="Portfolio Manager", border_style="blue", padding=(1, 2)))
+        console.print(Panel("[bold]V. 포트폴리오 매니저 결정[/bold]", border_style="green"))
+        console.print(Panel(Markdown(final_state["final_trade_decision"]), title="포트폴리오 매니저", border_style="blue", padding=(1, 2)))
 
 
 def update_research_team_status(status):

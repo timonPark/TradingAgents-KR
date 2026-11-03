@@ -50,10 +50,10 @@ def _announce_checkpoint_state(graph, ticker: str, trade_date: str) -> None:
     """
     if getattr(graph, "_resuming", False):
         message_buffer.add_message(
-            "System", f"Resuming the saved run for {ticker} on {trade_date}"
+            "System", f"저장된 run 을 이어서 실행합니다: {ticker} / {trade_date}"
         )
     else:
-        message_buffer.add_message("System", f"Starting fresh for {ticker} on {trade_date}")
+        message_buffer.add_message("System", f"{ticker} / {trade_date} 분석을 새로 시작합니다")
 
 
 def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
@@ -76,8 +76,8 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
             # The depth question appeared (it is skipped only when both are
             # set), so say which half of the answer the environment overrode.
             console.print(
-                f"[green]✓ {key} from environment:[/green] {config[key]} "
-                f"(set by {env_var}, so the research depth you chose does not apply to it)"
+                f"[green]✓ 환경변수에서 {key}:[/green] {config[key]} "
+                f"({env_var} 로 설정되어, 선택한 리서치 깊이가 이 라운드 수에는 적용되지 않습니다)"
             )
     config["quick_think_llm"] = selections["quick_think_llm"]
     config["deep_think_llm"] = selections["deep_think_llm"]
@@ -104,7 +104,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     if not (sys.stdin and sys.stdin.isatty()):
         gaps = unattended_gaps(flags)
         if gaps:
-            console.print("[red]No terminal to answer the setup questions. Set:[/red]")
+            console.print("[red]터미널이 없어 설정 질문에 답할 수 없습니다. 다음을 지정하세요:[/red]")
             for gap in gaps:
                 console.print(f"  {gap}")
             raise typer.Exit(code=1)
@@ -191,15 +191,15 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         # Initial display
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
-        message_buffer.add_message("System", f"Selected ticker: {selections['ticker']}")
+        message_buffer.add_message("System", f"종목코드: {selections['ticker']}")
         if selections["asset_type"] != "stock":
-            message_buffer.add_message("System", f"Detected asset type: {selections['asset_type']}")
+            message_buffer.add_message("System", f"감지된 자산 유형: {selections['asset_type']}")
         message_buffer.add_message(
-            "System", f"Analysis date: {selections['analysis_date']}"
+            "System", f"분석일: {selections['analysis_date']}"
         )
         message_buffer.add_message(
             "System",
-            f"Selected analysts: {', '.join(analyst.value for analyst in selections['analysts'])}",
+            f"선택된 분석가: {', '.join(analyst.value for analyst in selections['analysts'])}",
         )
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
@@ -210,7 +210,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         spinner_text = (
-            f"Analyzing {selections['ticker']} on {selections['analysis_date']}..."
+            f"{selections['ticker']} / {selections['analysis_date']} 분석 중..."
         )
         update_display(layout, spinner_text, stats_handler=stats_handler, start_time=start_time)
 
@@ -280,15 +280,15 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         update_research_team_status("in_progress")
                     if bull_hist:
                         message_buffer.update_report_section(
-                            "investment_plan", f"### Bull Researcher Analysis\n{bull_hist}"
+                            "investment_plan", f"### 강세 리서처 분석\n{bull_hist}"
                         )
                     if bear_hist:
                         message_buffer.update_report_section(
-                            "investment_plan", f"### Bear Researcher Analysis\n{bear_hist}"
+                            "investment_plan", f"### 약세 리서처 분석\n{bear_hist}"
                         )
                     if judge:
                         message_buffer.update_report_section(
-                            "investment_plan", f"### Research Manager Decision\n{judge}"
+                            "investment_plan", f"### 리서치 매니저 결정\n{judge}"
                         )
                         update_research_team_status("completed")
                         message_buffer.update_agent_status("Trader", "in_progress")
@@ -314,24 +314,24 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         if message_buffer.agent_status.get("Aggressive Analyst") != "completed":
                             message_buffer.update_agent_status("Aggressive Analyst", "in_progress")
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Aggressive Analyst Analysis\n{agg_hist}"
+                            "final_trade_decision", f"### 공격적 분석가 분석\n{agg_hist}"
                         )
                     if con_hist:
                         if message_buffer.agent_status.get("Conservative Analyst") != "completed":
                             message_buffer.update_agent_status("Conservative Analyst", "in_progress")
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Conservative Analyst Analysis\n{con_hist}"
+                            "final_trade_decision", f"### 보수적 분석가 분석\n{con_hist}"
                         )
                     if neu_hist:
                         if message_buffer.agent_status.get("Neutral Analyst") != "completed":
                             message_buffer.update_agent_status("Neutral Analyst", "in_progress")
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Neutral Analyst Analysis\n{neu_hist}"
+                            "final_trade_decision", f"### 중립적 분석가 분석\n{neu_hist}"
                         )
                     if judge and message_buffer.agent_status.get("Portfolio Manager") != "completed":
                         message_buffer.update_agent_status("Portfolio Manager", "in_progress")
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Portfolio Manager Decision\n{judge}"
+                            "final_trade_decision", f"### 포트폴리오 매니저 결정\n{judge}"
                         )
                         message_buffer.update_agent_status("Aggressive Analyst", "completed")
                         message_buffer.update_agent_status("Conservative Analyst", "completed")
@@ -363,7 +363,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             message_buffer.update_agent_status(agent, "completed")
 
         message_buffer.add_message(
-            "System", f"Completed analysis for {selections['analysis_date']}"
+            "System", f"{selections['analysis_date']} 분석 완료"
         )
         message_buffer.add_message("System", analyst_wall_time_tracker.format_summary())
 
@@ -374,15 +374,14 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
     # Post-analysis prompts (outside Live context for clean interaction)
-    console.print("\n[bold cyan]Analysis Complete![/bold cyan]\n")
+    console.print("\n[bold cyan]분석 완료![/bold cyan]\n")
 
     # A decision nobody can read is not a position. Say so here rather than
     # leaving the run to look like a normal result.
     if is_review(run_rating(final_state)):
         console.print(
-            "[yellow]No rating could be read from the final decision, so this run "
-            "is recorded for review rather than as a position. Re-run, or read the "
-            "decision text below and judge it yourself.[/yellow]\n"
+            "[yellow]최종 결정에서 등급을 읽을 수 없어, 이 run 은 포지션이 아닌 재검토 대상으로 "
+            "기록됩니다. 다시 실행하거나 아래 결정 텍스트를 직접 읽고 판단하세요.[/yellow]\n"
         )
     console.print(f"[dim]{analyst_wall_time_tracker.format_summary()}[/dim]")
 
@@ -414,14 +413,14 @@ def _graphical_browser():
 def _open_page(page: Path) -> None:
     """Offer to open the saved page in a browser window, and say where it is if opening fails."""
     browser = _graphical_browser()
-    if browser is None or not _yes("Open it in your browser?"):
+    if browser is None or not _yes("브라우저에서 열까요?"):
         return
     try:
         opened = browser.open(page.as_uri())
     except (webbrowser.Error, OSError):
         opened = False
     if not opened:
-        console.print(f"  [dim]Could not open a browser; the page is at:[/dim] {page}")
+        console.print(f"  [dim]브라우저를 열 수 없습니다. 페이지 경로:[/dim] {page}")
 
 
 def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
@@ -433,7 +432,7 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
     """
     asked = save is None
     if asked:
-        save = typer.prompt("Save report?", default="Y").strip().upper() in ("Y", "YES", "")
+        save = typer.prompt("보고서를 저장할까요?", default="Y").strip().upper() in ("Y", "YES", "")
     if save:
         # Under results_dir, not the working directory: in Docker the working
         # directory is inside the container and the report goes with it, while
@@ -441,25 +440,25 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
         save_path = graph.default_report_path(ticker)
         if asked:   # someone at the prompt may pick another folder
             save_path = Path(typer.prompt(
-                "Save path (press Enter for default)", default=str(save_path)
+                "저장 경로 (Enter 로 기본값 사용)", default=str(save_path)
             ).strip())
         if html is None:
-            html = _yes("Also save it as an HTML page?") if asked else True
+            html = _yes("HTML 페이지로도 저장할까요?") if asked else True
         saved = False
         try:
             report_file = graph.save_reports(final_state, ticker, save_path, html=html)
             saved = True
-            console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
-            console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
+            console.print(f"\n[green]✓ 보고서 저장됨:[/green] {save_path.resolve()}")
+            console.print(f"  [dim]전체 보고서:[/dim] {report_file.name}")
         except Exception as e:
-            console.print(f"[red]Error saving report: {e}[/red]")
+            console.print(f"[red]보고서 저장 실패: {e}[/red]")
         if saved and html:
             page = (save_path / "complete_report.html").resolve()
-            console.print(f"  [dim]HTML report:[/dim] {page.name}")
+            console.print(f"  [dim]HTML 보고서:[/dim] {page.name}")
             if asked:
                 _open_page(page)
 
     if show is None:
-        show = typer.prompt("\nDisplay full report on screen?", default="Y").strip().upper() in ("Y", "YES", "")
+        show = typer.prompt("\n전체 보고서를 화면에 표시할까요?", default="Y").strip().upper() in ("Y", "YES", "")
     if show:
         display_complete_report(final_state)
