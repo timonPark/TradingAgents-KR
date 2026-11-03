@@ -64,6 +64,14 @@ dev = [
     "pytest>=8.0",
     "pytest-subtests>=0.13",
 ]
+# Task 14 (#105): 로컬 Astro 프론트엔드 (`web/`) 가 호출하는 FastAPI 백엔드.
+# 기동: `uvicorn api.main:app --port 8000`. 로컬 전용이라 인증/배포/멀티테넌시
+# 미지원. sse-starlette 은 14e (#110) 의 SSE 라이브 진행 스트림용.
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+]
 
 [project.scripts]
 tradingagents = "cli.main:app"
@@ -72,7 +80,7 @@ tradingagents = "cli.main:app"
 version = {attr = "tradingagents.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "cli*"]
+include = ["tradingagents*", "cli*", "api*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
