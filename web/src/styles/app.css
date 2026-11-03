@@ -1,0 +1,49 @@
+/* TradingAgents-KR 웹 전역 스타일.
+   kinpaku-tokens.css + kinpaku-kit.css 가 먼저 로드된 상태에서 페이지-레벨
+   리셋과 최소 페이지 레이아웃만 담는다. 컴포넌트 스타일은 각 Astro 파일의
+   <style> 블록으로. */
+
+*, *::before, *::after {
+	box-sizing: border-box;
+}
+
+html, body {
+	margin: 0;
+	padding: 0;
+	min-height: 100vh;
+}
+
+body {
+	background: var(--ks-paper);
+	color: var(--ks-text);
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-body-size);
+	line-height: var(--ks-type-body-line);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+a {
+	color: var(--ks-link-on-paper);
+	text-decoration: none;
+}
+
+a:hover {
+	color: var(--ks-patina);
+}
+
+main {
+	display: block;
+}
+
+/* 페이지 레이아웃 helper: 좌우 거터 + 수직 리듬. .ks-section 과 짝으로. */
+.page {
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh;
+}
+
+.page > main {
+	flex: 1;
+	width: 100%;
+}
