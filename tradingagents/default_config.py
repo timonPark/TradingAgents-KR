@@ -136,7 +136,6 @@ def build_default_config() -> dict:
             # Task 7d (#65): KRX 전용 하드 포크. 한국은행 ECOS 단일 vendor
             # (needs ECOS_API_KEY).
             "macro_data": "ecos",
-            "prediction_markets": "polymarket",  # Options: polymarket (keyless)
         },
         # Tool-level configuration (takes precedence over category-level)
         "tool_vendors": {

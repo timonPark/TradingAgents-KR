@@ -19,9 +19,6 @@ from tradingagents.dataflows.vendors.naver_news import (
     get_global_news as get_naver_global_news,
     get_news as get_naver_news,
 )
-from tradingagents.dataflows.vendors.polymarket import (
-    get_prediction_markets as get_polymarket_prediction_markets,
-)
 from tradingagents.dataflows.vendors.pykrx import (
     get_investor_net_purchases as get_pykrx_investor_net_purchases,
     get_stock_data as get_pykrx_stock_data,
@@ -74,20 +71,16 @@ TOOLS_CATEGORIES = {
             "get_macro_indicators",
         ]
     },
-    "prediction_markets": {
-        "description": "Market-implied probabilities for forward-looking events",
-        "tools": [
-            "get_prediction_markets",
-        ]
-    }
 }
 
-# Optional enrichment categories. These add macro/event context to the news
-# analyst but are not core to a decision, so a vendor failure here degrades to a
-# sentinel instead of aborting the run (a bad LLM-supplied indicator, a missing
-# key, or a network blip should not crash an analysis over flavour data). Core
-# categories (prices, fundamentals, news) still raise so a broken primary is loud.
-OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
+# Optional enrichment categories. These add macro context to the news analyst but
+# are not core to a decision, so a vendor failure here degrades to a sentinel
+# instead of aborting the run (a bad LLM-supplied indicator, a missing key, or a
+# network blip should not crash an analysis over flavour data). Core categories
+# (prices, fundamentals, news) still raise so a broken primary is loud.
+# Task 7e (#66): prediction_markets 범주는 하드 포크 (ADR-0001) 로 삭제됨 — 한국
+# 시장에 Polymarket 등가체가 없어 분석가가 활용할 기반이 없었음.
+OPTIONAL_CATEGORIES = {"macro_data"}
 
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
@@ -131,10 +124,6 @@ VENDOR_METHODS = {
     # macro_data — Task 7d (#65): KRX 전용 한국은행 ECOS 단일 vendor
     "get_macro_indicators": {
         "ecos": get_ecos_macro_data,
-    },
-    # prediction_markets
-    "get_prediction_markets": {
-        "polymarket": get_polymarket_prediction_markets,
     },
 }
 
