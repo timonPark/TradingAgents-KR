@@ -14,19 +14,31 @@ logger = logging.getLogger(__name__)
 def get_language_instruction() -> str:
     """Return a prompt instruction for the configured output language.
 
-    Returns empty string when English (default), so no extra tokens are used.
-    Applied to every agent whose output reaches the saved report —
-    analysts, researchers, debaters, research manager, trader, and
-    portfolio manager — so a non-English run produces a fully localized
-    report rather than a mix of languages.
+    분석가/리서처/디베이터/매니저/트레이더 등 모든 에이전트가 저장되는 리포트에
+    기여하는 노드가 호출. KRX 하드 포크 (ADR-0003) 디폴트는 Korean — 전체 보고서
+    는 한국어, 라벨 (``등급``, ``최종 거래 제안``) 도 한국어, **값만 영어 유지**
+    (``BUY``/``SELL``/``HOLD``/``Overweight``/``Underweight``) 로 파서 호환성 보존.
     """
     from tradingagents.dataflows.config import get_config
-    lang = get_config().get("output_language", "English")
-    if lang.strip().lower() == "english":
+    lang = get_config().get("output_language", "Korean")
+    normalized = lang.strip().lower()
+
+    if normalized == "korean":
+        # Task 9a (#80): 한국어 라벨 + 영어 값 지침. rating.py 와 schemas.py
+        # 모두 한국어/영어 라벨 양쪽을 수용하지만, Korean 모드에서는 한국어로
+        # 통일.
+        return (
+            " 보고서 전체를 한국어로 작성하되, 포맷이 요구하는 **라벨 라인**은"
+            " 다음 규칙을 지킵니다: ``**등급**: BUY`` / ``**최종 거래 제안**: BUY``"
+            " 처럼 **라벨은 한국어** (``등급``, ``최종 거래 제안``), **값은 영어"
+            " 대문자** (``BUY``/``SELL``/``HOLD``/``Overweight``/``Underweight``)"
+            " 로 정확히 지정하세요. 다운스트림 파서가 영어 값만 매칭하므로"
+            " 번역/부정형 (예: ``not a Sell``) 금지."
+        )
+    if normalized == "english":
         return ""
-    # The labelled lines are read by the program, so they keep their English
-    # label and value: a translated rating line leaves the reader prose to
-    # search, where a negated rating ("not a Sell") reads as the call (#1435).
+    # 다른 언어 (일본어/중국어 등 — 현재 공식 지원 범위 외). 라벨 라인은 영어로
+    # 고정하여 파서 호환성 보존.
     return (
         f" Write your entire response in {lang}, except the labelled lines the format"
         f" asks for (the \"**Rating**:\" line, \"FINAL TRANSACTION PROPOSAL:\"):"
