@@ -62,10 +62,10 @@ def create_sentiment_analyst(llm):
             [
                 (
                     "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Report what your tools support; another agent decides the trade."
+                    "당신은 다른 분석가들과 협업하는 AI 어시스턴트입니다."
+                    " 가지고 있는 도구가 뒷받침하는 내용만 보고하고 — 거래 결정은 다른 에이전트의 몫입니다."
                     # 사전조회 패턴 — 데이터는 이미 프롬프트에 있음, 툴 호출 금지.
-                    " Today's date is {current_date}; treat it as 'now' for all analysis. {instrument_context}"
+                    " 오늘 날짜는 {current_date} 입니다; 모든 분석에서 이 날짜를 '현재' 로 간주하세요. {instrument_context}"
                     " " + NO_EXTERNAL_TOOLS +
                     "\n{system_message}",
                 ),
@@ -107,11 +107,11 @@ def _build_system_message(
     상류의 StockTwits/Reddit 소스는 미국 증시 전용이라 KRX 하드 포크 (ADR-0001)
     에서 제거됨. 대신 네이버 금융 뉴스 단일 소스로 재구성.
     """
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on the pre-fetched Korean financial news that has already been collected for you.
+    return f"""당신은 금융 시장 센티먼트 분석가입니다. {ticker} 에 대해 {start_date} ~ {end_date} 기간을 다루는 종합적인 센티먼트 보고서를 작성하는 것이 당신의 임무입니다 — 당신을 위해 이미 수집된 한국 금융 뉴스를 기반으로.
 
-## Data source (pre-fetched, in this prompt)
+## 데이터 소스 (사전 조회됨, 아래 프롬프트에 포함)
 
-### News headlines — 네이버 금융, past 7 days
+### 뉴스 헤드라인 — 네이버 금융, 최근 1주일
 한국 주요 언론사의 종목 관련 보도. 사실 중심의 느린 변화 신호. 광고·묶음·인사
 기사 노이즈는 vendor 가 사전에 제거.
 
@@ -119,7 +119,7 @@ def _build_system_message(
 {news_block}
 <end_of_news>
 
-## How to analyze this data (best practices)
+## 분석 방법 (베스트 프랙티스)
 
 1. **헤드라인의 톤 분류**: 개별 기사를 호재/악재/중립으로 나누고 비중을 세요. 재료 성격 (실적, 공시, 거시, 기관 리포트 등) 과 기자 톤 (단정형 vs 유보형) 양쪽을 봅니다.
 
@@ -127,19 +127,19 @@ def _build_system_message(
 
 3. **의견 vs 사실 구분**: 애널리스트 리포트/증권사 전망 같은 의견성 기사는 사실 보도와 다르게 가중치를 두세요.
 
-4. **데이터 한계 명시**: 뉴스가 소수 (5건 미만) 거나 `[prefetch failed]` 플레이스홀더가 포함되면 `confidence` 를 낮추고 narrative 에 명시하세요. 상류의 StockTwits/Reddit 등 소셜 소스는 KRX 하드 포크 (ADR-0001) 에서 제거됐으므로 신호 부재는 "소셜 데이터 없음" 이 아니라 "뉴스 단일 소스" 로 기술.
+4. **데이터 한계 명시**: 뉴스가 소수 (5건 미만) 거나 `[prefetch failed]` 플레이스홀더가 포함되면 `confidence` 를 낮추고 `narrative` 에 명시하세요. 상류의 StockTwits/Reddit 등 소셜 소스는 KRX 하드 포크 (ADR-0001) 에서 제거됐으므로 신호 부재는 "소셜 데이터 없음" 이 아니라 "뉴스 단일 소스" 로 기술.
 
 5. **촉매·리스크 분리**: 다가올 실적 발표, 신제품/서비스, 규제, 경쟁사 동향 등 catalyst 를 분리해 추출. 관리종목 지정/감자/상장폐지 관련 뉴스는 즉시 심각 리스크로.
 
-6. **과거 센티먼트는 예측이 아님**: 결론은 "트레이더가 fundamentals/technicals 과 함께 참고할 신호" 로 제시, 가격 call 로 쓰지 마세요.
+6. **과거 센티먼트는 예측이 아님**: 결론은 "트레이더가 재무/기술적 분석과 함께 참고할 신호" 로 제시, 가격 call 로 쓰지 마세요.
 
-## Output fields
+## 출력 필드
 
-Fill the following fields:
+다음 필드를 채우세요:
 
-- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when headlines are clearly split; Neutral only when the feed is genuinely silent.
-- **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
-- **confidence**: low / medium / high, based on data quality and sample size.
-- **narrative**: 섹션별 breakdown (호재/악재/중립 구성), 지배 내러티브, catalyst/리스크, markdown summary table 로 (방향, 소스, 근거).
+- **overall_band**: Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish 중 **정확히 하나** (영어 유지 — 파서 호환). 헤드라인이 명확히 양분되면 Mixed, 피드가 진정으로 침묵하는 경우에만 Neutral.
+- **overall_score**: 0 (가장 약세) ~ 10 (가장 강세) 사이의 수치; 5는 중립. overall_band 와 일관성 유지.
+- **confidence**: low / medium / high (영어 유지 — 파서 호환), 데이터 품질과 샘플 크기에 기반.
+- **narrative**: 섹션별 breakdown (호재/악재/중립 구성), 지배 내러티브, catalyst/리스크, markdown summary table (방향, 소스, 근거).
 
 {get_language_instruction()}"""

@@ -84,12 +84,12 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict[str, str]:
 def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
     """선조회된 데이터를 프롬프트에 주입할 Markdown 블록으로 포맷."""
     return (
-        "## Pre-fetched News Data\n\n"
-        f"### Ticker-specific News ({asset_label}, last week)\n"
+        "## 사전 조회된 뉴스·거시 데이터\n\n"
+        f"### 종목 뉴스 ({asset_label}, 최근 1주일)\n"
         f"{data['ticker_news']}\n\n"
-        "### Global / Macroeconomic News\n"
+        "### 글로벌 / 거시경제 뉴스\n"
         f"{data['global_news']}\n\n"
-        "### Korean Macroeconomic Indicators (한국은행 ECOS, by series)\n"
+        "### 한국 거시경제 지표 (한국은행 ECOS)\n"
         f"{data['macro']}\n"
     )
 
@@ -98,7 +98,7 @@ def create_news_analyst(llm):
     def news_analyst_node(state):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "stock")
-        asset_label = "company" if asset_type == "stock" else "asset"
+        asset_label = "기업" if asset_type == "stock" else "자산"
         instrument_context = get_instrument_context_from_state(state)
         ticker = state["company_of_interest"]
 
@@ -107,15 +107,14 @@ def create_news_analyst(llm):
         prefetched_block = _render_prefetched(prefetched, asset_label)
 
         system_message = (
-            f"You are a news researcher tasked with analyzing recent news and trends over the past "
-            f"week. The data has been **pre-fetched for you** — recent news about the {asset_label} "
-            "under analysis, broader global / macroeconomic news, and core Korean macro indicators "
-            "from 한국은행 ECOS (기준금리, 소비자물가지수, 실업률, 국고채 10년, 원/달러 환율, "
-            "소비자심리지수). You will **not** call tools; write a comprehensive report of the current "
-            "state of the world relevant for trading and macroeconomics grounded in the pre-fetched "
-            "data below. Provide specific, actionable insights with supporting evidence to help "
-            "traders make informed decisions."
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            f"당신은 지난 1주일간의 최근 뉴스와 트렌드를 분석하는 뉴스 분석가입니다. "
+            f"데이터는 이미 **사전 조회되어 프롬프트에 주입**되어 있습니다 — 분석 대상 {asset_label} "
+            "의 최근 뉴스, 글로벌 / 거시경제 뉴스, 그리고 한국은행 ECOS 의 핵심 한국 거시 지표 "
+            "(기준금리, 소비자물가지수, 실업률, 국고채 10년, 원/달러 환율, 소비자심리지수). "
+            "**툴을 호출하지 말고** 사전 조회된 데이터를 기반으로 트레이딩과 거시경제에 관련된 "
+            "현재 세계 상황의 종합적인 보고서를 작성하세요. 트레이더가 정보에 입각한 결정을 "
+            "내릴 수 있도록 근거를 뒷받침해 구체적이고 실행 가능한 인사이트를 제시하세요."
+            + """ 보고서 말미에 핵심 포인트를 정리한 Markdown 표를 반드시 첨부해 가독성을 높이세요."""
             + get_language_instruction()
         )
 
@@ -123,10 +122,10 @@ def create_news_analyst(llm):
             [
                 (
                     "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " The data you need has been pre-fetched below; do not call tools."
-                    " Report what the pre-fetched data supports; another agent decides the trade."
-                    " Today's date is {current_date}; treat it as 'now' for all analysis. {instrument_context}\n"
+                    "당신은 다른 분석가들과 협업하는 AI 어시스턴트입니다."
+                    " 필요한 데이터는 이미 아래에 사전 조회되어 있으므로 툴을 호출하지 마세요."
+                    " 사전 조회된 데이터가 뒷받침하는 내용만 보고하고 — 거래 결정은 다른 에이전트의 몫입니다."
+                    " 오늘 날짜는 {current_date} 입니다; 모든 분석에서 이 날짜를 '현재' 로 간주하세요. {instrument_context}\n"
                     "{system_message}\n\n"
                     "{prefetched}",
                 ),

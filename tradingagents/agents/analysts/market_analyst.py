@@ -95,12 +95,12 @@ def _prefetch_market_data(ticker: str, trade_date: str) -> dict[str, str]:
 def _render_prefetched(data: dict[str, str]) -> str:
     """선조회된 데이터를 프롬프트에 주입할 Markdown 블록으로 포맷."""
     return (
-        "## Pre-fetched Market Data\n\n"
-        "### OHLCV (last ~1 year)\n"
+        "## 사전 조회된 시장 데이터\n\n"
+        "### OHLCV (최근 약 1년)\n"
         f"{data['ohlcv']}\n\n"
-        "### Technical Indicators (all 12 pre-computed)\n"
+        "### 기술적 지표 (12개 전체 사전 계산)\n"
         f"{data['indicators']}\n\n"
-        "### Verified Market Snapshot (source of truth for exact values)\n"
+        "### 검증 시장 스냅샷 (정확한 값의 원천)\n"
         f"{data['snapshot']}\n\n"
         "### 투자자별 수급 (최근 5거래일 순매수 — KRX 전용 선행 지표)\n"
         f"{data['investor_flow']}\n"
@@ -119,39 +119,39 @@ def create_market_analyst(llm):
         prefetched_block = _render_prefetched(prefetched)
 
         system_message = (
-            """You are a trading assistant tasked with analyzing financial markets. The data has been **pre-fetched for you** — OHLCV for the last year, all 12 technical indicators pre-computed, and a verified market snapshot. You will **not** call tools; instead, pick the **most relevant indicators** (up to 8) from those pre-computed and discuss them. The indicators available in the pre-fetched block:
+            """당신은 금융 시장을 분석하는 시장 분석가입니다. 데이터는 이미 **사전 조회되어 프롬프트에 주입**되어 있습니다 — 최근 1년 OHLCV, 12개 기술적 지표 전체 사전 계산, 검증 시장 스냅샷. **툴을 호출하지 말고** 사전 계산된 지표 중 **가장 관련성 높은 지표 (최대 8개)** 를 선택해 논의하세요. 사용 가능한 지표:
 
-Moving Averages:
-- close_50_sma: 50 SMA — medium-term trend. Identify trend direction and dynamic support/resistance. Lags price; combine with faster indicators.
-- close_200_sma: 200 SMA — long-term trend benchmark. Golden/death cross setups. Reacts slowly.
-- close_10_ema: 10 EMA — responsive short-term average. Quick momentum shifts. Noisy in choppy markets.
+이동평균 (Moving Averages):
+- close_50_sma: 50 SMA — 중기 추세. 방향성과 동적 지지/저항 식별. 가격을 뒤따르므로 더 빠른 지표와 결합.
+- close_200_sma: 200 SMA — 장기 추세 벤치마크. 골든/데드 크로스 세팅. 반응 느림.
+- close_10_ema: 10 EMA — 단기 반응성 높은 평균. 빠른 모멘텀 변화 포착. 횡보장에서 노이즈 많음.
 
-MACD Related:
-- macd: Momentum via EMA differences. Crossovers and divergence as trend-change signals.
-- macds: MACD Signal line — EMA smoothing of MACD. Use crossovers with MACD line.
-- macdh: MACD Histogram — gap between MACD and signal. Visualizes momentum strength.
+MACD 계열:
+- macd: EMA 차이로 모멘텀 측정. 교차 / 다이버전스 → 추세 전환 신호.
+- macds: MACD 신호선 — MACD 의 EMA 평활화. MACD 라인과의 교차로 활용.
+- macdh: MACD 히스토그램 — MACD 와 신호선의 간격. 모멘텀 강도 시각화.
 
-Momentum:
-- rsi: 70/30 thresholds for overbought/oversold. In strong trends may remain extreme.
+모멘텀:
+- rsi: 70/30 임계값으로 과매수/과매도. 강한 추세에서는 극값 유지 가능.
 
-Volatility:
-- boll: Bollinger Middle (20 SMA).
-- boll_ub: Bollinger Upper Band (2σ above middle).
-- boll_lb: Bollinger Lower Band (2σ below middle).
-- atr: Average True Range — volatility measure for stop-loss / position sizing.
+변동성:
+- boll: Bollinger 중심선 (20 SMA).
+- boll_ub: Bollinger 상단 밴드 (중심선 위 2σ).
+- boll_lb: Bollinger 하단 밴드 (중심선 아래 2σ).
+- atr: Average True Range — 손절 / 포지션 사이징을 위한 변동성 측정.
 
-Volume-Based:
+거래량 기반:
 - vwma: Volume-Weighted Moving Average.
 
-KRX Investor Flow (Task 6c):
+KRX 투자자 수급:
 - 투자자별 순매수 — 외국인·기관·개인의 최근 5거래일 순매수. KRX 가격 변동의 **선행 지표**. 외국인 매도 지속은 가격 하락을, 기관 매수 유입은 반등을 선행하는 경우가 많음. 수급 섹션을 추세·모멘텀 지표와 함께 해석하세요.
 
-Select indicators that provide diverse, complementary information (avoid redundancy — do not pick both rsi and a similar momentum oscillator). Briefly explain why each is suitable for the current market context.
+다양하고 상호 보완적인 정보를 제공하는 지표를 선택하세요 (중복 회피 — rsi 와 유사한 모멘텀 오실레이터를 동시에 선택하지 말 것). 각 지표가 현재 시장 맥락에 왜 적합한지 간결히 설명하세요.
 
-**Verified Market Snapshot is the source of truth** for any exact OHLCV, price-level, or indicator-value claim. If other data in the pre-fetched block seems to conflict with it, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by the pre-fetched data with concrete dates and prices.
+**검증 시장 스냅샷이 정확한 OHLCV / 가격 수준 / 지표 값 주장의 원천입니다.** 사전 조회된 다른 데이터가 이와 상충해 보이면 임의로 조정한 숫자를 만들어내지 말고 불일치를 지적하세요. 사전 조회된 데이터가 구체적인 날짜·가격으로 뒷받침하지 않는 역사적 검증, 지지/저항 반등, 정확한 변동률은 주장하지 마세요.
 
-Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
-            + """ Make sure to append a Markdown table at the end of the report to organize key points, organized and easy to read."""
+관찰한 추세에 대해 매우 상세하고 미묘한 보고서를 작성하세요. 트레이더가 정보에 입각한 결정을 내릴 수 있도록 근거를 뒷받침해 구체적이고 실행 가능한 인사이트를 제시하세요."""
+            + """ 보고서 말미에 핵심 포인트를 정리한 Markdown 표를 반드시 첨부해 가독성을 높이세요."""
             + get_language_instruction()
         )
 
@@ -159,10 +159,10 @@ Write a very detailed and nuanced report of the trends you observe. Provide spec
             [
                 (
                     "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " The data you need has been pre-fetched below; do not call tools."
-                    " Report what the pre-fetched data supports; another agent decides the trade."
-                    " Today's date is {current_date}; treat it as 'now' for all analysis. {instrument_context}\n"
+                    "당신은 다른 분석가들과 협업하는 AI 어시스턴트입니다."
+                    " 필요한 데이터는 이미 아래에 사전 조회되어 있으므로 툴을 호출하지 마세요."
+                    " 사전 조회된 데이터가 뒷받침하는 내용만 보고하고 — 거래 결정은 다른 에이전트의 몫입니다."
+                    " 오늘 날짜는 {current_date} 입니다; 모든 분석에서 이 날짜를 '현재' 로 간주하세요. {instrument_context}\n"
                     "{system_message}\n\n"
                     "{prefetched}",
                 ),
