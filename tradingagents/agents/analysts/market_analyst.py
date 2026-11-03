@@ -11,7 +11,12 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
-from tradingagents.agents.tools import get_indicators, get_stock_data, get_verified_market_snapshot
+from tradingagents.agents.tools import (
+    get_indicators,
+    get_investor_net_purchases,
+    get_stock_data,
+    get_verified_market_snapshot,
+)
 
 # 모든 기술적 지표를 선계산 — Claude Code 가 지표를 선택할 수 없으니 Python 이
 # 전량 계산해 프롬프트에 주입하고, LLM 은 보고서에서 어느 지표를 다룰지 선택.
@@ -34,7 +39,8 @@ def _ohlcv_start_date(trade_date: str) -> str:
 
 
 def _prefetch_market_data(ticker: str, trade_date: str) -> dict[str, str]:
-    """`get_stock_data`, `get_indicators`, `get_verified_market_snapshot` 선조회.
+    """`get_stock_data`, `get_indicators`, `get_verified_market_snapshot`,
+    `get_investor_net_purchases` 선조회.
 
     `@tool` 로 데코레이트된 함수를 `.invoke({...})` 로 직접 호출합니다 — Python
     에서 데이터를 받아 프롬프트에 주입하기 위함. 각 함수는 이미 포맷된 문자열을
@@ -42,6 +48,9 @@ def _prefetch_market_data(ticker: str, trade_date: str) -> dict[str, str]:
 
     실패 시 각 섹션에 에러 메시지를 담아 반환 — 분석가 전체를 중단시키지 않고,
     LLM 이 "데이터 없음" 을 보고서에 명시할 수 있도록 합니다.
+
+    Task 6c (#54): KRX 전용 투자자별 수급 (`get_investor_net_purchases`) 선조회
+    추가. 외국인/기관/개인의 최근 5거래일 순매수는 KRX 가격 변동의 선행 지표.
     """
     start_date = _ohlcv_start_date(trade_date)
 
@@ -70,7 +79,17 @@ def _prefetch_market_data(ticker: str, trade_date: str) -> dict[str, str]:
         "look_back_days": 30,
         "trade_date": trade_date,
     })
-    return {"ohlcv": ohlcv, "indicators": indicators, "snapshot": snapshot}
+    investor_flow = _safe(get_investor_net_purchases, {
+        "ticker": ticker,
+        "trade_date": trade_date,
+        "look_back_days": 5,
+    })
+    return {
+        "ohlcv": ohlcv,
+        "indicators": indicators,
+        "snapshot": snapshot,
+        "investor_flow": investor_flow,
+    }
 
 
 def _render_prefetched(data: dict[str, str]) -> str:
@@ -82,7 +101,9 @@ def _render_prefetched(data: dict[str, str]) -> str:
         "### Technical Indicators (all 12 pre-computed)\n"
         f"{data['indicators']}\n\n"
         "### Verified Market Snapshot (source of truth for exact values)\n"
-        f"{data['snapshot']}\n"
+        f"{data['snapshot']}\n\n"
+        "### 투자자별 수급 (최근 5거래일 순매수 — KRX 전용 선행 지표)\n"
+        f"{data['investor_flow']}\n"
     )
 
 
@@ -121,6 +142,9 @@ Volatility:
 
 Volume-Based:
 - vwma: Volume-Weighted Moving Average.
+
+KRX Investor Flow (Task 6c):
+- 투자자별 순매수 — 외국인·기관·개인의 최근 5거래일 순매수. KRX 가격 변동의 **선행 지표**. 외국인 매도 지속은 가격 하락을, 기관 매수 유입은 반등을 선행하는 경우가 많음. 수급 섹션을 추세·모멘텀 지표와 함께 해석하세요.
 
 Select indicators that provide diverse, complementary information (avoid redundancy — do not pick both rsi and a similar momentum oscillator). Briefly explain why each is suitable for the current market context.
 
