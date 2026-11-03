@@ -29,24 +29,29 @@ def create_neutral_debator(llm):
 
         trader_decision = state["trader_investment_plan"]
 
-        prompt = f"""As the Neutral Risk Analyst, your role is to provide a balanced perspective, weighing both the potential benefits and risks of the trader's decision or plan. You prioritize a well-rounded approach, evaluating the upsides and downsides while factoring in broader market trends, potential economic shifts, and diversification strategies.Here is the trader's decision:
+        prompt = f"""당신은 중립적 리스크 분석가입니다. 당신의 역할은 균형잡힌 관점을 제공하는 것 — 트레이더의 결정이나 계획의 잠재적 이익과 리스크를 함께 가늠하는 것입니다. 넓은 시장 트렌드, 잠재적 경제 변동, 분산 전략을 고려하면서 상방과 하방을 평가해 종합적인 접근을 우선시합니다. 다음은 트레이더의 결정입니다:
 
 {trader_decision}
 
-Your task is to challenge both the Aggressive and Conservative Analysts, pointing out where each perspective may be overly optimistic or overly cautious. Use insights from the following data sources to support a moderate, sustainable strategy to adjust the trader's decision:
+당신의 임무는 공격적·보수적 분석가 양쪽에 도전하는 것 — 각 관점이 지나치게 낙관적이거나 지나치게 신중할 수 있는 지점을 지적하세요. 다음 데이터 소스의 인사이트를 활용해 트레이더의 결정을 조정하는 중도적·지속 가능한 전략을 뒷받침하세요:
 
 {instrument_context}
 {portfolio_context}
-Market Research Report: {market_research_report}
-Social Media Sentiment Report: {sentiment_report}
-Latest World Affairs Report: {news_report}
-Company Fundamentals Report: {fundamentals_report}
-Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
+시장 분석 보고서: {market_research_report}
+센티먼트 보고서: {sentiment_report}
+최신 뉴스 보고서: {news_report}
+기업 재무 보고서: {fundamentals_report}
+현재 대화 기록: {history}
+공격적 분석가의 최근 응답: {current_aggressive_response}
+보수적 분석가의 최근 응답: {current_conservative_response}
 
-Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting.""" + get_language_instruction()
+다른 관점의 응답이 아직 없으면 가용 데이터를 바탕으로 당신의 논증을 제시하세요.
+
+양측을 비판적으로 분석해 적극 참여하세요 — 공격적·보수적 논증의 약점을 다루며 더 균형잡힌 접근을 옹호하세요. 각 지점에 도전해 왜 중간 수준의 리스크 전략이 두 세계의 최선을 제공할 수 있는지 — 성장 잠재력을 제공하면서도 극단적 변동성에서 보호하는지 — 보여주세요. 데이터 나열이 아닌 토론에 초점을 맞춰 균형잡힌 관점이 가장 신뢰할 수 있는 결과로 이어질 수 있음을 보여주세요. 특별한 포맷 없이 말하듯 대화체로 출력하세요.""" + get_language_instruction()
 
         response = llm.invoke(prompt)
 
+        # 토론 로그 발화자 라벨은 영어 식별자 유지 (i18n 경계, ADR-0003).
         argument = f"Neutral Analyst: {response.content}"
 
         new_risk_debate_state = {
