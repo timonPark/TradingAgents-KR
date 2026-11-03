@@ -291,28 +291,5 @@ def get_macro_indicators(
     return route_to_vendor("get_macro_indicators", indicator, as_of(curr_date, trade_date), look_back_days)
 
 
-@tool
-def get_prediction_markets(
-    topic: Annotated[
-        str,
-        "Event topic/keyword, e.g. 'Fed rate cut', 'recession 2026', "
-        "'US election', or a sector/company event.",
-    ],
-    limit: Annotated[int | None, "Max markets to return; omit for a default of 6"] = None,
-    trade_date: Annotated[str, InjectedState("trade_date")] = "",
-) -> str:
-    """
-    Retrieve live, market-implied probabilities for forward-looking events from
-    prediction markets (Polymarket): Fed decisions, recession, elections,
-    geopolitics, crypto. Returns the most-traded open markets matching the
-    topic, each with its implied probability, traded volume, resolution date,
-    and recent move. Uses the configured prediction_markets vendor.
-
-    Args:
-        topic (str): Event keyword(s) to search
-        limit (int): Max markets to return; omit for a default of 6
-
-    Returns:
-        str: A formatted markdown report of matching prediction markets
-    """
-    return route_to_vendor("get_prediction_markets", topic, limit, trade_date or None)
+# Task 7e (#66): get_prediction_markets tool 은 KRX 하드 포크 (ADR-0001) 로
+# 삭제됨 — 한국 시장에 Polymarket 등가체가 없어 분석가가 활용할 기반이 없음.

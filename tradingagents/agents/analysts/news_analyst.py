@@ -15,7 +15,6 @@ from tradingagents.agents.tools import (
     get_global_news,
     get_macro_indicators,
     get_news,
-    get_prediction_markets,
 )
 
 # 뉴스 선조회 창 — 최근 1주일.
@@ -31,14 +30,6 @@ _MACRO_INDICATORS = (
     "usd_krw",          # 원/달러 환율
     "consumer_sentiment",  # 소비자심리지수 (CSI)
 )
-
-# 사전조회할 예측 시장 토픽. LLM 이 자유 입력 topic 을 선택할 수 없으니 공통
-# 매크로 이벤트들을 선조회해 "live market-implied probabilities" 섹션을 채움.
-_PREDICTION_TOPICS = (
-    "Fed rate cut",
-    "recession 2026",
-)
-
 
 def _news_window(trade_date: str) -> tuple[str, str]:
     """최근 1주일 뉴스 창 — (start_date, end_date) 반환."""
@@ -83,21 +74,10 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict[str, str]:
         macro_sections.append(f"**{indicator}**\n{section}")
     macro = "\n\n".join(macro_sections)
 
-    # 예측 시장 — 주요 매크로 이벤트들을 모아서 호출.
-    prediction_sections = []
-    for topic in _PREDICTION_TOPICS:
-        section = _safe(get_prediction_markets, {
-            "topic": topic,
-            "trade_date": trade_date,
-        })
-        prediction_sections.append(f"**{topic}**\n{section}")
-    prediction_markets = "\n\n".join(prediction_sections)
-
     return {
         "ticker_news": ticker_news,
         "global_news": global_news,
         "macro": macro,
-        "prediction_markets": prediction_markets,
     }
 
 
@@ -110,9 +90,7 @@ def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
         "### Global / Macroeconomic News\n"
         f"{data['global_news']}\n\n"
         "### Korean Macroeconomic Indicators (한국은행 ECOS, by series)\n"
-        f"{data['macro']}\n\n"
-        "### Prediction Markets (live market-implied probabilities)\n"
-        f"{data['prediction_markets']}\n"
+        f"{data['macro']}\n"
     )
 
 
@@ -131,10 +109,9 @@ def create_news_analyst(llm):
         system_message = (
             f"You are a news researcher tasked with analyzing recent news and trends over the past "
             f"week. The data has been **pre-fetched for you** — recent news about the {asset_label} "
-            "under analysis, broader global / macroeconomic news, core Korean macro indicators from "
-            "한국은행 ECOS (기준금리, 소비자물가지수, 실업률, 국고채 10년, 원/달러 환율, 소비자심리지수), "
-            "and live prediction-market probabilities for common macro events (Fed rate cuts, 2026 "
-            "recession). You will **not** call tools; write a comprehensive report of the current "
+            "under analysis, broader global / macroeconomic news, and core Korean macro indicators "
+            "from 한국은행 ECOS (기준금리, 소비자물가지수, 실업률, 국고채 10년, 원/달러 환율, "
+            "소비자심리지수). You will **not** call tools; write a comprehensive report of the current "
             "state of the world relevant for trading and macroeconomics grounded in the pre-fetched "
             "data below. Provide specific, actionable insights with supporting evidence to help "
             "traders make informed decisions."
