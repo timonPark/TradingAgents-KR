@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -131,6 +131,36 @@ def load_ohlcv(ticker: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataF
     if frame.empty:
         raise NoMarketDataError(ticker, ticker, f"no OHLCV on or before {as_of_date}")
     return frame
+
+
+def get_closes(ticker: str, start_date: str, end_date: str) -> pd.Series:
+    """``[start_date, end_date)`` 의 일별 종가 (Date 인덱스, Close 값).
+
+    상류 `yahoo.market.get_closes` 와 동일 시그니처. ``end_date`` 는 **배타적**
+    (상류 Yahoo 가 end 를 exclusive 로 다루기 때문). 반환이 비면 빈 Series.
+    settlement 레이어가 holding window 수익률 계산에 사용.
+    """
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return pd.Series(dtype=float)
+
+    # pykrx 는 end 를 inclusive 로 쓰므로 하루 뒤로 밀어서 end_date 자체는 제외.
+    pykrx_end = (end_dt - timedelta(days=1)).strftime("%Y%m%d") if end_dt > start_dt else start_dt.strftime("%Y%m%d")
+
+    from pykrx import stock
+
+    try:
+        raw = stock.get_market_ohlcv_by_date(start_dt.strftime("%Y%m%d"), pykrx_end, ticker)
+    except Exception:  # noqa: BLE001 — settlement 쪽은 ValueError 로 처리
+        return pd.Series(dtype=float)
+    frame = _normalize_ohlcv_frame(raw)
+    if frame.empty or "Close" not in frame.columns:
+        return pd.Series(dtype=float)
+    series = frame.set_index("Date")["Close"]
+    series.name = "Close"
+    return series
 
 
 def get_stock_data(ticker: str, start_date: str, end_date: str) -> str:

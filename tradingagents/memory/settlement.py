@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from tradingagents.dataflows.vendors.yahoo.market import get_closes
+from tradingagents.dataflows.vendors.pykrx import get_closes
 
 logger = logging.getLogger(__name__)
 

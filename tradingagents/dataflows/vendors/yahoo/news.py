@@ -9,7 +9,6 @@ from dateutil.relativedelta import relativedelta
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.errors import VendorUnavailableError
-from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.common import yf_retry
 
 
@@ -101,7 +100,7 @@ def get_news_yfinance(
     # Query Yahoo with the canonical symbol, like every other yfinance path —
     # a raw broker/forex/crypto alias (XAUUSD, BTCUSD) otherwise silently
     # returns no news. Keep the user's ticker in the report header.
-    canonical = normalize_symbol(ticker)
+    canonical = (ticker or "").strip().upper() or ticker
     resolved = "" if canonical == ticker else f" (resolved to {canonical})"
     subject = f"news for {ticker}{resolved}"
     feed = yf_retry(lambda: yf.Ticker(canonical).get_news(count=article_limit)) or []

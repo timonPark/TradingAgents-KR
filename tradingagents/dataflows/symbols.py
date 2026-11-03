@@ -11,19 +11,17 @@ Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변�
 - forex ``=X`` 접미사 자동 부여
 - crypto ``-USD`` 정규화
 - Yahoo-specific suffix 변환 (``.SH`` → ``.SS`` 등)
+- ``normalize_symbol`` lenient shim (Task 6d/6e, #55/#56) — Yahoo/AV vendor
+  삭제와 함께 소비자가 사라져 제거.
 
-## normalize_symbol 과 validate_krx_ticker 의 분리
+## 공개 함수
 
-Task 4a (#42) 는 CLI 입력 레벨에서 **KRX 종목만 허용** 하는 것이 목표입니다.
-그러나 아직 Task 5·6·7 (vendor 교체) 이전이라 Yahoo/Alpha Vantage 등 상류
-vendor 코드가 ``normalize_symbol`` 을 호출합니다 (예: ``vendors/yahoo/market.py``).
-이들 vendor 는 Task 6 에서 pykrx 로 교체되면서 함께 삭제될 운명입니다.
-
-**현재 상태:**
-- ``normalize_symbol`` — 입력 strip + upper 반환 (lenient). 상류 vendor 호환성
-  유지. Task 6 가 vendor 를 삭제하면 함께 축소 가능.
-- ``validate_krx_ticker`` — 엄격한 KRX 6자리 숫자 검증. ``ValueError`` 로 거부.
-  CLI 가 사용자 입력에서 이것을 호출해 KRX 외 티커를 사전 차단.
+- ``validate_krx_ticker`` — 엄격한 KRX 6자리 숫자 검증. CLI 가 사용자 입력에서
+  이것을 호출해 KRX 외 티커를 사전 차단.
+- ``safe_ticker_component`` — 파일시스템 경로 안전 가드. 티커 외 run_id 등 비-
+  티커 입력도 통과시키므로 KRX 검증보다 넓은 집합.
+- ``crypto_base`` — 암호자산 식별 스텁 (항상 ``None``). Task 7 (reddit/
+  stocktwits 삭제) 전까지 유지.
 """
 
 from __future__ import annotations
@@ -58,23 +56,6 @@ def validate_krx_ticker(raw: str) -> str:
             f"000660 SK하이닉스, 069500 KODEX 200). got {raw!r}"
         )
     return s
-
-
-def normalize_symbol(raw: str) -> str:
-    """심볼 공백 제거와 대문자화 — 상류 호환용 lenient 정규화.
-
-    Task 4a (#42) 로 상류의 Yahoo/HK/상해/forex/crypto 변환 테이블은 전부
-    삭제되었습니다. 현재는 strip + upper 만 수행합니다 — 상류 vendor 코드
-    (``vendors/yahoo/market.py`` 등) 가 Task 6 (pykrx 교체) 이전까지 이 함수를
-    호출하므로 lenient 로 유지. Vendor 가 삭제되면 이 함수는 ``validate_krx_
-    ticker`` 로 통합되거나 제거됩니다.
-
-    사용자 입력 시 KRX 외 심볼을 차단하려면 CLI 레벨에서 ``validate_krx_ticker``
-    를 사용하세요.
-    """
-    if not isinstance(raw, str) or not raw.strip():
-        return raw
-    return raw.strip().upper()
 
 
 def crypto_base(raw: str) -> str | None:

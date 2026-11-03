@@ -64,6 +64,17 @@ def _price_df(prices, start="2026-01-05"):
     return pd.DataFrame({"Close": prices}, index=idx)
 
 
+def _pykrx_ohlcv(prices, start="2026-01-05"):
+    """pykrx `get_market_ohlcv_by_date` 가 돌려주는 전형적 DataFrame (한국어 컬럼)."""
+    idx = pd.date_range(start=start, periods=len(prices), freq="D")
+    frame = pd.DataFrame({
+        "시가": prices, "고가": prices, "저가": prices,
+        "종가": prices, "거래량": [1_000] * len(prices), "등락률": [0.0] * len(prices),
+    }, index=idx)
+    frame.index.name = "날짜"
+    return frame
+
+
 def _make_pm_state(past_context=""):
     """Minimal AgentState dict for portfolio_manager_node."""
     return {
@@ -532,15 +543,14 @@ class TestDeferredReflection:
     # settlement.fetch_returns
 
     def test_fetch_returns_valid_ticker(self):
+        # Task 6e (#56): pykrx 로 전환. 005930 삼성전자 vs 069500 KODEX 200 ETF.
         stock_prices = [100.0, 102.0, 104.0, 103.0, 105.0, 106.0, 107.0]
-        spy_prices   = [400.0, 402.0, 404.0, 403.0, 405.0, 406.0, 407.0]
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            def _make_ticker(sym):
-                m = MagicMock()
-                m.history.return_value = _price_df(spy_prices if sym == "SPY" else stock_prices)
-                return m
-            mock_ticker_cls.side_effect = _make_ticker
-            raw, alpha, days, resolved = settlement.fetch_returns("NVDA", "2026-01-05")
+        bench_prices = [400.0, 402.0, 404.0, 403.0, 405.0, 406.0, 407.0]
+        with patch("pykrx.stock.get_market_ohlcv_by_date") as mock_fetch:
+            def _side(start, end, ticker):
+                return _pykrx_ohlcv(bench_prices if ticker == "069500" else stock_prices)
+            mock_fetch.side_effect = _side
+            raw, alpha, days, resolved = settlement.fetch_returns("005930", "2026-01-05", benchmark="069500")
         assert raw is not None and alpha is not None and days is not None
         assert isinstance(raw, float) and isinstance(alpha, float) and isinstance(days, int)
         assert days == 5
@@ -549,34 +559,26 @@ class TestDeferredReflection:
 
     def test_fetch_returns_too_recent(self):
         """Only 1 data point available → returns all-None, no crash."""
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            m = MagicMock()
-            m.history.return_value = _price_df([100.0])
-            mock_ticker_cls.return_value = m
-            raw, alpha, days, resolved = settlement.fetch_returns("NVDA", "2026-04-19")
+        with patch("pykrx.stock.get_market_ohlcv_by_date", return_value=_pykrx_ohlcv([100.0])):
+            raw, alpha, days, resolved = settlement.fetch_returns("005930", "2026-04-19", benchmark="069500")
         assert (raw, alpha, days, resolved) == (None, None, None, None)
 
     def test_fetch_returns_delisted(self):
         """Empty DataFrame → returns all-None, no crash."""
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            m = MagicMock()
-            m.history.return_value = pd.DataFrame({"Close": []})
-            mock_ticker_cls.return_value = m
-            raw, alpha, days, resolved = settlement.fetch_returns("XXXXXFAKE", "2026-01-10")
+        with patch("pykrx.stock.get_market_ohlcv_by_date", return_value=pd.DataFrame()):
+            raw, alpha, days, resolved = settlement.fetch_returns("999999", "2026-01-10", benchmark="069500")
         assert (raw, alpha, days, resolved) == (None, None, None, None)
 
-    def test_fetch_returns_spy_shorter_than_stock(self):
-        """SPY having fewer rows than the stock (but still a full window) must
+    def test_fetch_returns_bench_shorter_than_stock(self):
+        """Benchmark having fewer rows than the stock (but still a full window) must
         not raise IndexError."""
         stock_prices = [100.0, 102.0, 104.0, 103.0, 105.0, 106.0, 107.0, 108.0]  # 8 rows
-        spy_prices   = [400.0, 402.0, 403.0, 405.0, 406.0, 407.0, 408.0]         # 7 rows
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            def _make_ticker(sym):
-                m = MagicMock()
-                m.history.return_value = _price_df(spy_prices if sym == "SPY" else stock_prices)
-                return m
-            mock_ticker_cls.side_effect = _make_ticker
-            raw, alpha, days, resolved = settlement.fetch_returns("NVDA", "2026-01-05")
+        bench_prices = [400.0, 402.0, 403.0, 405.0, 406.0, 407.0, 408.0]         # 7 rows
+        with patch("pykrx.stock.get_market_ohlcv_by_date") as mock_fetch:
+            def _side(start, end, ticker):
+                return _pykrx_ohlcv(bench_prices if ticker == "069500" else stock_prices)
+            mock_fetch.side_effect = _side
+            raw, alpha, days, resolved = settlement.fetch_returns("005930", "2026-01-05", benchmark="069500")
         assert raw is not None and alpha is not None
         assert days == 5  # full holding window used for both series
         assert resolved == "2026-01-11"
@@ -585,14 +587,12 @@ class TestDeferredReflection:
         """#1518: news published after the close on the decision date reaches the
         analysts, so the close of that date is not a price they could have traded at."""
         stock_prices = [100.0, 150.0, 150.0, 150.0, 150.0, 150.0, 165.0]   # jumps on the next close
-        spy_prices   = [400.0] * 7
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            def _make_ticker(sym):
-                m = MagicMock()
-                m.history.return_value = _price_df(spy_prices if sym == "SPY" else stock_prices)
-                return m
-            mock_ticker_cls.side_effect = _make_ticker
-            raw, alpha, days, resolved = settlement.fetch_returns("NVDA", "2026-01-05")
+        bench_prices = [400.0] * 7
+        with patch("pykrx.stock.get_market_ohlcv_by_date") as mock_fetch:
+            def _side(start, end, ticker):
+                return _pykrx_ohlcv(bench_prices if ticker == "069500" else stock_prices)
+            mock_fetch.side_effect = _side
+            raw, alpha, days, resolved = settlement.fetch_returns("005930", "2026-01-05", benchmark="069500")
         assert raw == pytest.approx(0.10) and alpha == pytest.approx(0.10)   # 150 -> 165, not 100 -> 150
         assert resolved == "2026-01-11"
 
@@ -601,14 +601,12 @@ class TestDeferredReflection:
         unavailable (all-None) so the entry stays pending, rather than settling
         on a premature partial return."""
         stock_prices = [100.0, 102.0, 104.0]  # only 3 rows; holding window is 5
-        spy_prices   = [400.0, 402.0, 404.0]
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            def _make_ticker(sym):
-                m = MagicMock()
-                m.history.return_value = _price_df(spy_prices if sym == "SPY" else stock_prices)
-                return m
-            mock_ticker_cls.side_effect = _make_ticker
-            result = settlement.fetch_returns("NVDA", "2026-01-05")
+        bench_prices = [400.0, 402.0, 404.0]
+        with patch("pykrx.stock.get_market_ohlcv_by_date") as mock_fetch:
+            def _side(start, end, ticker):
+                return _pykrx_ohlcv(bench_prices if ticker == "069500" else stock_prices)
+            mock_fetch.side_effect = _side
+            result = settlement.fetch_returns("005930", "2026-01-05", benchmark="069500")
         assert result == (None, None, None, None)
 
     # settlement.resolve_benchmark picks the index for the alpha calculation
@@ -616,74 +614,29 @@ class TestDeferredReflection:
     def test_resolve_benchmark_explicit_override(self):
         """config['benchmark_ticker'] wins for every ticker."""
         config = {
-            "benchmark_ticker": "QQQ",
-            "benchmark_map": {"": "SPY", ".T": "^N225"},
+            "benchmark_ticker": "229200",  # KODEX 코스닥 150 ETF
+            "benchmark_map": {"": "069500"},
         }
-        assert settlement.resolve_benchmark("7203.T", config) == "QQQ"
-        assert settlement.resolve_benchmark("NVDA", config) == "QQQ"
+        assert settlement.resolve_benchmark("005930", config) == "229200"
+        assert settlement.resolve_benchmark("247540", config) == "229200"
 
-    def test_resolve_benchmark_suffix_map(self):
-        """Known suffixes route to their regional index."""
-        config = {
-            "benchmark_ticker": None,
-            "benchmark_map": {
-                ".T": "^N225", ".HK": "^HSI", ".NS": "^NSEI",
-                ".L": "^FTSE", ".TO": "^GSPTSE", ".AX": "^AXJO",
-                ".BO": "^BSESN", "": "SPY",
-            },
-        }
-        assert settlement.resolve_benchmark("7203.T", config) == "^N225"
-        assert settlement.resolve_benchmark("0700.HK", config) == "^HSI"
-        assert settlement.resolve_benchmark("RELIANCE.NS", config) == "^NSEI"
-        assert settlement.resolve_benchmark("AZN.L", config) == "^FTSE"
-
-    # Task 4a (#42): test_explicit_benchmark_is_resolved_like_any_other_symbol
-    # 와 test_resolve_benchmark_china_a_shares 는 상류의 Yahoo 심볼 alias 변환
-    # (SPX500 → ^GSPC, .SH → .SS) 을 테스트했으나 그 변환 로직이 symbols.py 에서
-    # 전부 삭제되어 함께 제거되었습니다.
-
-    def test_resolve_benchmark_brazil(self):
-        """B3 tickers were measured against SPY."""
+    def test_resolve_benchmark_default_is_kodex_200(self):
+        """Task 6 (#51): KR-only 포크. 벤치마크 디폴트는 069500 KODEX 200 ETF.
+        """
         from tradingagents.default_config import DEFAULT_CONFIG
         config = {"benchmark_ticker": None,
-                             "benchmark_map": DEFAULT_CONFIG["benchmark_map"]}
-        assert settlement.resolve_benchmark("PETR4.SA", config) == "^BVSP"
+                  "benchmark_map": DEFAULT_CONFIG["benchmark_map"]}
+        assert settlement.resolve_benchmark("005930", config) == "069500"
+        assert settlement.resolve_benchmark("247540", config) == "069500"
 
-    @pytest.mark.parametrize(("ticker", "index"), [
-        ("2330.TW", "^TWII"), ("6488.TWO", "^TWII"), ("005930.KS", "^KS11"), ("247540.KQ", "^KQ11"), ("D05.SI", "^STI"), ("SAP.DE", "^GDAXI"),
-        ("MC.PA", "^FCHI"), ("ASML.AS", "^AEX"), ("NESN.SW", "^SSMI"), ("ENI.MI", "FTSEMIB.MI"),
-    ])
-    def test_resolve_benchmark_regional_indexes(self, ticker, index):
-        """Taiwan, Korea, Singapore and the main European exchanges were measured against SPY."""
-        from tradingagents.default_config import DEFAULT_CONFIG
-        config = {"benchmark_ticker": None, "benchmark_map": DEFAULT_CONFIG["benchmark_map"]}
-        assert settlement.resolve_benchmark(ticker, config) == index
-
-    def test_resolve_benchmark_us_ticker_defaults_to_spy(self):
-        """US tickers (no dotted suffix) take the empty-suffix entry."""
-        config = {
-            "benchmark_ticker": None,
-            "benchmark_map": {"": "SPY", ".T": "^N225"},
-        }
-        assert settlement.resolve_benchmark("NVDA", config) == "SPY"
-        assert settlement.resolve_benchmark("AAPL", config) == "SPY"
-
-    def test_resolve_benchmark_unknown_suffix_falls_back(self):
-        """Unrecognised suffix (BRK.B, FAKE.XX) falls back to SPY."""
-        config = {
-            "benchmark_ticker": None,
-            "benchmark_map": {"": "SPY", ".T": "^N225"},
-        }
-        assert settlement.resolve_benchmark("FAKE.XX", config) == "SPY"
-        assert settlement.resolve_benchmark("BRK.B", config) == "SPY"
-
-    def test_resolve_benchmark_case_insensitive(self):
-        """Suffix matching is case-insensitive so 7203.t resolves like 7203.T."""
-        config = {
-            "benchmark_ticker": None,
-            "benchmark_map": {".T": "^N225", "": "SPY"},
-        }
-        assert settlement.resolve_benchmark("7203.t", config) == "^N225"
+    # Task 4a (#42) / Task 6 (#51): 과거의 Yahoo 다국적 접미사 매핑 (`.T`, `.HK`,
+    # `.SA`, `.KS` 등) 과 그 테스트는 하드 포크 (ADR-0001) 결정에 따라 전부
+    # 삭제되었습니다. KRX 전용 포크는 benchmark_map 이 `{"": "069500"}` 단일로
+    # 축소되어 검증할 분기 자체가 없습니다. 삭제된 테스트:
+    # - test_resolve_benchmark_suffix_map / _regional_indexes / _brazil
+    # - test_resolve_benchmark_us_ticker_defaults_to_spy
+    # - test_resolve_benchmark_unknown_suffix_falls_back
+    # - test_resolve_benchmark_case_insensitive
 
     def test_reflector_includes_benchmark_in_label(self):
         """benchmark_name appears in the prompt label, not 'SPY' hardcoded."""
@@ -1037,19 +990,19 @@ def test_a_longer_window_asks_for_enough_price_history(monkeypatch):
     of bars, and asking for 28 days left every outcome unsettled."""
     asked = {}
 
-    class _Ticker:
-        def __init__(self, symbol):
-            self.symbol = symbol
+    def _fetch(start, end, ticker):
+        asked.setdefault("start", start)
+        asked.setdefault("end", end)
+        import pandas as pd
+        days = pd.bdate_range(
+            pd.to_datetime(start, format="%Y%m%d"),
+            pd.to_datetime(end, format="%Y%m%d"),
+        )
+        return _pykrx_ohlcv(list(range(len(days))), start=days[0].strftime("%Y-%m-%d"))
 
-        def history(self, start, end):
-            asked["start"], asked["end"] = start, end
-            import pandas as pd
-            days = pd.bdate_range(start, end)
-            return pd.DataFrame({"Close": range(len(days))}, index=days)
+    monkeypatch.setattr("pykrx.stock.get_market_ohlcv_by_date", _fetch)
 
-    monkeypatch.setattr("tradingagents.dataflows.vendors.yahoo.market.yf.Ticker", _Ticker)
-
-    raw, alpha, days, resolved = settlement.fetch_returns("NVDA", "2026-06-01", 21, benchmark="SPY")
+    raw, alpha, days, resolved = settlement.fetch_returns("005930", "2026-06-01", 21, benchmark="069500")
 
     assert days == 21 and resolved is not None, (raw, alpha, days, resolved)
 

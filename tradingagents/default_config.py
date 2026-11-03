@@ -140,37 +140,16 @@ def build_default_config() -> dict:
             # Example: "get_stock_data": "alpha_vantage",  # Override category default
         },
         # Benchmark for alpha calculation in the reflection layer.
-        # ``benchmark_ticker`` (when set) overrides the suffix map for all
-        # tickers; leave it None to use ``benchmark_map`` for auto-detection
-        # based on the ticker's exchange suffix. SPY remains the US default
-        # so the reflection label keeps reading "Alpha vs SPY" for US tickers
-        # while non-US tickers get their regional index automatically.
+        # Task 6 (#51): KRX 전용 하드 포크 — 기본 벤치마크는 ``069500`` KODEX 200
+        # (KOSPI 200 추종 ETF, pykrx 로 접근 가능). ``benchmark_ticker`` 가 설정되
+        # 어 있으면 이를 사용, 아니면 ``benchmark_map`` 의 빈 접미사 엔트리로 폴백.
+        # KR-only 포크라 과거 Yahoo 다국적 접미사 매핑은 삭제됨.
         # Trading days from the first close after the analysis date over which a
         # decision's outcome is measured, for reflection and for the backtest figures.
         "holding_period_days": 5,
         "benchmark_ticker": None,
         "benchmark_map": {
-            ".NS":  "^NSEI",       # NSE India (Nifty 50)
-            ".BO":  "^BSESN",      # BSE India (Sensex)
-            ".T":   "^N225",       # Tokyo (Nikkei 225)
-            ".TW":  "^TWII",       # Taiwan (TAIEX)
-            ".TWO": "^TWII",       # Taipei OTC (TPEx has no Yahoo index; TAIEX)
-            ".KS":  "^KS11",       # Korea (KOSPI)
-            ".KQ":  "^KQ11",       # Korea (KOSDAQ)
-            ".HK":  "^HSI",        # Hong Kong (Hang Seng)
-            ".SI":  "^STI",        # Singapore (Straits Times)
-            ".L":   "^FTSE",       # London (FTSE 100)
-            ".DE":  "^GDAXI",      # Germany (DAX)
-            ".PA":  "^FCHI",       # Paris (CAC 40)
-            ".AS":  "^AEX",        # Amsterdam (AEX)
-            ".SW":  "^SSMI",       # Switzerland (SMI)
-            ".MI":  "FTSEMIB.MI",  # Milan (FTSE MIB)
-            ".TO":  "^GSPTSE",     # Toronto (TSX Composite)
-            ".AX":  "^AXJO",       # Australia (ASX 200)
-            ".SS":  "000001.SS",   # Shanghai (SSE Composite)
-            ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component)
-            ".SA":  "^BVSP",       # B3 Brazil (Ibovespa)
-            "":     "SPY",         # default for US-listed tickers (no suffix)
+            "": "069500",  # KODEX 200 ETF — KOSPI 200 추종, pykrx 로 접근 가능
         },
 
     })

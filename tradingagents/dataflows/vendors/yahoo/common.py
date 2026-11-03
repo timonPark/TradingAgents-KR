@@ -1,44 +1,17 @@
-"""What every Yahoo request shares: its retry, how a failure or an empty answer is
-reported, and how a price is written out."""
+"""Yahoo 뉴스 호출의 공통 재시도. 가격/OHLCV/snapshot 경로는 Task 6e (#56) 에서
+pykrx 로 교체되면서 삭제됐고, 뉴스 서브모듈만 Task 7 (네이버뉴스 전환) 전까지
+유지됩니다.
+"""
 
 import logging
-import math
 import time
 
 import yfinance as yf
 from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
 
-from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
-from tradingagents.dataflows.net import vendor_reachable
+from tradingagents.dataflows.errors import VendorUnavailableError
 
 logger = logging.getLogger(__name__)
-
-YAHOO_HOST = "https://query2.finance.yahoo.com"
-
-
-def price_text(value: float) -> str:
-    """A price with six significant digits and at least two decimals.
-
-    Fixed decimals print a sub-cent coin as 0.00 and a currency pair without its
-    pips; this keeps both readable.
-    """
-    if not math.isfinite(value):
-        return str(value)
-    decimals = 2 if value == 0 else max(2, 5 - math.floor(math.log10(abs(value))))
-    whole, _, fraction = f"{value:.{decimals}f}".partition(".")
-    return f"{whole}.{fraction.rstrip('0').ljust(2, '0')}"
-
-
-def raise_for_empty(symbol: str, canonical: str, what: str) -> None:
-    """Report an empty Yahoo answer as an absence, or as an outage if it is one.
-
-    An empty answer from a Yahoo that cannot be reached is not an answer about
-    the symbol, so the host is probed before "this symbol has no {what}" is said.
-    """
-    if not vendor_reachable(YAHOO_HOST):
-        raise VendorUnavailableError(f"Yahoo Finance is unreachable; no {what} was retrieved")
-    raise NoMarketDataError(symbol, canonical, f"no {what}")
-
 
 # yfinance answers some failed requests with an empty result, which would read as
 # "no data" for a symbol nobody checked; raised, the failure is reported as one.
