@@ -436,15 +436,11 @@ class TestSentimentAnalystAgent:
     def _stub_prefetched_sources(self, monkeypatch):
         """Stub the sources the analyst pre-fetches before prompting.
 
-        create_sentiment_analyst fetches news, StockTwits and Reddit itself, so
-        without this these tests hit the live network. A real Reddit 429 then
-        backs the fetcher off for a minute per subreddit, which is what turned
-        this file into a multi-minute hang.
+        Task 7c (#64): StockTwits/Reddit 소셜 소스는 제거됨. 네이버 금융 뉴스
+        단일 소스만 stubbing 하면 됨.
         """
         from tradingagents.agents.analysts import sentiment_analyst as sentiment
 
-        monkeypatch.setattr(sentiment, "fetch_stocktwits_messages", lambda *a, **k: "st")
-        monkeypatch.setattr(sentiment, "fetch_reddit_posts", lambda *a, **k: "rd")
         monkeypatch.setattr(sentiment.get_news, "func", lambda *a, **k: "news", raising=False)
 
     def test_structured_path_produces_rendered_markdown(self):

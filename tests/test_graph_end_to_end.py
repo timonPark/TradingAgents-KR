@@ -19,7 +19,6 @@ from langchain_core.runnables import RunnableLambda
 from pydantic import Field
 
 from tradingagents.agents import context, schemas
-from tradingagents.agents.analysts import sentiment_analyst
 from tradingagents.dataflows import router
 from tradingagents.dataflows.vendors import pykrx as pykrx_vendor
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -116,8 +115,8 @@ def offline(monkeypatch, tmp_path):
     })
     monkeypatch.setattr(pykrx_vendor, "load_ohlcv",
                         lambda *a, **k: called.add("ohlcv") or prices.copy())
-    monkeypatch.setattr(sentiment_analyst, "fetch_stocktwits_messages", lambda *a, **k: "no posts")
-    monkeypatch.setattr(sentiment_analyst, "fetch_reddit_posts", lambda *a, **k: "no posts")
+    # Task 7c (#64): reddit/stocktwits 소셜 소스가 제거됨 — sentiment_analyst 는
+    # 네이버 뉴스만 사용하므로 별도 fetcher mocking 불필요.
     context._identity.cache_clear()
     return called
 
