@@ -37,14 +37,19 @@ from tradingagents.agents.trader.trader import create_trader
 
 @pytest.mark.unit
 class TestRenderTraderProposal:
+    """Task 9b (#81): Korean 디폴트에서는 한국어 라벨 (액션/근거/진입가/손절가/
+    포지션 사이징/최종 거래 제안), 값 (BUY/HOLD/SELL) 은 영어 유지로 파서 호환성
+    보존. 영어 fallback 은 별도 테스트에서 ``output_language="English"`` 로 덮어
+    쓰고 검증.
+    """
+
     def test_minimal_required_fields(self):
         p = TraderProposal(action=TraderAction.HOLD, reasoning="Balanced setup; no edge.")
         md = render_trader_proposal(p)
-        assert "**Action**: Hold" in md
-        assert "**Reasoning**: Balanced setup; no edge." in md
-        # The trailing FINAL TRANSACTION PROPOSAL line is preserved for the
-        # analyst stop-signal text and any external code that greps for it.
-        assert "FINAL TRANSACTION PROPOSAL: **HOLD**" in md
+        assert "**액션**: Hold" in md
+        assert "**근거**: Balanced setup; no edge." in md
+        # 영어 가치/트레일링 라인은 파서/외부 grep 호환성 유지, 라벨만 한국어.
+        assert "최종 거래 제안: **HOLD**" in md
 
     def test_optional_fields_included_when_present(self):
         p = TraderProposal(
@@ -55,20 +60,35 @@ class TestRenderTraderProposal:
             position_sizing="6% of portfolio",
         )
         md = render_trader_proposal(p)
-        assert "**Action**: Buy" in md
-        assert "**Entry Price**: 189.5" in md
-        assert "**Stop Loss**: 178.0" in md
-        assert "**Position Sizing**: 6% of portfolio" in md
-        assert "FINAL TRANSACTION PROPOSAL: **BUY**" in md
+        assert "**액션**: Buy" in md
+        assert "**진입가**: 189.5" in md
+        assert "**손절가**: 178.0" in md
+        assert "**포지션 사이징**: 6% of portfolio" in md
+        assert "최종 거래 제안: **BUY**" in md
 
     def test_optional_fields_are_named_as_not_provided(self):
         """An omitted line reads as a field nobody asked for; the reader cannot
         tell it from a level the trader declined to set."""
         p = TraderProposal(action=TraderAction.SELL, reasoning="Guidance cut.")
         md = render_trader_proposal(p)
-        for field in ("Entry Price", "Stop Loss", "Position Sizing"):
-            assert f"**{field}**: not provided" in md
-        assert "FINAL TRANSACTION PROPOSAL: **SELL**" in md
+        for field in ("진입가", "손절가", "포지션 사이징"):
+            assert f"**{field}**: 제공되지 않음" in md
+        assert "최종 거래 제안: **SELL**" in md
+
+    def test_english_output_language_uses_english_labels(self):
+        """``output_language="English"`` 로 바꾸면 영어 라벨 fallback."""
+        from tradingagents.dataflows.config import set_config
+
+        set_config({"output_language": "English"})
+        try:
+            md = render_trader_proposal(
+                TraderProposal(action=TraderAction.BUY, reasoning="r")
+            )
+            assert "**Action**: Buy" in md
+            assert "**Entry Price**: not provided" in md
+            assert "FINAL TRANSACTION PROPOSAL: **BUY**" in md
+        finally:
+            set_config({"output_language": "Korean"})
 
 
 @pytest.mark.unit
@@ -226,9 +246,10 @@ class TestTraderAgent:
         trader = create_trader(llm)
         result = trader(_make_trader_state())
         plan = result["trader_investment_plan"]
-        assert "**Action**: Buy" in plan
-        assert "**Entry Price**: 189.5" in plan
-        assert "FINAL TRANSACTION PROPOSAL: **BUY**" in plan
+        # Task 9b (#81): Korean 디폴트 라벨.
+        assert "**액션**: Buy" in plan
+        assert "**진입가**: 189.5" in plan
+        assert "최종 거래 제안: **BUY**" in plan
         # The same rendered markdown is also added to messages for downstream agents.
         assert plan in result["messages"][0].content
 
@@ -530,7 +551,8 @@ def test_a_field_the_model_did_not_give_says_so():
 
     rendered = render_pm_decision(PortfolioDecision(
         rating=PortfolioRating.HOLD, executive_summary="s", investment_thesis="t"))
-    assert "Price Target" in rendered and "not provided" in rendered.lower()
+    # Task 9b (#81): Korean 디폴트 라벨 (목표가) + 안내 (제공되지 않음).
+    assert "목표가" in rendered and "제공되지 않음" in rendered
 
 
 @pytest.mark.unit
@@ -538,6 +560,6 @@ def test_the_trader_names_the_levels_it_did_not_give():
     from tradingagents.agents.schemas import TraderAction, TraderProposal, render_trader_proposal
 
     rendered = render_trader_proposal(TraderProposal(action=TraderAction.HOLD, reasoning="r"))
-    for field in ("Entry Price", "Stop Loss", "Position Sizing"):
+    for field in ("진입가", "손절가", "포지션 사이징"):
         assert field in rendered
-    assert rendered.lower().count("not provided") == 3
+    assert rendered.count("제공되지 않음") == 3
