@@ -145,6 +145,38 @@ export ECOS_API_KEY=...            # 한국은행 ECOS API 인증키 (선택)
 
 > ⚠️ **LLM API 키는 설정하지 마세요.** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` 등은 Task 2 (#21) 로 코드베이스에서 제거되었고 참조되지 않습니다. 유일한 예외는 디버깅용 `TRADINGAGENTS_CLAUDE_BARE=1` escape hatch 가 `ANTHROPIC_API_KEY` 를 요구하는 경우입니다 (CLAUDE.md §4.6).
 
+### 7. Docker 로 실행 (선택)
+
+컨테이너 내부에 Node.js 와 `@anthropic-ai/claude-code` 를 사전 설치해 둔 이미지가 제공됩니다. 호스트의 Claude Code OAuth credential 을 **읽기전용** 으로 공유해 컨테이너 안에서 그대로 Max/Pro 플랜 쿼터를 사용합니다.
+
+**사전 요구사항:**
+- 호스트에 Claude Code CLI 설치 + `claude login` 완료 (`~/.claude/.credentials.json` 생성).
+- Docker Engine 24+ 와 docker compose 플러그인.
+
+**실행:**
+
+```bash
+# 1. 이미지 빌드
+docker compose build
+
+# 2. CLI 대화형 실행 (호스트 ~/.claude/.credentials.json 자동 마운트)
+docker compose run --rm tradingagents
+
+# 3. 플래그로 비대화형 실행
+docker compose run --rm tradingagents \
+    --ticker 005930 --date 2026-11-03 --analysts market,news --save --no-show
+```
+
+**credential 공유 방식:**
+- 호스트의 `~/.claude/.credentials.json` 만 `/claude-auth/.credentials.json` 로 읽기전용 마운트.
+- 컨테이너는 `HOME=/tmp/claude-home` 를 쓰기 가능한 임시 디렉터리로 지정하고, `docker/entrypoint.sh` 가 symlink 로 credential 을 연결.
+- Claude Code 가 세션/캐시/리프레시 상태를 쓰더라도 `/tmp/claude-home/.claude/` 로 가므로 **호스트 `~/.claude` 는 오염되지 않음**.
+- 컨테이너 종료 시 임시 상태 소실.
+
+> ⚠️ **"HOME 재지정만으로 OAuth 리프레시 토큰 쓰기 정상 작동" 가정은 검증 전**입니다. 실제 리프레시 실패 시 `docker-compose.yml` 의 credential 마운트를 `${HOME}/.claude:/claude-auth:ro` (디렉터리 전체) 로 바꾸거나, `~/.claude` 전체를 **읽기쓰기** 로 마운트하는 방식으로 backoff 하세요 (호스트 상태 오염 위험 수용).
+
+> **ollama 지원은 제거되었습니다** (Task 12). 과거 `ollama` / `tradingagents-ollama` 서비스와 `--profile ollama` 는 ADR-0001 에 따라 docker-compose.yml 에서 삭제됐습니다. Claude Code 가 유일한 LLM 백엔드입니다.
+
 ---
 
 ## CLI 사용법
