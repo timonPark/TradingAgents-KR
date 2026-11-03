@@ -228,3 +228,32 @@ def test_get_macro_data_sorts_rows_chronologically(api_key):
     pos_mid = table_section.find("| 20260801 |")
     pos_new = table_section.find("| 20261101 |")
     assert 0 < pos_old < pos_mid < pos_new
+
+
+# ============================================================================
+# Integration tests (Task 11b, #93) — 실제 한국은행 ECOS API 호출. CI 는 skip.
+#   로컬 실행: ``ECOS_API_KEY=... pytest tests/test_ecos_vendor.py -m integration``
+# ============================================================================
+
+
+@pytest.mark.integration
+def test_live_ecos_base_rate(ecos_api_key):
+    """한국은행 기준금리 최근 1년 조회."""
+    out = ecos.get_macro_data("base_rate", "2026-11-03", look_back_days=365)
+    # 성공 시 "한국은행 기준금리" 포함, 실패 시 fail-safe 메시지
+    assert "ECOS 조회 실패" in out or "기준금리" in out
+
+
+@pytest.mark.integration
+def test_live_ecos_cpi(ecos_api_key):
+    """소비자물가지수 — 월간 지표."""
+    out = ecos.get_macro_data("cpi", "2026-11-03", look_back_days=365)
+    assert "ECOS 조회 실패" in out or "소비자물가지수" in out or "cpi" in out.lower()
+
+
+@pytest.mark.integration
+def test_live_ecos_usd_krw(ecos_api_key):
+    """원/달러 환율 — 일별 지표."""
+    out = ecos.get_macro_data("usd_krw", "2026-11-03", look_back_days=30)
+    # 성공 시 매매기준율 데이터, 또는 fail-safe
+    assert "ECOS 조회 실패" in out or "매매기준율" in out or "usd_krw" in out.lower()

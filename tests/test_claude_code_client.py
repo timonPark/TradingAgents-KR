@@ -1037,3 +1037,20 @@ def test_factory_create_llm_client_passes_kwargs_through():
     client = create_llm_client(provider="claude-code", model="haiku", effort="high")
     llm = client.get_llm()
     assert llm.effort == "high"
+
+
+# ============================================================================
+# Integration tests (Task 11c, #94) — 실제 ``claude -p`` 호출.
+#   로컬 실행: ``pytest tests/test_claude_code_client.py -m integration``
+#   claude CLI 가 PATH 에 있어야 하며 Max/Pro 플랜 OAuth 로그인 완료 상태여야 함.
+#   테스트가 실제 쿼터를 소모하므로 짧은 프롬프트만 사용.
+# ============================================================================
+
+
+@pytest.mark.integration
+def test_live_claude_code_responds_to_short_prompt(claude_cli_available):
+    """``claude -p "Reply with the word READY"`` 가 "READY" 를 포함해 응답."""
+    client = ChatClaudeCodeHeadless(model="haiku", effort="low")
+    result = client.invoke([HumanMessage(content="Reply with the single word READY and nothing else.")])
+    assert isinstance(result, AIMessage)
+    assert "READY" in result.content.upper()

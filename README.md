@@ -242,6 +242,50 @@ tradingagents --clear-checkpoints    # 실행 전 초기화
 
 ---
 
+## 테스트
+
+### 유닛 테스트 (CI 기본)
+
+유닛 테스트는 전부 모킹되어 있어 네트워크 호출 없이 빠르게 돌아갑니다.
+
+```bash
+pytest -q                      # 유닛 테스트만 (통합 테스트는 skip)
+pytest tests/test_dart_vendor.py -q  # 특정 vendor 유닛 테스트만
+```
+
+CI (`.github/workflows/ci.yml`) 는 py3.11/3.12/3.13/3.14 매트릭스에서 `pytest -q`
+를 돌립니다. 통합 테스트는 자동 skip 됩니다.
+
+### opt-in 통합 테스트 (실제 API 호출)
+
+Task 11 (#91): 실제 외부 API 를 호출하는 테스트는 `@pytest.mark.integration` 으로
+분리됐습니다. 로컬에서 수동 실행하거나 nightly 돌리는 용도.
+
+```bash
+# 전부 실행 (설정된 환경변수에 따라 일부는 skip)
+pytest -m integration -q
+
+# 특정 vendor 만
+pytest tests/test_pykrx_vendor.py -m integration -q
+```
+
+**vendor 별 요구사항:**
+
+| Vendor | 요구 환경변수 / 전제 조건 | 환경 미구성 시 |
+|---|---|---|
+| **pykrx** (OHLCV / 기술지표) | 없음 (keyless) | 항상 실행 |
+| **네이버뉴스** (뉴스 크롤러) | 없음 (keyless) | 항상 실행 |
+| **DART** (재무 / 공시) | `DART_API_KEY` — https://opendart.fss.or.kr/ 발급 | `pytest.skip` |
+| **ECOS** (한국은행 거시) | `ECOS_API_KEY` — https://ecos.bok.or.kr/ 발급 | `pytest.skip` |
+| **Claude Code** (LLM 어댑터) | `claude` CLI PATH 등록 + Max/Pro OAuth 로그인 | `pytest.skip` |
+
+**주의:**
+- 통합 테스트는 **실제 API 쿼터** 를 소모합니다. DART (하루 20,000 회) / ECOS /
+  Claude Code (Max 플랜 메시지 한도) 를 자주 돌리면 상한에 걸릴 수 있습니다.
+- 네이버뉴스 크롤러는 ToS 준수 범위 내 저속 호출만 — 과도한 반복 실행 금지.
+
+---
+
 ## 재현성에 관한 참고사항
 
 TradingAgents 는 LLM 기반이므로 동일 종목·동일 날짜의 두 실행 결과가 다를 수 있습니다. 이는 언어 모델 기반 연구 도구의 특성이며 결함이 아닙니다. 차이의 원인은 다음과 같습니다.
