@@ -160,6 +160,10 @@ class TestNullishFloatCoercion:
 
 @pytest.mark.unit
 class TestRenderResearchPlan:
+    """Task 9b (#81) + 9d (#83): Korean 디폴트 라벨 (추천/근거/전략적 조치). 값
+    (Overweight 등) 영어 유지로 파서 호환.
+    """
+
     def test_required_fields(self):
         p = ResearchPlan(
             recommendation=PortfolioRating.OVERWEIGHT,
@@ -167,9 +171,9 @@ class TestRenderResearchPlan:
             strategic_actions="Build position over two weeks; cap at 5%.",
         )
         md = render_research_plan(p)
-        assert "**Recommendation**: Overweight" in md
-        assert "**Rationale**: Bull case carried" in md
-        assert "**Strategic Actions**: Build position" in md
+        assert "**추천**: Overweight" in md
+        assert "**근거**: Bull case carried" in md
+        assert "**전략적 조치**: Build position" in md
 
     def test_all_5_tier_ratings_render(self):
         for rating in PortfolioRating:
@@ -179,7 +183,7 @@ class TestRenderResearchPlan:
                 strategic_actions="s",
             )
             md = render_research_plan(p)
-            assert f"**Recommendation**: {rating.value}" in md
+            assert f"**추천**: {rating.value}" in md
 
 
 # ---------------------------------------------------------------------------
@@ -258,22 +262,23 @@ class TestTraderAgent:
         llm = _structured_trader_llm(captured)
         trader = create_trader(llm)
         trader(_make_trader_state())
-        # The investment plan is in the user message of the captured prompt.
+        # Task 9d (#83): 트레이더 프롬프트가 한국어화됨 — "제안된 투자 계획" 섹션 확인.
         prompt = captured["prompt"]
-        assert any("Proposed Investment Plan" in m["content"] for m in prompt)
+        assert any("제안된 투자 계획" in m["content"] for m in prompt)
 
     def test_prompt_includes_market_report_for_price_levels(self):
         # #1167: the Trader must see the technical market report so entry/stop
         # levels are grounded in real price structure, not just the digested plan.
+        # Task 9d (#83): 섹션 헤딩 한국어화 — "기술적 시장 보고서:" / "구체적 가격 수준".
         captured = {}
         trader = create_trader(_structured_trader_llm(captured))
         trader(_make_trader_state())
         user = " ".join(m["content"] for m in captured["prompt"] if m["role"] == "user")
         system = " ".join(m["content"] for m in captured["prompt"] if m["role"] == "system")
-        assert "Technical Market Report:" in user
+        assert "기술적 시장 보고서:" in user
         assert "14-day ATR 4.2" in user            # the actual report content reached the Trader
         assert "support $178, resistance $196" in user
-        assert "Ground concrete price levels" in system
+        assert "구체적 가격 수준" in system
 
     def test_empty_market_report_omits_the_section_and_grounding(self):
         # #1167: when the market analyst wasn't selected the report is empty, so
@@ -283,9 +288,9 @@ class TestTraderAgent:
         state["market_report"] = ""
         create_trader(_structured_trader_llm(captured))(state)
         text = " ".join(m["content"] for m in captured["prompt"])
-        assert "Technical Market Report:" not in text
-        assert "Ground concrete price levels" not in text
-        assert "Proposed Investment Plan" in text  # still present
+        assert "기술적 시장 보고서:" not in text
+        assert "구체적 가격 수준" not in text
+        assert "제안된 투자 계획" in text  # still present
 
     def test_falls_back_to_freetext_when_structured_unavailable(self):
         plain_response = (
@@ -347,9 +352,10 @@ class TestResearchManagerAgent:
         rm = create_research_manager(llm)
         result = rm(_make_rm_state())
         ip = result["investment_plan"]
-        assert "**Recommendation**: Overweight" in ip
-        assert "**Rationale**: Bull case" in ip
-        assert "**Strategic Actions**: Build position" in ip
+        # Task 9b/9d: Korean 라벨, 값 영어 유지.
+        assert "**추천**: Overweight" in ip
+        assert "**근거**: Bull case" in ip
+        assert "**전략적 조치**: Build position" in ip
 
     def test_prompt_uses_5_tier_rating_scale(self):
         """The RM prompt must list all five tiers so the schema enum matches user expectations."""
@@ -516,9 +522,15 @@ def test_conflict_alone_is_not_a_hold_trigger(source):
     # The debate always contains conflicting arguments, so a Hold condition that
     # conflict satisfies fires on every run and swallows directional calls
     # (#1321). All four decision sites must state the same rule.
+    # Task 9d (#83): 프롬프트가 한국어화되면서 Korean 등가 문구 "상충 자체는 Hold
+    # 사유가 아닙니다" 도 수용. schema 필드 설명은 영어 유지 (파서/다운스트림 호환).
     text = " ".join(source().split())
-    assert "conflict alone is not a reason to Hold" in text or \
-        "Conflicting arguments alone are not a reason to Hold" in text
+    phrases = (
+        "conflict alone is not a reason to Hold",
+        "Conflicting arguments alone are not a reason to Hold",
+        "상충 자체는 Hold 사유가 아닙니다",
+    )
+    assert any(p in text for p in phrases)
     assert "materially conflicting" not in text
 
 
