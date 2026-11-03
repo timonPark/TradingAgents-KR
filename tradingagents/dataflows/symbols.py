@@ -13,6 +13,8 @@ Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변�
 - Yahoo-specific suffix 변환 (``.SH`` → ``.SS`` 등)
 - ``normalize_symbol`` lenient shim (Task 6d/6e, #55/#56) — Yahoo/AV vendor
   삭제와 함께 소비자가 사라져 제거.
+- ``crypto_base`` 스텁 (Task 7f, #67) — Reddit/StockTwits vendor 삭제와
+  함께 유일 소비자가 사라져 제거.
 
 ## 공개 함수
 
@@ -20,8 +22,6 @@ Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변�
   이것을 호출해 KRX 외 티커를 사전 차단.
 - ``safe_ticker_component`` — 파일시스템 경로 안전 가드. 티커 외 run_id 등 비-
   티커 입력도 통과시키므로 KRX 검증보다 넓은 집합.
-- ``crypto_base`` — 암호자산 식별 스텁 (항상 ``None``). Task 7 (reddit/
-  stocktwits 삭제) 전까지 유지.
 """
 
 from __future__ import annotations
@@ -56,15 +56,6 @@ def validate_krx_ticker(raw: str) -> str:
             f"000660 SK하이닉스, 069500 KODEX 200). got {raw!r}"
         )
     return s
-
-
-def crypto_base(raw: str) -> str | None:
-    """항상 ``None``. KRX 포크에서는 암호자산을 식별하지 않습니다.
-
-    상류의 StockTwits/Reddit vendor (Task 7 에서 삭제 예정) 가 이 함수를
-    import 하므로 스텁으로 유지. Task 7 완료 시 vendor 와 함께 제거 가능.
-    """
-    return None
 
 
 def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
