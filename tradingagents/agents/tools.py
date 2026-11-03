@@ -263,11 +263,11 @@ def get_investor_net_purchases(
 def get_macro_indicators(
     indicator: Annotated[
         str,
-        "Macro indicator: a friendly alias such as 'cpi', 'core_pce', "
-        "'unemployment', 'fed_funds_rate', '10y_treasury', 'yield_curve', "
-        "'real_gdp', 'vix', euro-area aliases such as 'ecb_deposit_rate', "
-        "'euro_hicp', 'euro_core_hicp', 'euro_real_gdp', 'germany_10y', "
-        "'france_10y', 'eur_usd', or a raw FRED series ID such as 'CPIAUCSL'.",
+        "한국 거시 지표 alias: 'base_rate' (기준금리), 'cpi' (소비자물가지수), "
+        "'core_cpi', 'ppi' (생산자물가), 'unemployment_rate', 'employment_rate', "
+        "'treasury_3y' / 'treasury_10y' (국고채 금리), 'usd_krw' / 'jpy_krw' / "
+        "'eur_krw' / 'cny_krw' (환율), 'real_gdp', 'industrial_production', "
+        "'m1' / 'm2' (통화량), 'consumer_sentiment' (CSI), 'business_sentiment' (BSI).",
     ],
     curr_date: Annotated[str, "Current date in yyyy-mm-dd format; the end of the window"],
     look_back_days: Annotated[
@@ -276,20 +276,17 @@ def get_macro_indicators(
     trade_date: Annotated[str, InjectedState("trade_date")] = "",
 ) -> str:
     """
-    Retrieve a macroeconomic indicator time series from FRED (Federal Reserve
-    Economic Data): policy rates, Treasury yields, inflation, labor, and growth,
-    for the US and, through FRED's mirrored series, the euro area.
-    Returns the series title, units, frequency, the latest value, the change
-    over the window, and a recent observation table. Uses the configured
-    macro_data vendor.
+    한국은행 ECOS 거시 지표 시계열 조회 — 정책금리, 국고채 금리, 인플레이션, 노동,
+    성장, 환율, 통화량, 심리지표. 지표명, 사이클, 단위, 최신값, 변화량, 관측 테이블
+    을 Markdown 으로 반환. 설정된 macro_data vendor 사용.
 
     Args:
-        indicator (str): Friendly alias or raw FRED series ID
-        curr_date (str): Current date in yyyy-mm-dd format
-        look_back_days (int): Trailing window length; omit for a 1-year window
+        indicator (str): ECOS 지표 alias (예: base_rate, cpi, usd_krw)
+        curr_date (str): 분석 기준일 (yyyy-mm-dd)
+        look_back_days (int): 과거 창 (일 단위). 생략 시 1년.
 
     Returns:
-        str: A formatted markdown report of the macro series
+        str: 거시 시계열 Markdown 리포트
     """
     return route_to_vendor("get_macro_indicators", indicator, as_of(curr_date, trade_date), look_back_days)
 
