@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,28 @@ _NOT_IN_SIGNATURE = frozenset({
     "results_dir", "data_cache_dir", "memory_log_path", "checkpoint_enabled",
 })
 
+# Task 14e (#110): state 변화로 노드 완료를 감지하기 위한 라벨 매핑. 분석가
+# 리포트와 토론/결정 단계 모두 한국어 라벨로 노출 (사용자 표시 전용).
+_PROGRESS_LABELS: dict[str, str] = {
+    "market_report": "시장 분석가",
+    "sentiment_report": "감성 분석가",
+    "news_report": "뉴스 분석가",
+    "fundamentals_report": "재무 분석가",
+    "investment_debate_state": "리서치 토론",
+    "trader_investment_plan": "트레이더",
+    "risk_debate_state": "리스크 토론",
+    "final_trade_decision": "최종 결정",
+}
+
+# Task 14e (#110): 진행 상황 콜백의 이벤트 dict 타입 (스키마는 런타임 검증 없음,
+# 문서용). 가능한 ``type`` 값:
+#   - ``"run_start"``   : run 시작. ``ticker``, ``trade_date``.
+#   - ``"node_complete"``: 노드/분석가 완료. ``node``, ``label``.
+#   - ``"done"``        : run 완료. ``decision``.
+#   - ``"error"``       : 예외. ``message``, ``traceback``.
+ProgressEvent = dict[str, Any]
+ProgressCallback = Callable[[ProgressEvent], None]
+
 
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
@@ -58,6 +81,7 @@ class TradingAgentsGraph:
         debug=False,
         config: dict[str, Any] = None,
         callbacks: list | None = None,
+        progress_callback: ProgressCallback | None = None,
     ):
         """Initialize the trading agents graph and components.
 
@@ -66,10 +90,16 @@ class TradingAgentsGraph:
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
             callbacks: Optional list of callback handlers (e.g., for tracking LLM/tool stats)
+            progress_callback: Task 14e (#110) 로컬 웹 UI 가 노드 전환을 라이브로
+                받기 위한 훅. 각 분석가/토론/결정 단계가 끝날 때마다 한 번씩,
+                추가로 ``run_start`` / ``done`` / ``error`` 이벤트가 호출된다.
+                예외는 삼키고 ``logger.warning`` 로만 노출 (분석 실행이
+                UI 사정으로 중단되지 않도록).
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
+        self.progress_callback = progress_callback
 
         set_config(self.config)
 
@@ -380,9 +410,16 @@ class TradingAgentsGraph:
 
         # None resumes an existing checkpoint; init_agent_state starts fresh (#1249).
         graph_input = self.checkpoint_input(init_agent_state)
+        self._emit_progress({"type": "run_start", "ticker": company_name, "trade_date": str(trade_date)})
+        # Task 14e (#110): debug 모드에선 stream_run 으로 pretty_print 하며 state
+        # diff 로 node_complete 도 함께 emit. 비-debug 경로는 종전과 동일하게
+        # graph.invoke 한 번으로 끝 — 그 경우 노드 전환은 알 수 없고 run_start /
+        # done 이벤트만 발화 (로컬 웹 UI 가 "노드별 라이브" 를 원하면 debug=True
+        # 로 생성하도록 안내).
         if self.debug:
             # A state repeats the messages before it, so each prints once (#1027).
             final_state, printed = {}, set()
+            seen_nodes: set[str] = set()
             for messages, state in self.stream_run(graph_input, **args):
                 for msg in messages:
                     key = getattr(msg, "id", None) or (type(msg).__name__, getattr(msg, "content", None))
@@ -391,6 +428,16 @@ class TradingAgentsGraph:
                         msg.pretty_print()
                 if state is not None:
                     final_state.update(state)
+                    for node_key, label in _PROGRESS_LABELS.items():
+                        if node_key in seen_nodes:
+                            continue
+                        if final_state.get(node_key):
+                            seen_nodes.add(node_key)
+                            self._emit_progress({
+                                "type": "node_complete",
+                                "node": node_key,
+                                "label": label,
+                            })
         else:
             final_state = self.graph.invoke(graph_input, **args)
 
@@ -399,7 +446,25 @@ class TradingAgentsGraph:
         # Clear checkpoint on successful completion to avoid stale state.
         self.clear_checkpoint_on_success(company_name, trade_date, asset_type, portfolio)
 
-        return final_state, run_rating(final_state)
+        rating = run_rating(final_state)
+        self._emit_progress({"type": "done", "decision": rating})
+        return final_state, rating
+
+    def _emit_progress(self, event: ProgressEvent) -> None:
+        """Task 14e (#110): 진행 콜백을 안전하게 호출.
+
+        - ``__init__`` 을 우회해 생성된 테스트 더블 (``object.__new__``) 도
+          허용 — ``getattr`` 로 기본값 ``None``.
+        - 콜백 예외는 삼키고 ``logger.warning`` 으로만 노출 — UI 사정으로
+          분석 파이프라인이 중단되지 않도록 한다.
+        """
+        cb = getattr(self, "progress_callback", None)
+        if cb is None or not callable(cb):
+            return
+        try:
+            cb(event)
+        except Exception as exc:  # noqa: BLE001 — 콜백 격리가 요점
+            logger.warning("progress_callback raised: %s", exc)
 
     def stream_run(self, graph_input, **args):
         """Stream a run as ``(messages, state)`` pairs.
