@@ -37,7 +37,7 @@ class _FakeGraph:
         return {"final_trade_decision": "Rating: Buy"}, "Buy"
 
     def save_reports(self, final_state, ticker):  # #130
-        return None
+        return "/tmp/reports/005930_20240105_120000/complete_report.md"
 
 
 class _FailingGraph:
@@ -49,7 +49,7 @@ class _FailingGraph:
         raise RuntimeError("boom")
 
     def save_reports(self, final_state, ticker):  # #130
-        return None
+        return "/tmp/reports/005930_20240105_120000/complete_report.md"
 
 
 def _wait_for(predicate, *, timeout: float = 2.0, interval: float = 0.02) -> None:
@@ -144,6 +144,9 @@ def test_sse_stream_replays_history_and_closes_on_done(monkeypatch) -> None:
     # SSE 포맷: "event: run_start\ndata: {...}\n\n"
     assert "event: run_start" in text
     assert "event: node_complete" in text
+    assert text.index("event: report_saved") < text.index("event: done")
+    assert text.count("event: run_start") == 1
+    assert '"report_id": "005930_20240105_120000"' in text
     assert "event: done" in text
     # 완료된 run 의 큐는 더 이상 열려있지 않아야 한다 — SENTINEL 로 종료.
     assert text.count("event: done") == 1
@@ -151,6 +154,8 @@ def test_sse_stream_replays_history_and_closes_on_done(monkeypatch) -> None:
 
 def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
     """#126: node_start → snapshot.active_node 세팅, node_complete → 해제."""
+    import threading
+    release = threading.Event()
     import api.runner as runner_module
 
     class _GraphWithActive:
@@ -165,10 +170,11 @@ def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
                 "label": "약세 리서처",
                 "started_at": "2024-01-05T00:00:00+00:00",
             })
+            release.wait(timeout=5)
             return {"final_trade_decision": "Rating: Hold"}, "Hold"
 
         def save_reports(self, final_state, ticker):  # #130
-            return None
+            return "/tmp/reports/005930_20240105_120000/complete_report.md"
 
     monkeypatch.setattr(runner_module, "build_config", lambda req: {})
     monkeypatch.setattr(
@@ -177,19 +183,21 @@ def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
         raising=True,
     )
 
-    client = TestClient(create_app())
-    run_id = client.post(
-        "/api/runs",
-        json={"ticker": "005930", "trade_date": "2024-01-05"},
-    ).json()["run_id"]
+    with TestClient(create_app()) as client:
+        run_id = client.post(
+            "/api/runs",
+            json={"ticker": "005930", "trade_date": "2024-01-05"},
+        ).json()["run_id"]
 
-    _wait_for(
-        lambda: (store.get(run_id).active_node if store.get(run_id) else None)
-        == "약세 리서처"
-    )
-    snap = client.get(f"/api/runs/{run_id}").json()
-    assert snap["active_node"] == "약세 리서처"
-    assert snap["active_node_started_at"] is not None
+        _wait_for(
+            lambda: (store.get(run_id).active_node if store.get(run_id) else None)
+            == "약세 리서처"
+        )
+        snap = client.get(f"/api/runs/{run_id}").json()
+        assert snap["active_node"] == "약세 리서처"
+        assert snap["active_node_started_at"] is not None
+        release.set()
+        _wait_for(lambda: store.get(run_id).status == "done")
 
 
 def test_runner_calls_save_reports_on_success(monkeypatch, tmp_path) -> None:
@@ -259,3 +267,56 @@ def test_error_run_records_status(monkeypatch) -> None:
     snap = client.get(f"/api/runs/{run_id}").json()
     assert snap["status"] == "error"
     assert "boom" in (snap["error"] or "")
+
+
+def test_save_failure_is_error_not_done(monkeypatch):
+    class SaveFailure(_FakeGraph):
+        def save_reports(self, final_state, ticker):
+            raise OSError("저장 실패")
+    monkeypatch.setattr("tradingagents.graph.trading_graph.TradingAgentsGraph", SaveFailure)
+    with TestClient(create_app()) as client:
+        run_id = client.post("/api/runs", json={"ticker": "005930", "trade_date": "2024-01-05"}).json()["run_id"]
+        _wait_for(lambda: store.get(run_id).status == "error")
+        events = store.get(run_id).events
+        assert not any(e["type"] == "done" for e in events)
+        assert events[-1]["message"] == "저장 실패"
+
+
+def test_live_sse_subscribers_receive_each_event_once():
+    import asyncio
+    import json
+
+    from api.routes.runs import stream_events
+
+    async def check():
+        run = store.create("005930", "2024-01-05")
+        first = {"type": "run_start"}
+        second = {"type": "node_complete", "node": "Market Analyst", "content": "본문"}
+        store.record(run.run_id, first)
+        stream1 = (await stream_events(run.run_id)).body_iterator
+        assert json.loads((await anext(stream1))["data"]) == first
+        store.record(run.run_id, second)
+        assert json.loads((await anext(stream1))["data"]) == second
+        stream2 = (await stream_events(run.run_id)).body_iterator
+        assert json.loads((await anext(stream2))["data"]) == first
+        assert json.loads((await anext(stream2))["data"]) == second
+        store.record(run.run_id, {"type": "done"})
+        for stream in (stream1, stream2):
+            assert json.loads((await anext(stream))["data"])["type"] == "done"
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+    asyncio.run(check())
+
+
+def test_runner_publishes_real_report_directory_id(monkeypatch, tmp_path):
+    from tradingagents.reporting import write_report_tree
+    class RealReportGraph(_FakeGraph):
+        def save_reports(self, final_state, ticker):
+            return write_report_tree(final_state, ticker, tmp_path / "005930_20240105_120000")
+    monkeypatch.setattr("tradingagents.graph.trading_graph.TradingAgentsGraph", RealReportGraph)
+    with TestClient(create_app()) as client:
+        run_id = client.post("/api/runs", json={"ticker": "005930", "trade_date": "2024-01-05"}).json()["run_id"]
+        _wait_for(lambda: store.get(run_id).status == "done")
+        events = store.get(run_id).events
+        assert events[-2] == {"type": "report_saved", "report_id": "005930_20240105_120000"}
+        assert (tmp_path / events[-2]["report_id"] / "complete_report.md").is_file()
