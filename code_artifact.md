@@ -206,3 +206,34 @@ TauricResearch/TradingAgents 프레임워크의 핵심 추론 엔진(LangGraph �
   * **구현 전 검증 사항:** Claude Code 의 토큰 파일 실제 경로, HOME 재지정만으로 OAuth 가 정상 작동하는지(리프레시 토큰 쓰기 포함) 확인. 검증 실패 시 `~/.claude` 전체를 읽기쓰기로 마운트하는 옵션으로 백오프합니다 (호스트 오염 위험 수용).
   * 기존 `ollama`, `tradingagents-ollama` 서비스와 `ollama` 프로파일을 삭제합니다 (Claude Code 단일 백엔드).
   * `env_file: - .env` 는 유지하되, LLM API 키 관련 변수는 더 이상 참조되지 않음을 README/주석에 명시합니다.
+
+### Task 14: 로컬 Astro + FastAPI 프론트엔드 (Neo Kinpaku 디자인)
+* **대상 파일 (신규):**
+  * `api/` — FastAPI 백엔드 (`main.py`, `config.py`, `models.py`, `run_store.py`, `runner.py`, `reports_store.py`, `routes/{health,symbols,runs,reports}.py`)
+  * `web/` — Astro 프론트엔드 (`src/layouts/Base.astro`, `src/pages/{index,report}.astro`, `src/components/{SymbolSearch,RunPanel,ReportViewer}.{tsx,css}`, `src/styles/{kinpaku-tokens,kinpaku-kit,app}.css`)
+  * `tradingagents/dataflows/krx_symbol_search.py` — CLI 와 웹이 공유하는 종목 검색 모듈
+* **대상 파일 (수정):**
+  * `tradingagents/graph/trading_graph.py` — 생성자에 `progress_callback` 추가, `_run_graph` 에서 run_start/node_complete/done 이벤트 emit
+  * `cli/prompts.py` — `get_ticker()` 에 종목명 검색 플로우 추가 (6자리는 종전대로)
+  * `pyproject.toml` — `[project.optional-dependencies].web` 추가 (`fastapi`, `uvicorn[standard]`, `sse-starlette`), `api*` 패키지 include
+  * `.github/workflows/ci.yml` — test job 설치 명령을 `.[dev,web]` 로 확장
+* **작업 배경:**
+  * CLI 반복 비용 (종목코드 암기, 날짜/옵션 반복 입력, 리포트 수동 열람) 을 줄이기 위한 **로컬 전용 웹 UI**. 외부 배포/인증/멀티테넌시는 명시적으로 비범위.
+  * 디자인 시스템은 [Impeccable Neo Kinpaku](https://github.com/pbakaus/impeccable) 를 vendored 로 통합해 로컬에서 oklch 토큰 번들링까지 검증 완료 (라이선스 Apache 2.0, attribution 주석 보존).
+  * 기존 Task 13 (CLI 종목 검색) 은 공통 모듈 (`krx_symbol_search`) 하나로 CLI/웹 양쪽에 제공하므로 **이 에픽에 흡수**.
+* **작업 내용:**
+  * 공통 검색 모듈 (`krx_symbol_search`): pykrx 로 KOSPI/KOSDAQ 전종목 수집 (keyless), `~/.tradingagents/cache/krx_tickers_YYYYMMDD.json` 캐시. 6자리 숫자는 정확 매칭, 그 외는 startswith → contains 순 사전순 정렬.
+  * FastAPI 백엔드: `/api/health`, `/api/symbols/search`, `/api/runs` (POST/GET/SSE), `/api/reports` (목록/단건). SSE 는 `sse-starlette` 로 replay + push.
+  * 분석 실행: `asyncio.run_in_executor` 로 `TradingAgentsGraph.propagate(debug=True, progress_callback=emit)` 를 별도 스레드에서, 콜백은 `call_soon_threadsafe` 로 메인 루프 큐에 안전 전달.
+  * 리포트 뷰어: 디스크 (`~/.tradingagents/logs/reports/<ticker>_<stamp>/`) 를 소스 오브 트루스로 삼아 프로세스 재시작 후에도 이력 복구. `report_id` 는 엄격 regex (`^\d{6}_\d{8}_\d{6}$`), 폴더 화이트리스트 + `resolve().relative_to(root)` 로 경로 traversal 방어.
+  * Astro 프론트엔드: Impeccable kinpaku 토큰만 사용, React island (`client:load`) 로 자동완성/실행/뷰어 인터랙션. 마크다운은 `marked` + `DOMPurify` 런타임 sanitize.
+  * CLI `get_ticker()` 확장: 비-숫자 입력을 `krx_symbol_search.search` 로 처리, 결과 수에 따라 자동 선택(1) / 번호 선택(2–20) / 재프롬프트(0 또는 >20).
+* **범위 밖 (명시적):**
+  * 원격 호스팅, 인증/로그인, 멀티테넌시.
+  * WebSocket 양방향 통신 (SSE 단방향으로 충분).
+  * 모바일 전용 UI (기본 반응형만).
+* **DoD:**
+  * `uvicorn api.main:app` + `cd web && npm run dev` 로 종목 검색 → 분석 → 리포트 열람 전 플로우 로컬 동작.
+  * 기존 CLI 리그레션 0 (`pytest -q` 통과).
+  * `.[dev,web]` CI 매트릭스 통과.
+  * `README.md` 에 Astro+FastAPI 섹션 추가.

@@ -7,12 +7,15 @@ TradingAgents-KR 포크는 Claude Code 헤드리스가 유일한 LLM 백엔드�
 """
 
 import datetime
+import re
 
 import questionary
 
 from cli.display import console
 from cli.models import AnalystType, AssetType
 from tradingagents.dataflows.symbols import safe_ticker_component
+
+_SIX_DIGIT_PATTERN = re.compile(r"^\d{6}$")
 
 TICKER_INPUT_EXAMPLES = (
     "005930 (삼성전자), 000660 (SK하이닉스), 035720 (카카오), 069500 (KODEX 200 ETF)"
@@ -60,7 +63,12 @@ _MENU_STYLE = questionary.Style([
 
 
 def is_valid_ticker_input(value: str) -> bool:
-    """티커 입력이 데이터 레이어가 받아들일 수 있는 심볼인지 검증."""
+    """`--ticker` 플래그 레벨 검증: 6자리 숫자만 허용.
+
+    Task 14g (#112): 대화형 `get_ticker()` 는 종목명 검색을 추가로 받지만,
+    이 함수는 ``parse_ticker`` 가 호출하는 **플래그 검증**용이므로 종전처럼
+    엄격하게 유지한다 — 자동화 스크립트의 결정성을 위해.
+    """
     if not value.strip():
         return True
     try:
@@ -70,29 +78,118 @@ def is_valid_ticker_input(value: str) -> bool:
     return True
 
 
+def _is_valid_search_or_ticker(value: str) -> bool:
+    """대화형 `get_ticker()` 입력 검증 — 빈 문자열, 6자리 숫자, 또는 자유 검색어 허용.
+
+    숫자 입력이 6자리가 아니면 거부 (오입력 가드). 비-숫자는 그대로 통과.
+    """
+    text = value.strip()
+    if not text:
+        return True
+    if text.isdigit():
+        return len(text) == 6
+    return True
+
+
 def get_ticker() -> str:
-    """사용자가 입력한 티커를 받아 정규화된 심볼로 반환."""
-    ticker = questionary.text(
-        f"KRX 종목코드를 입력하세요 (예: {TICKER_INPUT_EXAMPLES}):",
-        validate=lambda x: (
-            is_valid_ticker_input(x)
-            or "KRX 6자리 숫자 종목코드만 지원합니다 (예: 005930 삼성전자)."
-        ),
-        style=questionary.Style(
-            [
-                ("text", "fg:green"),
-                ("highlighted", "noinherit"),
-            ]
-        ),
+    """사용자가 입력한 티커/종목명을 받아 정규화된 심볼로 반환.
+
+    Task 14g (#112): 6자리 숫자 입력은 기존대로 바로 티커로 통과, 그 외 문자열은
+    `tradingagents.dataflows.krx_symbol_search.search` 로 부분 매칭 → 결과에
+    따라 다음과 같이 처리한다:
+
+    - 결과 0 → "검색 결과 없음" 안내 후 재프롬프트
+    - 결과 1 → 자동 선택 + Y/N 확인
+    - 결과 2–20 → `questionary.select` 로 번호 선택
+    - 결과 > 20 → 상위 20 개 + "더 좁혀서 검색하세요" 안내 후 재프롬프트
+    """
+    while True:
+        raw = questionary.text(
+            f"KRX 종목코드 또는 종목명을 입력하세요 (예: {TICKER_INPUT_EXAMPLES}):",
+            validate=lambda x: (
+                _is_valid_search_or_ticker(x)
+                or "숫자 코드는 6자리여야 합니다. 종목명은 자유롭게 입력하세요."
+            ),
+            style=questionary.Style(
+                [
+                    ("text", "fg:green"),
+                    ("highlighted", "noinherit"),
+                ]
+            ),
+        ).ask()
+
+        if raw is None:
+            console.print("\n[red]티커를 입력하지 않아 종료합니다.[/red]")
+            exit(1)
+
+        text = raw.strip()
+
+        # Task 4b (#43): 빈 입력의 디폴트는 삼성전자 (005930).
+        if not text:
+            return "005930"
+
+        # 6자리 숫자 코드 → 종전 흐름 유지 (zero-regression).
+        if _SIX_DIGIT_PATTERN.match(text):
+            return normalize_ticker_symbol(text)
+
+        # 종목명 검색.
+        resolved = _resolve_by_name(text)
+        if resolved is not None:
+            return resolved
+        # None → 재프롬프트 (결과 없음 또는 너무 많아 좁혀야 함)
+
+
+def _resolve_by_name(query: str) -> str | None:
+    """검색 결과를 바탕으로 사용자 확정을 받아 티커를 돌려주거나 재프롬프트 신호 반환.
+
+    Returns:
+        정규화된 6자리 종목코드. 재프롬프트가 필요하면 ``None``.
+    """
+    from tradingagents.dataflows import krx_symbol_search as kss
+
+    try:
+        hits = kss.search(query, limit=20)
+    except Exception as exc:  # noqa: BLE001 — 캐시/네트워크 실패는 UI 가 안내
+        console.print(f"[red]종목 검색 실패: {exc}[/red]")
+        return None
+
+    if not hits:
+        console.print(f"[yellow]'{query}' 로 매칭된 종목이 없습니다. 다시 입력하세요.[/yellow]")
+        return None
+
+    if len(hits) == 1:
+        hit = hits[0]
+        confirmed = questionary.confirm(
+            f"{hit.ticker} · {hit.name} ({hit.market}) 로 진행할까요?",
+            default=True,
+        ).ask()
+        if confirmed is None:
+            console.print("\n[red]티커를 확정하지 않아 종료합니다.[/red]")
+            exit(1)
+        return hit.ticker if confirmed else None
+
+    if len(hits) >= 20:
+        console.print(
+            "[yellow]검색 결과가 상위 20개로 잘렸습니다. 더 좁혀서 다시 검색하거나"
+            " 아래 목록에서 선택하세요.[/yellow]"
+        )
+
+    choices = [
+        questionary.Choice(
+            title=f"{hit.ticker} · {hit.name} · {hit.market}",
+            value=hit.ticker,
+        )
+        for hit in hits
+    ]
+    picked = questionary.select(
+        "종목을 선택하세요:",
+        choices=choices,
+        style=_MENU_STYLE,
     ).ask()
-
-    if ticker is None:
-        console.print("\n[red]티커를 입력하지 않아 종료합니다.[/red]")
-        exit(1)
-
-    # Task 4b (#43): 빈 입력의 디폴트는 SPY 가 아니라 삼성전자 (005930). 미국
-    # 종목으로의 폴백은 KRX 전용 포크에서 더 이상 의미 없음.
-    return normalize_ticker_symbol(ticker) if ticker.strip() else "005930"
+    if picked is None:
+        # Esc 또는 취소 → 재프롬프트
+        return None
+    return picked
 
 
 def parse_ticker(value: str) -> str:
