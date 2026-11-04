@@ -45,25 +45,42 @@ tradingagents          # 종목명(예: "삼성") 또는 6자리 코드 입력 �
 
 ### 옵션 B — 로컬 웹 UI (Astro + FastAPI, Neo Kinpaku 디자인)
 
-터미널 두 개를 띄웁니다.
+> ⚠️ **터미널 두 개를 동시에 열어 각각 띄워 둬야 합니다.** 백엔드(uvicorn)와 프론트엔드(Astro dev 서버)는 별도 프로세스입니다. 하나라도 꺼져 있으면 UI 에서 "API 요청 실패. uvicorn 가 켜져 있는지 확인하세요" 가 뜹니다.
+
+#### 🖥️ 터미널 1 — 백엔드 (FastAPI, 포트 8000)
 
 ```bash
-# 터미널 1 — FastAPI 백엔드 (포트 8000)
+cd /Users/2309-n0018/Project/TradingAgents-KR
 source .venv/bin/activate
 pip install -e ".[web]"     # 첫 실행 시 한 번만
 uvicorn api.main:app --reload --port 8000
 ```
 
+정상 기동 로그 예시:
+```
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Application startup complete.
+```
+
+#### 🌐 터미널 2 — 프론트엔드 (Astro, 포트 4321)
+
 ```bash
-# 터미널 2 — Astro 프론트엔드 (포트 4321)
-cd web
+cd /Users/2309-n0018/Project/TradingAgents-KR/web
 npm install                 # 첫 실행 시 한 번만
 npm run dev
 ```
 
-브라우저에서 **http://localhost:4321** 접속 → 종목 검색 → 분석 설정 → **"분석 시작"** → 라이브 진행 확인. 저장된 리포트는 **/report** 에서 사이드바로 열람.
+#### 🔗 접속
+
+브라우저에서 **http://localhost:4321** 접속 → 종목 검색 → 분석 설정 → **"분석 시작"** → 라이브 진행 확인. 저장된 리포트는 **http://localhost:4321/report** 에서 사이드바로 열람.
 
 > 💡 **처음 테스트**는 쿼터 절감을 위해 UI 의 `effort` 를 `low` 로 낮춰 돌리는 걸 추천합니다. Claude Code Max/Pro 쿼터를 소모합니다.
+
+#### 문제 해결
+
+- **"API 요청 실패"** → 터미널 1 의 uvicorn 로그가 살아있는지 확인. 꺼졌으면 다시 실행.
+- **포트 8000 이 다른 프로그램 점유 중** → uvicorn 을 `--port 8001` 로 바꾸고 `web/.env` 에 `PUBLIC_API_BASE=http://localhost:8001` 추가 후 `npm run dev` 재시작.
+- **`uvicorn: command not found`** → `source .venv/bin/activate` 를 안 한 것. venv 활성화부터 다시.
 
 ---
 
