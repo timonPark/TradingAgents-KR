@@ -1,0 +1,57 @@
+---
+/**
+ * `/report?id=005930_20261104_083001` — 저장된 리포트 트리 열람.
+ *
+ * Task 14f (#111). 사이드바에서 최근 리포트를 고르거나 홈에서 완료 후 바로
+ * 연결된다 (14e → 14f 핸드오프는 14e PR 의 완료 플로우에서 후속으로).
+ */
+
+import Base from "../layouts/Base.astro";
+import ReportViewer from "../components/ReportViewer";
+---
+<Base title="리포트 열람 — TradingAgents-KR">
+	<header class="site-header">
+		<a class="ks-brand" href="/" aria-label="TradingAgents-KR 홈">
+			<span class="ks-mark" aria-hidden="true"></span>
+			<span class="ks-wordmark">TRADINGAGENTS KR</span>
+		</a>
+		<nav class="site-nav">
+			<a class="ks-button ks-button-ghost" href="/">← 분석 시작</a>
+		</nav>
+	</header>
+
+	<main>
+		<ReportViewer client:load />
+	</main>
+</Base>
+
+<style>
+	.site-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 24px 40px;
+		border-bottom: 1px solid var(--ks-rule);
+	}
+
+	.ks-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		color: var(--ks-ink);
+	}
+
+	.ks-mark {
+		display: inline-block;
+		width: 22px;
+		height: 22px;
+		background: var(--ks-kinpaku);
+		clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 100%);
+	}
+
+	.site-nav {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+	}
+</style>

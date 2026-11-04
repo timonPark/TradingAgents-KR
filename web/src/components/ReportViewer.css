@@ -1,0 +1,295 @@
+/* ReportViewer — kinpaku 토큰만 사용. */
+
+.report-viewer {
+	display: grid;
+	grid-template-columns: minmax(260px, 320px) 1fr;
+	gap: 40px;
+	align-items: start;
+	min-height: 70vh;
+	padding: 40px;
+}
+
+/* 사이드바 ---------------------------------------------------------- */
+
+.report-sidebar {
+	position: sticky;
+	top: 20px;
+	max-height: calc(100vh - 40px);
+	overflow-y: auto;
+	border: 1px solid var(--ks-rule);
+	border-radius: 6px;
+	padding: 20px 16px;
+	background: var(--ks-paper-raised);
+}
+
+.sidebar-head {
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-eyebrow-size);
+	letter-spacing: var(--ks-type-eyebrow-track);
+	text-transform: uppercase;
+	color: var(--ks-text-muted);
+	margin: 0 0 14px;
+}
+
+.sidebar-empty {
+	font-size: 0.875rem;
+	color: var(--ks-text-faint);
+	margin: 0;
+}
+
+.sidebar-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sidebar-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	grid-template-areas:
+		"stamp decision"
+		"ticker decision";
+	gap: 2px 8px;
+	padding: 10px 12px;
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--ks-text);
+}
+
+.sidebar-row:hover {
+	background: var(--ks-paper-deep);
+}
+
+.sidebar-row.is-active {
+	background: var(--ks-patina-pale);
+	color: var(--ks-ink);
+}
+
+.row-stamp {
+	grid-area: stamp;
+	font-size: var(--ks-type-mono-size);
+	color: var(--ks-text-muted);
+	letter-spacing: 0.04em;
+}
+
+.row-ticker {
+	grid-area: ticker;
+	font-size: 0.9375rem;
+}
+
+.sidebar-row .ks-tag {
+	grid-area: decision;
+	align-self: center;
+}
+
+/* ks-tag 커스텀 변형 */
+.ks-tag.is-buy {
+	background: oklch(84% 0.19 80.46 / 0.18);
+	color: oklch(14% 0.018 95);
+	border-color: var(--ks-kinpaku);
+}
+
+.ks-tag.is-sell {
+	background: oklch(52% 0.16 35 / 0.14);
+	color: var(--ks-vermilion);
+	border-color: var(--ks-vermilion);
+}
+
+.ks-tag.is-neutral {
+	background: var(--ks-gray);
+	color: var(--ks-text-muted);
+}
+
+/* 본문 ---------------------------------------------------------- */
+
+.report-main {
+	min-width: 0;
+}
+
+.report-status {
+	font-size: 0.9375rem;
+	color: var(--ks-text-muted);
+}
+
+.report-status.is-error {
+	color: var(--ks-vermilion);
+}
+
+.report-head {
+	margin-bottom: 20px;
+}
+
+.report-eyebrow {
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-eyebrow-size);
+	letter-spacing: var(--ks-type-eyebrow-track);
+	text-transform: uppercase;
+	color: var(--ks-text-muted);
+	margin: 0 0 8px;
+}
+
+.report-title {
+	font-family: var(--ks-font-display);
+	font-size: clamp(2rem, 3vw, 2.6rem);
+	font-weight: 300;
+	line-height: 1.1;
+	margin: 0 0 12px;
+	color: var(--ks-ink);
+}
+
+.report-decision {
+	display: inline-block;
+	margin-bottom: 12px;
+}
+
+.report-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	border-bottom: 1px solid var(--ks-rule);
+	margin-bottom: 20px;
+}
+
+.report-tab {
+	border: 0;
+	background: transparent;
+	font-family: var(--ks-font);
+	font-size: 0.9375rem;
+	padding: 10px 14px;
+	cursor: pointer;
+	color: var(--ks-text-muted);
+	border-bottom: 2px solid transparent;
+}
+
+.report-tab:hover {
+	color: var(--ks-ink);
+}
+
+.report-tab.is-active {
+	color: var(--ks-ink);
+	border-bottom-color: var(--ks-kinpaku);
+}
+
+.report-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 36px;
+}
+
+.report-article {
+	border-top: 1px solid var(--ks-rule);
+	padding-top: 20px;
+}
+
+.report-article:first-child {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.article-path {
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-mono-size);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ks-text-faint);
+	margin: 0 0 12px;
+}
+
+.article-body {
+	font-family: var(--ks-font);
+	font-size: 1rem;
+	line-height: 1.7;
+	color: var(--ks-text);
+}
+
+.article-body h1,
+.article-body h2,
+.article-body h3 {
+	font-family: var(--ks-font-display);
+	color: var(--ks-ink);
+	font-weight: 300;
+	line-height: 1.2;
+	margin-top: 32px;
+	margin-bottom: 12px;
+}
+
+.article-body h1 { font-size: 1.75rem; }
+.article-body h2 { font-size: 1.4rem; }
+.article-body h3 { font-size: 1.15rem; }
+
+.article-body p { margin: 10px 0; }
+
+.article-body ul,
+.article-body ol {
+	padding-left: 1.4em;
+}
+
+.article-body li {
+	margin: 4px 0;
+}
+
+.article-body code {
+	font-family: var(--ks-font);
+	background: var(--ks-paper-deep);
+	padding: 1px 6px;
+	border-radius: 3px;
+	font-size: 0.9375em;
+}
+
+.article-body pre {
+	background: var(--ks-instrument-deep);
+	color: var(--ks-instrument-text);
+	padding: 16px;
+	border-radius: 6px;
+	overflow-x: auto;
+	font-size: 0.875rem;
+}
+
+.article-body pre code {
+	background: transparent;
+	color: inherit;
+	padding: 0;
+}
+
+.article-body blockquote {
+	border-left: 3px solid var(--ks-kinpaku);
+	margin: 16px 0;
+	padding: 4px 16px;
+	color: var(--ks-text-muted);
+}
+
+.article-body table {
+	border-collapse: collapse;
+	margin: 16px 0;
+	width: 100%;
+	font-size: 0.9375rem;
+}
+
+.article-body th,
+.article-body td {
+	border: 1px solid var(--ks-rule);
+	padding: 8px 12px;
+	text-align: left;
+}
+
+.article-body th {
+	background: var(--ks-paper-deep);
+	color: var(--ks-ink);
+	font-weight: 600;
+}
+
+/* 반응형 — 좁은 화면에서는 사이드바 위, 본문 아래 */
+@media (max-width: 960px) {
+	.report-viewer {
+		grid-template-columns: 1fr;
+		padding: 24px;
+	}
+
+	.report-sidebar {
+		position: static;
+		max-height: none;
+	}
+}
