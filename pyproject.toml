@@ -56,6 +56,11 @@ dependencies = [
     # Task 8 (#74): KRX 거래소 캘린더. ``XKRX`` 로 한국 공휴일 (설날/추석/광복절
     # 등) 과 영업일을 지원. 순수 Python, API 키 불필요.
     "exchange_calendars>=4.0",
+    # Task 14a (#106) + 핫픽스 #124: KRX 전종목 리스팅. pykrx 의
+    # ``get_market_ticker_list`` / ``get_market_ticker_name`` 이 KRX 사이트 변경
+    # 으로 깨져 FinanceDataReader 로 전환. CLI 종목명 검색과 웹 API 양쪽에서
+    # 사용하므로 코어 dependency.
+    "finance-datareader>=0.9",
 ]
 
 [project.optional-dependencies]
