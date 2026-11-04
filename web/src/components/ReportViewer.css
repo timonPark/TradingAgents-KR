@@ -145,6 +145,20 @@
 	margin-bottom: 12px;
 }
 
+/* #128: 다운로드 버튼 그룹 */
+.report-downloads {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+	margin-bottom: 20px;
+}
+
+.report-downloads .ks-button {
+	font-size: 0.875rem;
+	padding: 6px 14px;
+}
+
 .report-tabs {
 	display: flex;
 	flex-wrap: wrap;

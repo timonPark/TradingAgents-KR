@@ -131,3 +131,104 @@ def test_get_single_skips_non_whitelisted_folder(results_root: Path) -> None:
     files = client.get("/api/reports/005930_20261104_083000").json()["files"]
     paths = {f["path"] for f in files}
     assert "secrets/token.md" not in paths
+
+
+# ---------------------------------------------------------------------------
+# #128: 다운로드 엔드포인트
+# ---------------------------------------------------------------------------
+
+
+def test_download_md_returns_complete_report_as_attachment(results_root: Path) -> None:
+    _seed(results_root, "005930_20261104_083000", "Buy")
+    client = TestClient(create_app())
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=md")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/markdown")
+    assert "attachment" in resp.headers["content-disposition"]
+    assert "trading_report_005930_20261104_083000.md" in resp.headers["content-disposition"]
+    assert "# 분석 보고서" in resp.content.decode("utf-8")
+
+
+def test_download_html_returns_complete_report_html(results_root: Path) -> None:
+    _seed(
+        results_root,
+        "005930_20261104_083000",
+        "Buy",
+        extras={"complete_report.html": "<html><body>HI</body></html>"},
+    )
+    client = TestClient(create_app())
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=html")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "attachment" in resp.headers["content-disposition"]
+    assert "HI" in resp.content.decode("utf-8")
+
+
+def test_download_pdf_converts_html(results_root: Path) -> None:
+    pytest.importorskip("weasyprint")
+
+    _seed(
+        results_root,
+        "005930_20261104_083000",
+        "Buy",
+        extras={
+            "complete_report.html": (
+                "<html><head><meta charset='utf-8'></head>"
+                "<body><h1>삼성전자 분석 보고서</h1>"
+                "<p>등급: Buy</p></body></html>"
+            ),
+        },
+    )
+    client = TestClient(create_app())
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=pdf")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert (
+        "trading_report_005930_20261104_083000.pdf"
+        in resp.headers["content-disposition"]
+    )
+    # PDF magic number
+    assert resp.content[:4] == b"%PDF"
+    assert len(resp.content) > 1000  # 실제 변환된 PDF 는 수 KB 이상
+
+
+def test_download_pdf_404_when_html_missing(results_root: Path) -> None:
+    pytest.importorskip("weasyprint")
+    _seed(results_root, "005930_20261104_083000", "Buy")
+    # _seed 는 complete_report.md 만 만듦 — HTML 없음
+    client = TestClient(create_app())
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=pdf")
+    assert resp.status_code == 404
+
+
+def test_download_rejects_invalid_report_id(results_root: Path) -> None:
+    client = TestClient(create_app())
+    assert client.get("/api/reports/not-a-report/download?format=md").status_code == 400
+    assert client.get("/api/reports/ABCDEF_20261104_083000/download?format=md").status_code == 400
+
+
+def test_download_404_when_report_missing(results_root: Path) -> None:
+    client = TestClient(create_app())
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=md")
+    assert resp.status_code == 404
+
+
+def test_download_rejects_unknown_format(results_root: Path) -> None:
+    _seed(results_root, "005930_20261104_083000", "Buy")
+    client = TestClient(create_app())
+    assert client.get(
+        "/api/reports/005930_20261104_083000/download?format=zip"
+    ).status_code == 422
+    assert client.get(
+        "/api/reports/005930_20261104_083000/download?format=xlsx"
+    ).status_code == 422
+
+
+def test_download_md_404_when_complete_missing(results_root: Path) -> None:
+    # 섹션 파일만 있고 complete_report.md 가 없는 상황
+    (results_root / "reports" / "005930_20261104_083000" / "analysts").mkdir(parents=True)
+    (results_root / "reports" / "005930_20261104_083000" / "analysts" / "market.md").write_text("x", encoding="utf-8")
+    client = TestClient(create_app())
+    assert client.get(
+        "/api/reports/005930_20261104_083000/download?format=md"
+    ).status_code == 404
