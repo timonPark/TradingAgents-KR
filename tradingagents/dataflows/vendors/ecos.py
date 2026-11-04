@@ -33,6 +33,9 @@ ECOS_API_BASE = "https://ecos.bok.or.kr/api"
 REQUEST_TIMEOUT = 30
 DEFAULT_LOOKBACK_DAYS = 365
 MAX_ROWS = 40
+# 요청 행 상한. ECOS 는 구간의 오래된 쪽부터 행을 주므로 상한이 작으면 일별
+# 시계열의 최근값이 잘린다 (#137). 구간 전체를 받고 표시 단계에서 자른다.
+FETCH_ROW_LIMIT = 10000
 
 # ECOS 통계 사이클 코드
 CYCLE_DAILY = "D"
@@ -149,16 +152,17 @@ def _fetch(stat_code: str, cycle: str, start_period: str, end_period: str,
            item_code: str | None) -> list[dict]:
     """ECOS StatisticSearch 호출 → row 리스트. 에러 시 raise."""
     api_key = get_api_key()
-    # URL 세그먼트 조립: /StatisticSearch/{KEY}/json/kr/1/1000/{STAT}/{CYCLE}/{START}/{END}/{ITEM1}/
+    # URL 세그먼트 조립: /StatisticSearch/{KEY}/json/kr/1/{LIMIT}/{STAT}/{CYCLE}/{START}/{END}/{ITEM1}/
     segments = [
         "StatisticSearch", api_key, "json", "kr",
-        "1", str(MAX_ROWS * 2),
+        "1", str(FETCH_ROW_LIMIT),
         stat_code, cycle, start_period, end_period,
     ]
     if item_code:
         segments.append(item_code)
     url = ECOS_API_BASE + "/" + "/".join(segments) + "/"
-    response = get_scrubbed(url, timeout=REQUEST_TIMEOUT, secret=api_key)
+    # ECOS 는 키·조회조건을 URL 경로에 넣으므로 쿼리 파라미터가 없다.
+    response = get_scrubbed(url, params={}, timeout=REQUEST_TIMEOUT, secret=api_key)
     if response.status_code != 200:
         raise RuntimeError(f"ECOS HTTP {response.status_code}: {response.text[:200]}")
     try:

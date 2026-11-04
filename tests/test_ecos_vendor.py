@@ -230,6 +230,42 @@ def test_get_macro_data_sorts_rows_chronologically(api_key):
     assert 0 < pos_old < pos_mid < pos_new
 
 
+# ---------- #137: get_scrubbed 시그니처 / 일별 시계열 행 범위 회귀 ----------
+
+@pytest.mark.unit
+def test_fetch_calls_real_get_scrubbed_signature(api_key):
+    """실제 ``get_scrubbed`` 를 거쳐 필수 인자(params) 누락을 잡는다.
+
+    ``get_scrubbed`` 를 통째로 모킹하면 시그니처 불일치가 드러나지 않는다 (#137).
+    네트워크 계층인 ``requests.get`` 만 모킹한다.
+    """
+    resp = _ok_response({"StatisticSearch": {"row": []}})
+    resp.raise_for_status.return_value = None
+    with patch("tradingagents.dataflows.net.requests.get", return_value=resp) as mock_get:
+        rows = ecos._fetch("722Y001", "D", "20260101", "20261104", "0101000")
+    assert rows == []
+    assert mock_get.call_count == 1
+    assert mock_get.call_args.kwargs["params"] == {}
+
+
+@pytest.mark.unit
+def test_fetch_requests_whole_window_for_daily_series(api_key):
+    """일별 시계열은 구간 전체를 요청한다 (#137).
+
+    ECOS 는 오래된 쪽부터 행을 주므로 요청 종료 행이 작으면 최근 데이터가 잘린다.
+    """
+    resp = _ok_response({"StatisticSearch": {"row": []}})
+    resp.raise_for_status.return_value = None
+    with patch("tradingagents.dataflows.net.requests.get", return_value=resp) as mock_get:
+        ecos._fetch("731Y001", "D", "20251104", "20261104", "0000001")
+    url = mock_get.call_args.args[0]
+    # .../json/kr/{start}/{end}/{STAT}/...
+    parts = url.split("/json/kr/")[1].split("/")
+    start_row, end_row = int(parts[0]), int(parts[1])
+    assert start_row == 1
+    assert end_row >= 366  # 1년치 일별 행 수 이상
+
+
 # ============================================================================
 # Integration tests (Task 11b, #93) — 실제 한국은행 ECOS API 호출. CI 는 skip.
 #   로컬 실행: ``ECOS_API_KEY=... pytest tests/test_ecos_vendor.py -m integration``
