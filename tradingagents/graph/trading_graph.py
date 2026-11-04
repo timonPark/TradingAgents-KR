@@ -66,18 +66,25 @@ _PROGRESS_LABELS: dict[str, str] = {
 # bull/bear/aggressive/conservative/neutral 각각이 별도 호출로 보이도록 한다.
 # 매칭 안 되는 키는 raw node name 을 그대로 쓴다 (UI 가 fallback 처리).
 _NODE_LABELS: dict[str, str] = {
+    # Top-level analyst subgraphs
     "Market Analyst": "시장 분석가",
     "Social Analyst": "감성 분석가",
     "News Analyst": "뉴스 분석가",
     "Fundamentals Analyst": "재무 분석가",
+    # Analyst subgraph 내부 LLM 호출 노드 (공통 이름 "agent")
+    "agent": "분석가 LLM",
+    # Research debate
     "Bull Researcher": "강세 리서처",
     "Bear Researcher": "약세 리서처",
     "Research Manager": "리서치 매니저",
+    # Trading / Risk / Portfolio
     "Trader": "트레이더",
     "Aggressive Risk Analyst": "공격적 리스크",
     "Conservative Risk Analyst": "보수적 리스크",
     "Neutral Risk Analyst": "중립적 리스크",
     "Risk Judge": "리스크 매니저",
+    "Portfolio Manager": "포트폴리오 매니저",
+    # Memory
     "Memory Log": "메모리 로그",
 }
 
