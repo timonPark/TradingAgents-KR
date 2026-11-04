@@ -39,6 +39,10 @@ class RunState:
     # 포함되어 UI 가 "지금 어떤 호출을 기다리는지" 즉시 알 수 있게 한다.
     active_node: str | None = None
     active_node_started_at: datetime | None = None
+    # #132: 노드별로 축적된 리포트 본문 (node_key → 마크다운). node_complete
+    # 이벤트의 content 를 받아 쌓는다. 폴링이나 늦은 접속 시에도 지금까지의
+    # 분석 결과를 전부 복구 가능.
+    reports: dict[str, str] = field(default_factory=dict)
     # 완료된 이벤트들의 순서가 유지된 히스토리. 늦게 붙는 SSE 클라이언트가
     # 처음부터 replay 할 수 있도록 보관.
     events: list[Event] = field(default_factory=list)
@@ -100,6 +104,11 @@ class RunStore:
         elif event_type == "node_complete":
             state.active_node = None
             state.active_node_started_at = None
+            # #132: content 가 있으면 reports 에 축적 (라이브 결과 본문).
+            node = event.get("node")
+            content = event.get("content")
+            if isinstance(node, str) and isinstance(content, str) and content.strip():
+                state.reports[node] = content
         elif event_type == "done":
             state.status = "done"
             state.active_node = None

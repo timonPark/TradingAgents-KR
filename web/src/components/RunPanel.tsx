@@ -9,6 +9,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import SymbolSearch, { type SymbolHit } from "./SymbolSearch";
 import "./RunPanel.css";
 
@@ -39,6 +41,11 @@ interface Event {
 	message?: string;
 	started_at?: string;
 	elapsed_ms?: number;
+	content?: string;
+}
+
+function renderMarkdown(src: string): string {
+	return DOMPurify.sanitize(marked.parse(src, { async: false }) as string);
 }
 
 function todayKst(): string {
@@ -320,16 +327,29 @@ export default function RunPanel() {
 					<ol className="live-steps">
 						{nodeEvents.map((event, i) => (
 							<li key={`${event.node}-${i}`} className="live-step is-done">
-								<span className="step-dot" aria-hidden="true" />
-								<span className="step-label">
-									{event.label ?? event.node}
-									{typeof event.elapsed_ms === "number" && (
-										<span className="step-elapsed">
-											{" · "}
-											{formatElapsed(Math.round(event.elapsed_ms / 1000))}
-										</span>
-									)}
-								</span>
+								<div className="step-head">
+									<span className="step-dot" aria-hidden="true" />
+									<span className="step-label">
+										{event.label ?? event.node}
+										{typeof event.elapsed_ms === "number" && (
+											<span className="step-elapsed">
+												{" · "}
+												{formatElapsed(Math.round(event.elapsed_ms / 1000))}
+											</span>
+										)}
+									</span>
+								</div>
+								{event.content && event.content.trim().length > 0 && (
+									<details className="step-report" open>
+										<summary>분석 결과 보기</summary>
+										<div
+											className="step-report-body"
+											dangerouslySetInnerHTML={{
+												__html: renderMarkdown(event.content),
+											}}
+										/>
+									</details>
+								)}
 							</li>
 						))}
 						{status === "running" && !activeEvent && (
