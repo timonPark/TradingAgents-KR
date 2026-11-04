@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from api.run_store import SENTINEL, RunState, store
+from api.run_store import RunState, store
 from api.runner import RunRequest, launch_run
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class RunCreate(BaseModel):
     )
     deep_think_llm: str = Field(default="sonnet")
     quick_think_llm: str = Field(default="haiku")
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
 
 
 class RunCreated(BaseModel):
@@ -118,17 +118,17 @@ async def stream_events(run_id: str) -> EventSourceResponse:
         raise HTTPException(status.HTTP_410_GONE, "run queue closed")
 
     async def generator() -> AsyncIterator[dict[str, str]]:
-        # 늦게 접속한 클라이언트도 지금까지의 이벤트를 replay 로 받는다.
-        for event in list(state.events):
-            yield {"event": event.get("type", "message"), "data": json.dumps(event, ensure_ascii=False)}
-            if event.get("type") in {"done", "error"}:
-                return
-
+        # Each subscriber has its own cursor: replay and live delivery cannot
+        # duplicate events or consume another subscriber's queue entries.
+        cursor = 0
         while True:
-            event = await queue.get()
-            if event is SENTINEL:
-                return
-            yield {"event": event.get("type", "message"), "data": json.dumps(event, ensure_ascii=False)}
+            batch = state.events[cursor:]
+            for event in batch:
+                cursor += 1
+                yield {"event": event.get("type", "message"), "data": json.dumps(event, ensure_ascii=False)}
+                if event.get("type") in {"done", "error"}:
+                    return
+            await asyncio.sleep(0.1)
 
     # ping 은 프록시 타임아웃 방어용 주석 라인.
     return EventSourceResponse(generator(), ping=15)

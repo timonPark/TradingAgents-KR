@@ -19,31 +19,21 @@ def _reset_store() -> None:
     store.reset()
 
 
-def test_render_report_content_string_passthrough() -> None:
+@pytest.mark.parametrize(("node", "result", "expected"), [
+    ("Market Analyst", {"market_report": "시장 본문"}, "시장 본문"),
+    ("Bull Researcher", {"investment_debate_state": {"history": "과거", "current_response": "새 발언"}}, "새 발언"),
+    ("Bear Researcher", {"investment_debate_state": {"current_response": "약세"}}, "약세"),
+    ("Research Manager", {"investment_plan": "계획"}, "계획"),
+    ("Trader", {"trader_investment_plan": "거래"}, "거래"),
+    ("Aggressive Analyst", {"risk_debate_state": {"current_aggressive_response": "공격"}}, "공격"),
+    ("Conservative Analyst", {"risk_debate_state": {"current_conservative_response": "보수"}}, "보수"),
+    ("Neutral Analyst", {"risk_debate_state": {"current_neutral_response": "중립"}}, "중립"),
+    ("Portfolio Manager", {"final_trade_decision": "결정"}, "결정"),
+    ("Market Analyst", None, ""),
+])
+def test_render_only_current_node_output(node, result, expected):
     from tradingagents.graph.trading_graph import _render_report_content
-
-    assert _render_report_content("# 시장 분석\n\n본문") == "# 시장 분석\n\n본문"
-
-
-def test_render_report_content_dict_flatten_known_fields() -> None:
-    from tradingagents.graph.trading_graph import _render_report_content
-
-    out = _render_report_content({
-        "bull_history": "강세 주장",
-        "bear_history": "약세 주장",
-        "count": 2,  # 숫자 메타 — 노출 안 됨
-        "latest_speaker": "Bear",
-    })
-    assert "강세 논증" in out and "강세 주장" in out
-    assert "약세 논증" in out and "약세 주장" in out
-    assert "최근 발언자" in out
-
-
-def test_render_report_content_unknown_type_returns_empty() -> None:
-    from tradingagents.graph.trading_graph import _render_report_content
-
-    assert _render_report_content(42) == ""
-    assert _render_report_content(None) == ""
+    assert _render_report_content(result, node) == expected
 
 
 def test_node_complete_event_carries_content_in_debug_mode(tmp_path) -> None:
@@ -74,21 +64,21 @@ def test_node_complete_event_carries_content_in_debug_mode(tmp_path) -> None:
 
     def fake_iter(input_state, **kwargs):
         yield {
-            "kind": "state_update",
-            "state": {"market_report": "## 기술적 분석\n\nRSI 과열"},
+            "kind": "task_complete", "name": "Market Analyst",
+            "result": {"market_report": "## 기술적 분석\n\nRSI 과열"},
         }
         yield {
-            "kind": "state_update",
-            "state": {"final_trade_decision": "Rating: Buy\n\n삼성전자 매수 추천"},
+            "kind": "task_complete", "name": "Portfolio Manager",
+            "result": {"final_trade_decision": "Rating: Buy\n\n삼성전자 매수 추천"},
         }
 
     graph._iter_graph_events = fake_iter
     graph._run_graph("005930", "2024-01-05")
 
     completes = [e for e in events if e["type"] == "node_complete"]
-    market = next(e for e in completes if e["node"] == "market_report")
+    market = next(e for e in completes if e["node"] == "Market Analyst")
     assert "RSI 과열" in market["content"]
-    final = next(e for e in completes if e["node"] == "final_trade_decision")
+    final = next(e for e in completes if e["node"] == "Portfolio Manager")
     assert "삼성전자 매수 추천" in final["content"]
 
 
@@ -117,7 +107,7 @@ def test_snapshot_exposes_reports_dict(monkeypatch) -> None:
             return {"final_trade_decision": "Rating: Buy"}, "Buy"
 
         def save_reports(self, final_state, ticker):
-            return None
+            return "/tmp/reports/005930_20240105_120000/complete_report.md"
 
     monkeypatch.setattr(runner_module, "build_config", lambda req: {})
     monkeypatch.setattr(

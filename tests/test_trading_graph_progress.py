@@ -62,7 +62,7 @@ def test_progress_callback_receives_run_start_and_done(tmp_path) -> None:
 
 @pytest.mark.unit
 def test_progress_callback_fires_node_complete_in_debug_mode(tmp_path) -> None:
-    """Debug 모드에선 state 에 축적된 리포트에 대해 node_complete 를 순서대로 emit."""
+    """실제 task 순서로 본문을 보내고 state 갱신과 내부 노드는 중복 표시하지 않는다."""
     graph = _bare_graph(tmp_path)
     graph.debug = True
     events: list[dict] = []
@@ -70,14 +70,17 @@ def test_progress_callback_fires_node_complete_in_debug_mode(tmp_path) -> None:
     graph.propagator.get_graph_args = lambda callbacks=None: {}
 
     def fake_iter(input_state, **kwargs):
-        # 분석가 2개 → 트레이더 → 최종의 순서로 state 가 채워진다고 가정.
-        yield {"kind": "state_update", "state": {"market_report": "sample"}}
-        yield {"kind": "state_update", "state": {"news_report": "sample"}}
-        yield {"kind": "state_update", "state": {"trader_investment_plan": "plan"}}
-        yield {
-            "kind": "state_update",
-            "state": {"final_trade_decision": "Rating: Buy\n\n..."},
-        }
+        for name, key, content in [
+            ("Market Analyst", "market_report", "시장 본문"),
+            ("News Analyst", "news_report", "뉴스 본문"),
+            ("Trader", "trader_investment_plan", "계획"),
+            ("Portfolio Manager", "final_trade_decision", "Rating: Buy"),
+        ]:
+            result = {key: content}
+            yield {"kind": "task_complete", "name": name, "result": result}
+            yield {"kind": "state_update", "state": result}
+        yield {"kind": "task_complete", "name": "agent", "result": {}}
+        yield {"kind": "task_start", "name": "Memory Log"}
 
     graph._iter_graph_events = fake_iter
 
@@ -85,7 +88,8 @@ def test_progress_callback_fires_node_complete_in_debug_mode(tmp_path) -> None:
 
     node_events = [e for e in events if e["type"] == "node_complete"]
     labels = [e["label"] for e in node_events]
-    assert labels == ["시장 분석가", "뉴스 분석가", "트레이더", "최종 결정"]
+    assert labels == ["시장 분석가", "뉴스 분석가", "트레이더", "포트폴리오 매니저"]
+    assert all(e["content"] for e in node_events)
 
 
 @pytest.mark.unit

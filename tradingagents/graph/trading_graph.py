@@ -49,87 +49,58 @@ _NOT_IN_SIGNATURE = frozenset({
     "results_dir", "data_cache_dir", "memory_log_path", "checkpoint_enabled",
 })
 
-# Task 14e (#110): state 변화로 노드 완료를 감지하기 위한 라벨 매핑. 분석가
-# 리포트와 토론/결정 단계 모두 한국어 라벨로 노출 (사용자 표시 전용).
-_PROGRESS_LABELS: dict[str, str] = {
-    "market_report": "시장 분석가",
-    "sentiment_report": "감성 분석가",
-    "news_report": "뉴스 분석가",
-    "fundamentals_report": "재무 분석가",
-    "investment_debate_state": "리서치 토론",
-    "trader_investment_plan": "트레이더",
-    "risk_debate_state": "리스크 토론",
-    "final_trade_decision": "최종 결정",
-}
-
-# #126: LangGraph 의 node name → 사용자 라벨. state key 와 다르게 subgraph 안의
-# bull/bear/aggressive/conservative/neutral 각각이 별도 호출로 보이도록 한다.
-# 매칭 안 되는 키는 raw node name 을 그대로 쓴다 (UI 가 fallback 처리).
+# #126: LangGraph 의 node name → 사용자 라벨. 테이블에 없는 노드는 UI 에 노출
+# 하지 않는다 (``_resolve_node_label`` 이 ``None`` 반환 → ``_run_graph`` 가
+# emit skip). 내부 "agent", "Memory Log" 같은 노이즈 노드 제외.
 _NODE_LABELS: dict[str, str] = {
-    # Top-level analyst subgraphs
+    # 분석가 (subgraph) — 분석 결과가 state[*_report] 로 쌓임
     "Market Analyst": "시장 분석가",
-    "Social Analyst": "감성 분석가",
+    "Sentiment Analyst": "감성 분석가",
     "News Analyst": "뉴스 분석가",
     "Fundamentals Analyst": "재무 분석가",
-    # Analyst subgraph 내부 LLM 호출 노드 (공통 이름 "agent")
-    "agent": "분석가 LLM",
-    # Research debate
+    # 리서치 토론 — Bull/Bear 이 번갈아, Manager 가 종합
     "Bull Researcher": "강세 리서처",
     "Bear Researcher": "약세 리서처",
     "Research Manager": "리서치 매니저",
     # Trading / Risk / Portfolio
     "Trader": "트레이더",
-    "Aggressive Risk Analyst": "공격적 리스크",
-    "Conservative Risk Analyst": "보수적 리스크",
-    "Neutral Risk Analyst": "중립적 리스크",
-    "Risk Judge": "리스크 매니저",
+    "Aggressive Analyst": "공격적 리스크",
+    "Conservative Analyst": "보수적 리스크",
+    "Neutral Analyst": "중립적 리스크",
+    # 그래프 setup 에 Risk Judge 노드가 별도 있지는 않지만 Portfolio Manager
+    # 가 그 역할을 겸함.
     "Portfolio Manager": "포트폴리오 매니저",
-    # Memory
-    "Memory Log": "메모리 로그",
 }
 
 
-def _resolve_node_label(name: str | None) -> str:
+def _resolve_node_label(name: str | None) -> str | None:
+    """노드 이름 → 사용자 라벨. 테이블에 없으면 ``None`` → UI 노출 안 함."""
     if not name:
-        return "알 수 없는 노드"
-    return _NODE_LABELS.get(name, name)
+        return None
+    return _NODE_LABELS.get(name)
 
 
-# #132: 토론 state (investment_debate_state 등) 안쪽의 사람이 읽을 만한 필드.
-# 숫자/카운트 같은 메타 필드는 UI 노출 안 함.
-_DEBATE_FIELD_LABELS: dict[str, str] = {
-    "bull_history": "강세 논증",
-    "bear_history": "약세 논증",
-    "history": "토론 기록",
-    "current_response": "최근 발언",
-    "judge_decision": "매니저 판정",
-    "aggressive_history": "공격적 리스크 관점",
-    "conservative_history": "보수적 리스크 관점",
-    "neutral_history": "중립적 리스크 관점",
-    "current_aggressive_response": "공격적 리스크 최근 발언",
-    "current_conservative_response": "보수적 리스크 최근 발언",
-    "current_neutral_response": "중립적 리스크 최근 발언",
-    "latest_speaker": "최근 발언자",
+# Select only this invocation's output, never the accumulated debate history.
+_NODE_CONTENT_PATHS = {
+    "Market Analyst": ("market_report",),
+    "Sentiment Analyst": ("sentiment_report",),
+    "News Analyst": ("news_report",),
+    "Fundamentals Analyst": ("fundamentals_report",),
+    "Bull Researcher": ("investment_debate_state", "current_response"),
+    "Bear Researcher": ("investment_debate_state", "current_response"),
+    "Research Manager": ("investment_plan",),
+    "Trader": ("trader_investment_plan",),
+    "Aggressive Analyst": ("risk_debate_state", "current_aggressive_response"),
+    "Conservative Analyst": ("risk_debate_state", "current_conservative_response"),
+    "Neutral Analyst": ("risk_debate_state", "current_neutral_response"),
+    "Portfolio Manager": ("final_trade_decision",),
 }
 
 
-def _render_report_content(value) -> str:
-    """노드 결과 state 를 사용자 표시용 마크다운으로 평탄화.
-
-    - 문자열이면 그대로 (분석가 리포트, 트레이더 계획, 최종 결정 본문 등)
-    - dict (debate_state 등) 면 알려진 필드만 소제목과 함께 마크다운으로 결합
-    - 그 외는 빈 문자열 (UI 에 안 보임)
-    """
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        parts: list[str] = []
-        for key, label in _DEBATE_FIELD_LABELS.items():
-            v = value.get(key)
-            if isinstance(v, str) and v.strip():
-                parts.append(f"### {label}\n\n{v.strip()}")
-        return "\n\n".join(parts)
-    return ""
+def _render_report_content(value, node: str) -> str:
+    for key in _NODE_CONTENT_PATHS.get(node, ()):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value if isinstance(value, str) else ""
 
 
 # Task 14e (#110) / #126: 진행 상황 콜백의 이벤트 dict 타입. 가능한 ``type`` 값:
@@ -483,19 +454,11 @@ class TradingAgentsGraph:
         # None resumes an existing checkpoint; init_agent_state starts fresh (#1249).
         graph_input = self.checkpoint_input(init_agent_state)
         self._emit_progress({"type": "run_start", "ticker": company_name, "trade_date": str(trade_date)})
-        # Task 14e (#110): debug 모드에선 stream_run 으로 pretty_print 하며 state
-        # diff 로 node_complete 도 함께 emit. 비-debug 경로는 종전과 동일하게
-        # graph.invoke 한 번으로 끝 — 그 경우 노드 전환은 알 수 없고 run_start /
-        # done 이벤트만 발화 (로컬 웹 UI 가 "노드별 라이브" 를 원하면 debug=True
-        # 로 생성하도록 안내).
-        #
-        # #126: debug=True 경로에서 추가로 subgraph task 의 시작/종료를 받아
-        # 활성 agent (예: Bull/Bear/Trader) 를 node_start / node_complete 로
-        # emit 한다. 라운드 반복이나 agent 호출 대기 시간을 외부에서 관측 가능.
+        # Stream task completions in execution order. State updates only build
+        # final_state; they must not synthesize additional completion events.
         if self.debug:
             # A state repeats the messages before it, so each prints once (#1027).
             final_state, printed = {}, set()
-            seen_state_nodes: set[str] = set()
             for event in self._iter_graph_events(graph_input, **args):
                 kind = event["kind"]
                 if kind == "message":
@@ -508,6 +471,8 @@ class TradingAgentsGraph:
                             printed.add(key)
                             msg.pretty_print()
                 elif kind == "task_start":
+                    if _resolve_node_label(event["name"]) is None:
+                        continue
                     self._emit_progress({
                         "type": "node_start",
                         "node": event["name"],
@@ -515,32 +480,18 @@ class TradingAgentsGraph:
                         "started_at": event["started_at"],
                     })
                 elif kind == "task_complete":
+                    if _resolve_node_label(event["name"]) is None:
+                        continue
                     self._emit_progress({
                         "type": "node_complete",
                         "node": event["name"],
                         "label": _resolve_node_label(event["name"]),
                         "elapsed_ms": event.get("elapsed_ms"),
+                        "content": _render_report_content(event.get("result"), event["name"]),
                     })
                 elif kind == "state_update":
                     state = event["state"]
                     final_state.update(state)
-                    # top-level state 키 기반 보조 emit — 기존 UI 와 호환.
-                    # task 이벤트가 뜨지 않더라도 완료는 반드시 보이도록.
-                    for node_key, label in _PROGRESS_LABELS.items():
-                        if node_key in seen_state_nodes:
-                            continue
-                        value = final_state.get(node_key)
-                        if value:
-                            seen_state_nodes.add(node_key)
-                            # #132: 노드가 끝나면 그 분석가/리서처의 **리포트 본문**
-                            # 을 함께 보내 UI 가 즉시 렌더링할 수 있게 한다. 사용자가
-                            # 중간 결과를 못 보고 수십 분 기다리던 문제의 해소.
-                            self._emit_progress({
-                                "type": "node_complete",
-                                "node": node_key,
-                                "label": label,
-                                "content": _render_report_content(value),
-                            })
         else:
             final_state = self.graph.invoke(graph_input, **args)
 
@@ -575,12 +526,12 @@ class TradingAgentsGraph:
 
         ``stream_mode=["values","tasks"]`` + ``subgraphs=True`` 로 돌면 subgraph
         안의 bull/bear/trader/aggressive/conservative/neutral 각 호출이 "tasks"
-        모드 chunk 로 들어온다. 같은 task 는 **시작 시 result=None, 완료 시
-        result=<dict>** 두 번 등장하므로 그걸로 start/complete 구분.
+        모드 chunk 로 들어온다. 시작에는 result 키가 없고, 완료에는 result
+        키가 있으므로 키 존재 여부로 구분한다.
 
         yield shape:
         - ``{"kind": "task_start", "name": str, "started_at": ISO8601}``
-        - ``{"kind": "task_complete", "name": str, "elapsed_ms": int | None}``
+        - ``{"kind": "task_complete", "name": str, "elapsed_ms": int | None, "result": dict}``
         - ``{"kind": "state_update", "state": dict}``   — top-level values
         - ``{"kind": "message", "messages": list}``     — top-level messages
         """
@@ -603,7 +554,7 @@ class TradingAgentsGraph:
                     # 같은 task 이름이 여러 번 호출될 수 있음 (라운드 반복). task
                     # ID 가 있으면 그걸 우선, 없으면 name 기반.
                     task_id = str(chunk.get("id") or name)
-                    if result is None:
+                    if "result" not in chunk:
                         # task 시작
                         now = datetime.now(UTC)
                         task_started[task_id] = now
@@ -619,10 +570,13 @@ class TradingAgentsGraph:
                             elapsed_ms = int(
                                 (datetime.now(UTC) - started).total_seconds() * 1000
                             )
+                        if chunk.get("error") or chunk.get("interrupts"):
+                            continue
                         yield {
                             "kind": "task_complete",
                             "name": name,
                             "elapsed_ms": elapsed_ms,
+                            "result": result,
                         }
                         # tasks 모드의 result 도 하위 state/message 참고용으로
                         # 반환 — 기존 stream_run 과 호환 위해.

@@ -25,7 +25,6 @@ _INDICATORS = (
     "macd", "macds", "macdh",
     "rsi",
     "boll", "boll_ub", "boll_lb", "atr",
-    "vwma",
 )
 
 # OHLCV 선조회 창 — 트렌드/장기 지표 (200 SMA) 가 안정화되려면 ~250 거래일 필요.
@@ -141,7 +140,6 @@ MACD 계열:
 - atr: Average True Range — 손절 / 포지션 사이징을 위한 변동성 측정.
 
 거래량 기반:
-- vwma: Volume-Weighted Moving Average.
 
 KRX 투자자 수급:
 - 투자자별 순매수 — 외국인·기관·개인의 최근 5거래일 순매수. KRX 가격 변동의 **선행 지표**. 외국인 매도 지속은 가격 하락을, 기관 매수 유입은 반등을 선행하는 경우가 많음. 수급 섹션을 추세·모멘텀 지표와 함께 해석하세요.

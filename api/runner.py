@@ -13,6 +13,7 @@ import asyncio
 import logging
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from api.run_store import RunStore
@@ -56,6 +57,11 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
         # 분석 스레드 → 이벤트 루프로 안전 전달.
         loop.call_soon_threadsafe(store.record, run_id, event)
 
+    def graph_progress(event: dict[str, Any]) -> None:
+        # The API finishes only after reports are durably available to download.
+        if event.get("type") != "done":
+            emit(event)
+
     def work() -> None:
         try:
             from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -64,9 +70,9 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
                 selected_analysts=request.analysts,
                 debug=True,  # Task 14e: node_complete 이벤트를 받기 위함
                 config=build_config(request),
-                progress_callback=emit,
+                progress_callback=graph_progress,
             )
-            final_state, _rating = graph.propagate(
+            final_state, rating = graph.propagate(
                 request.ticker, request.trade_date
             )
             # #130: CLI 는 save_reports 를 직접 호출하지만 API 러너는 이걸 누락
@@ -74,7 +80,8 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
             # Task 14f 리포트 뷰어와 14f 다운로드 (#128) 가 디스크를 소스 오브
             # 트루스로 삼으므로 여기서 CLI 와 동등하게 저장.
             report_path = graph.save_reports(final_state, request.ticker)
-            emit({"type": "report_saved", "path": str(report_path)})
+            emit({"type": "report_saved", "report_id": Path(report_path).parent.name})
+            emit({"type": "done", "decision": rating})
         except Exception as exc:  # noqa: BLE001 — 예외 유형 상관없이 UI 에 알림
             logger.exception("run %s failed", run_id)
             emit({

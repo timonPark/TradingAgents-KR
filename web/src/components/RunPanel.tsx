@@ -42,6 +42,9 @@ interface Event {
 	started_at?: string;
 	elapsed_ms?: number;
 	content?: string;
+	report_id?: string;
+	ticker?: string;
+	trade_date?: string;
 }
 
 function renderMarkdown(src: string): string {
@@ -71,7 +74,7 @@ export default function RunPanel() {
 	);
 	const [deepModel, setDeepModel] = useState<Model>("sonnet");
 	const [quickModel, setQuickModel] = useState<Model>("haiku");
-	const [effort, setEffort] = useState<Effort>("high");
+	const [effort, setEffort] = useState<Effort>("low");
 
 	const [runId, setRunId] = useState<string | null>(null);
 	const [events, setEvents] = useState<Event[]>([]);
@@ -82,6 +85,12 @@ export default function RunPanel() {
 	const sourceRef = useRef<EventSource | null>(null);
 
 	useEffect(() => {
+		const existingRun = new URLSearchParams(window.location.search).get("run");
+		if (existingRun) {
+			setRunId(existingRun);
+			setStatus("running");
+			openStream(existingRun);
+		}
 		return () => {
 			sourceRef.current?.close();
 		};
@@ -117,6 +126,9 @@ export default function RunPanel() {
 			if (!response.ok) throw new Error(`POST /api/runs → ${response.status}`);
 			const { run_id } = (await response.json()) as { run_id: string };
 			setRunId(run_id);
+			const url = new URL(window.location.href);
+			url.searchParams.set("run", run_id);
+			window.history.replaceState(null, "", url);
 			setStatus("running");
 			openStream(run_id);
 		} catch (err) {
@@ -127,13 +139,17 @@ export default function RunPanel() {
 
 	function openStream(id: string) {
 		sourceRef.current?.close();
+		setEvents([]);
 		const source = new EventSource(`${API_BASE}/api/runs/${id}/events`);
 		sourceRef.current = source;
 
+		let finished = false;
 		const handleEvent = (event: Event) => {
+			if (sourceRef.current !== source) return;
 			setEvents((prev) => [...prev, event]);
 			if (event.type === "done") {
 				setStatus("done");
+				finished = true;
 				source.close();
 			} else if (event.type === "error") {
 				setErrorMsg(event.message ?? "알 수 없는 에러");
@@ -142,7 +158,7 @@ export default function RunPanel() {
 			}
 		};
 
-		for (const type of ["run_start", "node_start", "node_complete", "done", "error"]) {
+		for (const type of ["run_start", "node_start", "node_complete", "report_saved", "done", "error"]) {
 			source.addEventListener(type, (raw) => {
 				try {
 					const data = JSON.parse((raw as MessageEvent).data) as Event;
@@ -154,7 +170,7 @@ export default function RunPanel() {
 		}
 
 		source.onerror = () => {
-			if (status === "done") return;
+			if (finished) return;
 			setErrorMsg("SSE 연결 끊김 — uvicorn 이 켜져 있는지 확인하세요.");
 			setStatus("error");
 			source.close();
@@ -162,19 +178,21 @@ export default function RunPanel() {
 	}
 
 	const nodeEvents = events.filter((e) => e.type === "node_complete");
+	const startEvent = events.find((e) => e.type === "run_start");
+	const savedEvent = events.find((e) => e.type === "report_saved");
 	const doneEvent = events.find((e) => e.type === "done");
 
-	// #126: 가장 최근 node_start 이후 완료 이벤트가 없으면 "지금 돌고 있는 노드".
-	const activeEvent = (() => {
-		for (let i = events.length - 1; i >= 0; i -= 1) {
-			const e = events[i];
-			if (e.type === "node_start") return e;
-			if (e.type === "node_complete" || e.type === "done" || e.type === "error") {
-				return null;
-			}
+	// Parallel analysts remain active until their own completion arrives.
+	const activeEvents = (() => {
+		const active = new Map<string, Event>();
+		for (const event of events) {
+			if (event.type === "node_start" && event.node) active.set(event.node, event);
+			if (event.type === "node_complete" && event.node) active.delete(event.node);
+			if (event.type === "done" || event.type === "error") active.clear();
 		}
-		return null;
+		return Array.from(active.values());
 	})();
+	const activeEvent = activeEvents[0];
 
 	// 지금 활성 노드의 경과 시간을 1초 간격으로 리렌더링.
 	const [, forceTick] = useState(0);
@@ -306,6 +324,7 @@ export default function RunPanel() {
 			{(status === "running" || status === "done" || status === "error") && (
 				<section className="run-live" aria-live="polite">
 					<h3 className="live-head">진행 상황</h3>
+					{startEvent && <p>{startEvent.ticker} · 분석일 {startEvent.trade_date}</p>}
 
 					{/* #126: 활성 노드 패널 — 지금 돌고 있는 agent 와 경과 시간 */}
 					{activeEvent && (
@@ -313,7 +332,7 @@ export default function RunPanel() {
 							<span className="active-dot" aria-hidden="true" />
 							<div className="active-body">
 								<span className="active-label">
-									{activeEvent.label ?? activeEvent.node}
+									{activeEvents.map((event) => event.label ?? event.node).join(" · ")}
 								</span>
 								<span className="active-meta">
 									{activeElapsedSeconds != null
@@ -364,6 +383,17 @@ export default function RunPanel() {
 						<p className="live-decision">
 							결정: <strong>{doneEvent.decision}</strong>
 						</p>
+					)}
+
+					{savedEvent?.report_id && (
+						<div className="ks-button-row">
+							{(["md", "html", "pdf"] as const).map((format) => (
+								<a key={format} className="ks-button" href={`${API_BASE}/api/reports/${encodeURIComponent(savedEvent.report_id!)}/download?format=${format}`}>
+									{format.toUpperCase()} 다운로드
+								</a>
+							))}
+							<a className="ks-button" href={`/report?id=${encodeURIComponent(savedEvent.report_id)}`}>리포트 뷰어로 이동</a>
+						</div>
 					)}
 
 					{errorMsg && <p className="live-error">에러: {errorMsg}</p>}

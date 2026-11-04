@@ -1057,3 +1057,15 @@ def test_live_claude_code_responds_to_short_prompt(claude_cli_available):
     result = client.invoke([HumanMessage(content="Reply with the single word READY and nothing else.")])
     assert isinstance(result, AIMessage)
     assert "READY" in result.content.upper()
+
+
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_structured_output_accepts_role_dicts(mock_run):
+    mock_run.return_value = MagicMock(
+        stdout=_structured_payload({"action": "BUY", "reason": "growth"}), returncode=0,
+    )
+    result = ChatClaudeCodeHeadless(model="sonnet").with_structured_output(_Decision).invoke([
+        {"role": "system", "content": "시스템"},
+        {"role": "user", "content": "분석"},
+    ])
+    assert result.action == "BUY"

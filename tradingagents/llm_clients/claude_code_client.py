@@ -25,7 +25,13 @@ from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    convert_to_messages,
+)
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.prompt_values import PromptValue
 from pydantic import BaseModel, ValidationError
@@ -84,7 +90,7 @@ def _coerce_input_to_messages(input_: Any) -> list[BaseMessage]:
     if isinstance(input_, PromptValue):
         return input_.to_messages()
     if isinstance(input_, list):
-        return input_
+        return convert_to_messages(input_)
     return [HumanMessage(content=str(input_))]
 
 
