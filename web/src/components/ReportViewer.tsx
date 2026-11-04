@@ -177,6 +177,30 @@ export default function ReportViewer() {
 									{tree.decision}
 								</span>
 							)}
+
+							<div className="report-downloads" role="group" aria-label="리포트 다운로드">
+								<a
+									className="ks-button ks-button-ghost"
+									href={`${API_BASE}/api/reports/${encodeURIComponent(tree.report_id)}/download?format=md`}
+									download
+								>
+									📄 마크다운 (.md)
+								</a>
+								<a
+									className="ks-button ks-button-ghost"
+									href={`${API_BASE}/api/reports/${encodeURIComponent(tree.report_id)}/download?format=html`}
+									download
+								>
+									🌐 HTML (.html)
+								</a>
+								<a
+									className="ks-button ks-button-ghost"
+									href={`${API_BASE}/api/reports/${encodeURIComponent(tree.report_id)}/download?format=zip`}
+									download
+								>
+									📦 전체 (.zip)
+								</a>
+							</div>
 						</header>
 
 						<nav className="report-tabs" role="tablist">

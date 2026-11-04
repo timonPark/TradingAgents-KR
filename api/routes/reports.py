@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+import io
+import re
+import zipfile
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
-from api.reports_store import get_report, list_reports
+from api.reports_store import (
+    _REPORT_ID_PATTERN,
+    _results_root,
+    get_report,
+    list_reports,
+)
 from tradingagents.default_config import DEFAULT_CONFIG
 
 router = APIRouter()
@@ -96,4 +107,103 @@ def get_single(report_id: str) -> ReportTreeOut:
         stamp=_parse_stamp(stamp_raw),
         decision=decision,
         files=[ReportFileOut(path=f.path, content=f.content) for f in files],
+    )
+
+
+# ---------------------------------------------------------------------------
+# #128: 다운로드 엔드포인트 (md / html / zip)
+# ---------------------------------------------------------------------------
+
+DownloadFormat = Literal["md", "html", "zip"]
+
+# Zip 트리에 포함할 하위 폴더 — 14f 와 동일 화이트리스트. complete_report.*
+# 는 루트에 있으므로 별도.
+_ZIP_FOLDERS = ("analysts", "research", "trading", "risk", "portfolio")
+_ALLOWED_FILE_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.(?:md|html)$")
+
+
+def _safe_report_dir(report_id: str) -> Path:
+    if not _REPORT_ID_PATTERN.match(report_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"invalid report_id: {report_id!r}"
+        )
+    root = _results_root(DEFAULT_CONFIG["results_dir"])
+    report_dir = (root / report_id).resolve()
+    try:
+        report_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"report_id escapes results root: {report_id!r}",
+        ) from exc
+    if not report_dir.is_dir():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"report not found: {report_id}"
+        )
+    return report_dir
+
+
+def _attachment(filename: str) -> str:
+    # ASCII 범위 filename 만 쓰므로 RFC 5987 encoding 생략해도 안전.
+    return f'attachment; filename="{filename}"'
+
+
+@router.get("/{report_id}/download")
+def download_report(report_id: str, format: DownloadFormat = "md") -> Response:
+    """통합 리포트를 파일로 다운로드.
+
+    - ``md``:   ``complete_report.md`` 원본
+    - ``html``: ``complete_report.html`` 원본 (브라우저에서 바로 열람)
+    - ``zip``:  리포트 디렉터리의 모든 ``.md``/``.html`` 을 묶음
+    """
+    report_dir = _safe_report_dir(report_id)
+    base = f"trading_report_{report_id}"
+
+    if format == "md":
+        src = report_dir / "complete_report.md"
+        if not src.is_file():
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "complete_report.md not found"
+            )
+        return Response(
+            content=src.read_bytes(),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": _attachment(f"{base}.md")},
+        )
+
+    if format == "html":
+        src = report_dir / "complete_report.html"
+        if not src.is_file():
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "complete_report.html not found"
+            )
+        return Response(
+            content=src.read_bytes(),
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": _attachment(f"{base}.html")},
+        )
+
+    # zip — 메모리 BytesIO, 작은 리포트라 디스크 스풀 불필요.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 루트의 complete_report.{md,html}
+        for name in ("complete_report.md", "complete_report.html"):
+            src = report_dir / name
+            if src.is_file():
+                zf.write(src, arcname=name)
+        # 섹션 폴더 — 화이트리스트 폴더 안의 .md/.html 만
+        for folder in _ZIP_FOLDERS:
+            folder_dir = report_dir / folder
+            if not folder_dir.is_dir():
+                continue
+            for src in sorted(folder_dir.iterdir()):
+                if not src.is_file():
+                    continue
+                if not _ALLOWED_FILE_NAME.match(src.name):
+                    continue
+                zf.write(src, arcname=f"{folder}/{src.name}")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": _attachment(f"{base}.zip")},
     )
