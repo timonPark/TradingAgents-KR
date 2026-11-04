@@ -353,3 +353,23 @@ def test_the_memory_step_reads_lessons_as_of_the_trade_date_and_settles_once(tmp
 
     assert asked == ["2026-01-20", "2026-01-20"]
     assert (tmp_path / "log.md").read_text() == log_after_first
+
+
+@pytest.mark.unit
+def test_real_graph_stream_reports_every_invocation(tmp_path, monkeypatch, offline):
+    graph = _graph(tmp_path, monkeypatch, ScriptedModel(structured=True), debug=True,
+                   max_debate_rounds=2, max_risk_discuss_rounds=2)
+    events = []
+    graph.progress_callback = events.append
+    graph.propagate("NVDA", TRADE_DATE)
+    completed = [e for e in events if e["type"] == "node_complete"]
+    names = [e["node"] for e in completed]
+    assert set(names[:4]) == {"Market Analyst", "Sentiment Analyst", "News Analyst", "Fundamentals Analyst"}
+    assert names[4:] == [
+        "Bull Researcher", "Bear Researcher", "Bull Researcher", "Bear Researcher",
+        "Research Manager", "Trader",
+        "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst",
+        "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager",
+    ]
+    assert all(e["content"].strip() for e in completed)
+    assert all(e["elapsed_ms"] is not None for e in completed)
