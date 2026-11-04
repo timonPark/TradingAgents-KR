@@ -121,10 +121,26 @@ def _fetch_tickers(as_of: date) -> list[SymbolHit]:
 
 
 def _default_as_of() -> date:
-    """가장 최근 KRX 영업일을 ``date`` 로."""
-    from tradingagents.dataflows.krx_calendar import current_trading_date
+    """가장 최근 KRX 영업일을 ``date`` 로. 캘린더 실패 시 KST 오늘로 폴백.
 
-    return date.fromisoformat(current_trading_date())
+    #136: ``exchange_calendars`` 의 KRX 캘린더 생성이 pandas 3.x 와 호환 문제
+    (KoreanHoliday rule 의 Series set-item 이 길이 불일치 ValueError 를 터뜨림)
+    로 터질 수 있다. 종목 **검색** 용도는 영업일 정확도가 필요 없으므로
+    (FDR 은 요청 날짜 상관없이 당일 리스팅을 돌려줌) 캘린더 생성이 터지면
+    KST 기준 오늘로 폴백해서 서비스가 죽지 않게 한다.
+    """
+    try:
+        from tradingagents.dataflows.krx_calendar import current_trading_date
+
+        return date.fromisoformat(current_trading_date())
+    except Exception as exc:  # noqa: BLE001 — 외부 패키지 호환성 깨짐 방어
+        from tradingagents.dataflows.date_window import get_current_date
+
+        logger.warning(
+            "krx_calendar 사용 불가, KST 오늘로 폴백 (%s): %s",
+            type(exc).__name__, exc,
+        )
+        return date.fromisoformat(get_current_date())
 
 
 def _load_all(as_of: date | None = None) -> list[SymbolHit]:
