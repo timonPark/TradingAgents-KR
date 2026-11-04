@@ -144,10 +144,13 @@ def test_generate_passes_cli_args(mock_run):
     assert "json" in args_list
     assert "--model" in args_list
     assert "haiku" in args_list
-    # Task 1c 격리 플래그 전체 세트
+    # Task 1c 격리 플래그 + #134: --tools "" 로 모든 툴 비활성 (plan 모드 제거)
     assert "--no-session-persistence" in args_list
-    assert "--permission-mode" in args_list
-    assert "plan" in args_list
+    assert "--tools" in args_list
+    # --tools 다음 토큰은 빈 문자열이어야 함.
+    assert args_list[args_list.index("--tools") + 1] == ""
+    # #134: plan 모드는 제거 — 보고서 응답이 메타 요약으로 변질됨.
+    assert "--permission-mode" not in args_list
     assert "--disable-slash-commands" in args_list
     assert "--exclude-dynamic-system-prompt-sections" in args_list
     # SystemMessage 없으므로 --append-system-prompt 는 포함되지 않아야 함
