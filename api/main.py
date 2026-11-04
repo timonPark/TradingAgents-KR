@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import load_settings
-from api.routes import health, runs, symbols
+from api.routes import health, reports, runs, symbols
 
 
 def create_app() -> FastAPI:
@@ -35,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api", tags=["meta"])
     app.include_router(symbols.router, prefix="/api/symbols", tags=["symbols"])
     app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
+    app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
     return app
 
 
