@@ -306,7 +306,13 @@ class ChatClaudeCodeHeadless(BaseChatModel):
         """구조화/비구조화 호출 공통 CLI 인자. 격리 플래그 전체 세트 포함.
 
         격리 플래그 (ADR-0001 §4.5, CLAUDE.md):
-        - `--permission-mode plan`: 호스트 파일/Bash 수정 전면 차단
+        - `--tools ""`: 모든 built-in 툴 비활성화 (Bash/Write/Edit/NotebookEdit/
+          WebFetch/ExitPlanMode 등). 호스트 파일 수정·Bash 실행·웹 접근을 전부
+          차단하면서도 Claude 는 응답 본문에 분석 보고서를 직접 쓴다.
+          **#134**: 종전 `--permission-mode plan` 은 Claude 를 "플랜 제시" 모드
+          로 돌려 JSON 응답의 `result` 가 보고서가 아니라 "분석 보고서는 위
+          본문에 전달했습니다" 같은 **메타 요약** 이 되는 치명적 문제가 있어
+          제거. 안전성은 `--tools ""` 가 등가로 보장한다.
         - `--no-session-persistence`: 세션 디스크 저장 끔
         - `--disable-slash-commands`: SKILLS / slash command 로딩 차단
         - `--exclude-dynamic-system-prompt-sections`: cwd/env/git status 등
@@ -324,7 +330,7 @@ class ChatClaudeCodeHeadless(BaseChatModel):
             "--model", self.model,
             "--effort", self.effort,
             "--no-session-persistence",
-            "--permission-mode", "plan",
+            "--tools", "",
             "--disable-slash-commands",
             "--exclude-dynamic-system-prompt-sections",
         ]
