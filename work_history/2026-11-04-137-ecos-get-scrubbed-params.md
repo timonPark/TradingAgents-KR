@@ -1,7 +1,7 @@
 # [#137] ECOS vendor get_scrubbed params 누락 수정
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/137
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/140
 - 브랜치: fix/137-ecos-get-scrubbed-params
 - 작업 기간: 2026-11-04 ~ 2026-11-04
 
