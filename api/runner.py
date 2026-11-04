@@ -66,7 +66,15 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
                 config=build_config(request),
                 progress_callback=emit,
             )
-            graph.propagate(request.ticker, request.trade_date)
+            final_state, _rating = graph.propagate(
+                request.ticker, request.trade_date
+            )
+            # #130: CLI 는 save_reports 를 직접 호출하지만 API 러너는 이걸 누락
+            # 하고 있어 웹에서 돌린 run 은 디스크에 리포트가 쌓이지 않았다.
+            # Task 14f 리포트 뷰어와 14f 다운로드 (#128) 가 디스크를 소스 오브
+            # 트루스로 삼으므로 여기서 CLI 와 동등하게 저장.
+            report_path = graph.save_reports(final_state, request.ticker)
+            emit({"type": "report_saved", "path": str(report_path)})
         except Exception as exc:  # noqa: BLE001 — 예외 유형 상관없이 UI 에 알림
             logger.exception("run %s failed", run_id)
             emit({

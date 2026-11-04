@@ -36,6 +36,9 @@ class _FakeGraph:
         self._cb({"type": "done", "decision": "Buy"})
         return {"final_trade_decision": "Rating: Buy"}, "Buy"
 
+    def save_reports(self, final_state, ticker):  # #130
+        return None
+
 
 class _FailingGraph:
     def __init__(self, *, progress_callback, **kwargs) -> None:
@@ -44,6 +47,9 @@ class _FailingGraph:
     def propagate(self, ticker: str, trade_date: str):
         self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
         raise RuntimeError("boom")
+
+    def save_reports(self, final_state, ticker):  # #130
+        return None
 
 
 def _wait_for(predicate, *, timeout: float = 2.0, interval: float = 0.02) -> None:
@@ -161,6 +167,9 @@ def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
             })
             return {"final_trade_decision": "Rating: Hold"}, "Hold"
 
+        def save_reports(self, final_state, ticker):  # #130
+            return None
+
     monkeypatch.setattr(runner_module, "build_config", lambda req: {})
     monkeypatch.setattr(
         "tradingagents.graph.trading_graph.TradingAgentsGraph",
@@ -181,6 +190,53 @@ def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
     snap = client.get(f"/api/runs/{run_id}").json()
     assert snap["active_node"] == "약세 리서처"
     assert snap["active_node_started_at"] is not None
+
+
+def test_runner_calls_save_reports_on_success(monkeypatch, tmp_path) -> None:
+    """#130: 완료된 run 은 디스크에 리포트 트리가 쌓여야 한다.
+
+    CLI 는 ``save_reports`` 를 직접 호출하지만 API 러너가 누락하고 있어
+    웹에서 실행된 run 의 리포트가 사라졌던 버그의 리그레션 가드.
+    """
+    import api.runner as runner_module
+
+    saved: dict[str, object] = {}
+
+    class _CapturingGraph:
+        def __init__(self, *, progress_callback, **kwargs) -> None:
+            self._cb = progress_callback
+
+        def propagate(self, ticker: str, trade_date: str):
+            self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
+            self._cb({"type": "done", "decision": "Buy"})
+            return {"final_trade_decision": "Rating: Buy"}, "Buy"
+
+        def save_reports(self, final_state, ticker):
+            saved["final_state"] = final_state
+            saved["ticker"] = ticker
+            path = tmp_path / f"{ticker}.md"
+            path.write_text("stub", encoding="utf-8")
+            return path
+
+    monkeypatch.setattr(runner_module, "build_config", lambda req: {})
+    monkeypatch.setattr(
+        "tradingagents.graph.trading_graph.TradingAgentsGraph",
+        _CapturingGraph,
+        raising=True,
+    )
+
+    client = TestClient(create_app())
+    run_id = client.post(
+        "/api/runs",
+        json={"ticker": "005930", "trade_date": "2024-01-05"},
+    ).json()["run_id"]
+
+    _wait_for(
+        lambda: (store.get(run_id).status if store.get(run_id) else None) == "done"
+    )
+
+    assert saved.get("ticker") == "005930"
+    assert isinstance(saved.get("final_state"), dict)
 
 
 def test_error_run_records_status(monkeypatch) -> None:
