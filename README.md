@@ -30,6 +30,43 @@
 
 ---
 
+## 🚀 Quick Start
+
+**전제조건이 이미 다 준비된 경우** 쓰는 최단 경로입니다. 처음이라면 아래 ["설치 및 실행"](#설치-및-실행) 7단계를 먼저 따라가세요.
+
+전제: Python 3.11+, Node.js 22.23.4+, [`claude` CLI 로그인 완료](#4-claude-code-cli-설치-및-로그인-필수), `.env` 에 `DART_API_KEY` 설정.
+
+### 옵션 A — CLI 로 분석
+
+```bash
+source .venv/bin/activate
+tradingagents          # 종목명(예: "삼성") 또는 6자리 코드 입력 → 분석 시작
+```
+
+### 옵션 B — 로컬 웹 UI (Astro + FastAPI, Neo Kinpaku 디자인)
+
+터미널 두 개를 띄웁니다.
+
+```bash
+# 터미널 1 — FastAPI 백엔드 (포트 8000)
+source .venv/bin/activate
+pip install -e ".[web]"     # 첫 실행 시 한 번만
+uvicorn api.main:app --reload --port 8000
+```
+
+```bash
+# 터미널 2 — Astro 프론트엔드 (포트 4321)
+cd web
+npm install                 # 첫 실행 시 한 번만
+npm run dev
+```
+
+브라우저에서 **http://localhost:4321** 접속 → 종목 검색 → 분석 설정 → **"분석 시작"** → 라이브 진행 확인. 저장된 리포트는 **/report** 에서 사이드바로 열람.
+
+> 💡 **처음 테스트**는 쿼터 절감을 위해 UI 의 `effort` 를 `low` 로 낮춰 돌리는 걸 추천합니다. Claude Code Max/Pro 쿼터를 소모합니다.
+
+---
+
 ## 커스터마이징 범위
 
 TauricResearch 의 원본 프레임워크 대비 다음 레이어를 한국 환경으로 교체합니다.
