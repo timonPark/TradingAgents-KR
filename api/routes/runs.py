@@ -53,6 +53,10 @@ class RunSnapshot(BaseModel):
     updated_at: str
     decision: str | None = None
     error: str | None = None
+    # #126: 지금 돌고 있는 agent 라벨 (예: "약세 리서처"). running 이 아닐 때는
+    # null. active_node_started_at 는 ISO8601 (UTC).
+    active_node: str | None = None
+    active_node_started_at: str | None = None
 
 
 def _snapshot(state: RunState) -> RunSnapshot:
@@ -65,6 +69,12 @@ def _snapshot(state: RunState) -> RunSnapshot:
         updated_at=state.updated_at.isoformat(),
         decision=state.decision,
         error=state.error,
+        active_node=state.active_node,
+        active_node_started_at=(
+            state.active_node_started_at.isoformat()
+            if state.active_node_started_at is not None
+            else None
+        ),
     )
 
 

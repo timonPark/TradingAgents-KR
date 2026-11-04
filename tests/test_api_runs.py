@@ -143,6 +143,46 @@ def test_sse_stream_replays_history_and_closes_on_done(monkeypatch) -> None:
     assert text.count("event: done") == 1
 
 
+def test_snapshot_exposes_active_node_during_run(monkeypatch) -> None:
+    """#126: node_start → snapshot.active_node 세팅, node_complete → 해제."""
+    import api.runner as runner_module
+
+    class _GraphWithActive:
+        def __init__(self, *, progress_callback, **kwargs) -> None:
+            self._cb = progress_callback
+
+        def propagate(self, ticker: str, trade_date: str):
+            self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
+            self._cb({
+                "type": "node_start",
+                "node": "Bear Researcher",
+                "label": "약세 리서처",
+                "started_at": "2024-01-05T00:00:00+00:00",
+            })
+            return {"final_trade_decision": "Rating: Hold"}, "Hold"
+
+    monkeypatch.setattr(runner_module, "build_config", lambda req: {})
+    monkeypatch.setattr(
+        "tradingagents.graph.trading_graph.TradingAgentsGraph",
+        _GraphWithActive,
+        raising=True,
+    )
+
+    client = TestClient(create_app())
+    run_id = client.post(
+        "/api/runs",
+        json={"ticker": "005930", "trade_date": "2024-01-05"},
+    ).json()["run_id"]
+
+    _wait_for(
+        lambda: (store.get(run_id).active_node if store.get(run_id) else None)
+        == "약세 리서처"
+    )
+    snap = client.get(f"/api/runs/{run_id}").json()
+    assert snap["active_node"] == "약세 리서처"
+    assert snap["active_node_started_at"] is not None
+
+
 def test_error_run_records_status(monkeypatch) -> None:
     import api.runner as runner_module
 

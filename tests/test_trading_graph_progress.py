@@ -69,20 +69,60 @@ def test_progress_callback_fires_node_complete_in_debug_mode(tmp_path) -> None:
     graph.progress_callback = events.append
     graph.propagator.get_graph_args = lambda callbacks=None: {}
 
-    def fake_stream_run(input_state, **kwargs):
+    def fake_iter(input_state, **kwargs):
         # 분석가 2개 → 트레이더 → 최종의 순서로 state 가 채워진다고 가정.
-        yield [], {"market_report": "sample"}
-        yield [], {"news_report": "sample"}
-        yield [], {"trader_investment_plan": "plan"}
-        yield [], {"final_trade_decision": "Rating: Buy\n\n..."}
+        yield {"kind": "state_update", "state": {"market_report": "sample"}}
+        yield {"kind": "state_update", "state": {"news_report": "sample"}}
+        yield {"kind": "state_update", "state": {"trader_investment_plan": "plan"}}
+        yield {
+            "kind": "state_update",
+            "state": {"final_trade_decision": "Rating: Buy\n\n..."},
+        }
 
-    graph.stream_run = fake_stream_run
+    graph._iter_graph_events = fake_iter
 
     graph._run_graph("005930", "2024-01-05")
 
     node_events = [e for e in events if e["type"] == "node_complete"]
     labels = [e["label"] for e in node_events]
     assert labels == ["시장 분석가", "뉴스 분석가", "트레이더", "최종 결정"]
+
+
+@pytest.mark.unit
+def test_task_start_and_complete_events_in_debug_mode(tmp_path) -> None:
+    """#126: subgraph task 시작/완료가 node_start / node_complete 로 emit 되는지."""
+    graph = _bare_graph(tmp_path)
+    graph.debug = True
+    events: list[dict] = []
+    graph.progress_callback = events.append
+    graph.propagator.get_graph_args = lambda callbacks=None: {}
+
+    def fake_iter(input_state, **kwargs):
+        yield {
+            "kind": "task_start",
+            "name": "Bear Researcher",
+            "started_at": "2024-01-05T00:00:00+00:00",
+        }
+        yield {
+            "kind": "task_complete",
+            "name": "Bear Researcher",
+            "elapsed_ms": 1234,
+        }
+
+    graph._iter_graph_events = fake_iter
+
+    graph._run_graph("005930", "2024-01-05")
+
+    starts = [e for e in events if e["type"] == "node_start"]
+    completes = [e for e in events if e["type"] == "node_complete"]
+    assert len(starts) == 1
+    assert starts[0]["node"] == "Bear Researcher"
+    assert starts[0]["label"] == "약세 리서처"
+    assert "started_at" in starts[0]
+    assert any(e.get("node") == "Bear Researcher" for e in completes)
+    bear_complete = next(e for e in completes if e.get("node") == "Bear Researcher")
+    assert bear_complete["label"] == "약세 리서처"
+    assert bear_complete["elapsed_ms"] == 1234
 
 
 @pytest.mark.unit
