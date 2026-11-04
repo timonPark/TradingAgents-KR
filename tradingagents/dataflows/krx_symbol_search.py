@@ -5,10 +5,11 @@ Task 14a (#106): CLI (``cli/prompts.py``) 와 웹 API (``api/routes/symbols.py``
 하면 매칭되는 6자리 종목코드를 돌려준다.
 
 ### 데이터 소스
-``pykrx.stock.get_market_ticker_list`` + ``get_market_ticker_name``. KOSPI 와
-KOSDAQ 전종목을 수집한다. 두 함수 모두 **keyless** — KRX 로그인 자격증명이
-필요한 수급/시가총액 API 와 달리 공개 데이터이므로 ``.env`` 에 KRX_ID / KRX_PW
-가 없어도 동작한다.
+``FinanceDataReader`` (``fdr.StockListing('KRX')``). KOSPI + KOSDAQ 전종목
+(2876건) 을 ``Code`` / ``Name`` / ``Market`` 컬럼으로 반환한다. keyless 공개
+데이터. **#124 핫픽스**: 원래 pykrx 의 ``get_market_ticker_list`` /
+``get_market_ticker_name`` 을 썼지만 KRX 사이트 변경으로 두 함수가 빈 응답
+또는 ``Empty DataFrame`` 을 반환해 교체.
 
 ### 캐시
 전종목 수집은 수초가 걸리므로 하루 단위 JSON 캐시를 사용한다.
@@ -88,20 +89,34 @@ def _save_cache(path: Path, hits: list[SymbolHit]) -> None:
     tmp.replace(path)
 
 
-def _fetch_from_pykrx(as_of: date) -> list[SymbolHit]:
-    """pykrx 를 통해 KOSPI/KOSDAQ 전종목 수집."""
-    from pykrx import stock
+def _fetch_tickers(as_of: date) -> list[SymbolHit]:
+    """FinanceDataReader 로 KOSPI/KOSDAQ 전종목 수집.
 
-    date_str = as_of.strftime("%Y%m%d")
+    ``as_of`` 는 API 호환성 유지용 (FDR 은 당일 리스팅만 지원). 원래 pykrx
+    경로가 날짜별 종목을 가져왔던 자리를 그대로 유지.
+    """
+    import FinanceDataReader as fdr
+
+    listing = fdr.StockListing("KRX")
+    if listing is None or listing.empty:
+        return []
+
+    # Market 컬럼이 없는 FDR 버전 방어 — 비정상 응답은 빈 리스트로 간주.
+    if "Market" not in listing.columns or "Code" not in listing.columns:
+        logger.warning("FDR StockListing 응답에 Market/Code 컬럼 없음, 빈 결과 반환")
+        return []
+
     hits: list[SymbolHit] = []
-    for market in _MARKETS:
-        tickers = stock.get_market_ticker_list(date=date_str, market=market)
-        for raw_ticker in tickers:
-            ticker = str(raw_ticker).zfill(6)
-            name = stock.get_market_ticker_name(ticker)
-            if not name:
-                continue
-            hits.append(SymbolHit(ticker=ticker, name=name, market=market))
+    valid_markets = set(_MARKETS)
+    for _, row in listing.iterrows():
+        market = row["Market"]
+        if market not in valid_markets:
+            continue
+        code = str(row["Code"]).zfill(6)
+        name = row.get("Name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        hits.append(SymbolHit(ticker=code, name=name.strip(), market=market))
     return hits
 
 
@@ -113,14 +128,25 @@ def _default_as_of() -> date:
 
 
 def _load_all(as_of: date | None = None) -> list[SymbolHit]:
-    """캐시 우선, 미스 시 pykrx 호출 후 캐시 저장."""
+    """캐시 우선, 미스 시 FDR 호출 후 캐시 저장.
+
+    #124: 빈 결과는 **캐시에 저장하지 않는다**. 과거 pykrx 가 빈 리스트를
+    반환하던 상황에서 ``[]`` 가 하루 동안 캐시돼 다음 fetch 를 막던 문제를
+    차단.
+    """
     effective = as_of or _default_as_of()
     path = _cache_path(effective)
     cached = _load_cached(path)
-    if cached is not None:
+    if cached:
         return cached
 
-    hits = _fetch_from_pykrx(effective)
+    hits = _fetch_tickers(effective)
+    if not hits:
+        logger.warning(
+            "종목 리스트 fetch 결과 0건 — 캐시에 저장하지 않음 (다음 호출에서 재시도)"
+        )
+        return hits
+
     try:
         _save_cache(path, hits)
     except OSError as exc:

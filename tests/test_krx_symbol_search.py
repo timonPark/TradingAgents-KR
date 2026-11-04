@@ -43,14 +43,14 @@ def fixed_as_of() -> date:
 
 @pytest.fixture
 def patched_fetch(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """pykrx 호출을 FIXTURE 로 대체. 호출 횟수를 리스트로 반환."""
+    """fetch 호출을 FIXTURE 로 대체. 호출 횟수를 리스트로 반환."""
     call_count = [0]
 
     def fake_fetch(_as_of: date) -> list[SymbolHit]:
         call_count[0] += 1
         return FIXTURE
 
-    monkeypatch.setattr(kss, "_fetch_from_pykrx", fake_fetch)
+    monkeypatch.setattr(kss, "_fetch_tickers", fake_fetch)
     return call_count
 
 
@@ -193,6 +193,43 @@ def test_cache_write_failure_does_not_break_search(
 
     hits = kss.search("삼성", as_of=fixed_as_of)
     assert len(hits) >= 1  # 저장 실패해도 결과는 돌려줘야 함
+
+
+def test_empty_fetch_result_is_not_cached(
+    isolated_cache: Path,
+    fixed_as_of: date,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#124: fetch 가 빈 리스트를 돌려주면 캐시에 저장하지 않아야 한다."""
+    call_count = [0]
+
+    def empty_fetch(_as_of: date) -> list[SymbolHit]:
+        call_count[0] += 1
+        return []
+
+    monkeypatch.setattr(kss, "_fetch_tickers", empty_fetch)
+
+    assert kss.search("삼성", as_of=fixed_as_of) == []
+    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    assert not cache_file.exists()
+
+    # 다음 호출도 fetch 를 다시 때려야 함 — 빈 캐시가 들어있지 않으므로.
+    assert kss.search("카카오", as_of=fixed_as_of) == []
+    assert call_count[0] == 2
+
+
+def test_cached_empty_file_is_treated_as_miss(
+    isolated_cache: Path,
+    fixed_as_of: date,
+    patched_fetch: list[int],
+) -> None:
+    """#124: 디스크에 남아 있는 빈 ``[]`` 캐시는 미스로 취급해 재생성."""
+    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file.write_text("[]", encoding="utf-8")
+
+    hits = kss.search("삼성", as_of=fixed_as_of)
+    assert len(hits) >= 1  # FIXTURE 로부터 재생성됨
+    assert patched_fetch[0] == 1
 
 
 # ---------------------------------------------------------------------------
