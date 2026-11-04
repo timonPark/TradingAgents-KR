@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,10 +62,38 @@ _PROGRESS_LABELS: dict[str, str] = {
     "final_trade_decision": "최종 결정",
 }
 
-# Task 14e (#110): 진행 상황 콜백의 이벤트 dict 타입 (스키마는 런타임 검증 없음,
-# 문서용). 가능한 ``type`` 값:
+# #126: LangGraph 의 node name → 사용자 라벨. state key 와 다르게 subgraph 안의
+# bull/bear/aggressive/conservative/neutral 각각이 별도 호출로 보이도록 한다.
+# 매칭 안 되는 키는 raw node name 을 그대로 쓴다 (UI 가 fallback 처리).
+_NODE_LABELS: dict[str, str] = {
+    "Market Analyst": "시장 분석가",
+    "Social Analyst": "감성 분석가",
+    "News Analyst": "뉴스 분석가",
+    "Fundamentals Analyst": "재무 분석가",
+    "Bull Researcher": "강세 리서처",
+    "Bear Researcher": "약세 리서처",
+    "Research Manager": "리서치 매니저",
+    "Trader": "트레이더",
+    "Aggressive Risk Analyst": "공격적 리스크",
+    "Conservative Risk Analyst": "보수적 리스크",
+    "Neutral Risk Analyst": "중립적 리스크",
+    "Risk Judge": "리스크 매니저",
+    "Memory Log": "메모리 로그",
+}
+
+
+def _resolve_node_label(name: str | None) -> str:
+    if not name:
+        return "알 수 없는 노드"
+    return _NODE_LABELS.get(name, name)
+
+
+# Task 14e (#110) / #126: 진행 상황 콜백의 이벤트 dict 타입. 가능한 ``type`` 값:
 #   - ``"run_start"``   : run 시작. ``ticker``, ``trade_date``.
-#   - ``"node_complete"``: 노드/분석가 완료. ``node``, ``label``.
+#   - ``"node_start"``   : 노드 (subgraph 내부 agent 포함) 실행 시작. ``node``,
+#                          ``label``, ``started_at``.
+#   - ``"node_complete"``: 노드/분석가 완료. ``node``, ``label``,
+#                          옵션 ``elapsed_ms``.
 #   - ``"done"``        : run 완료. ``decision``.
 #   - ``"error"``       : 예외. ``message``, ``traceback``.
 ProgressEvent = dict[str, Any]
@@ -416,23 +444,49 @@ class TradingAgentsGraph:
         # graph.invoke 한 번으로 끝 — 그 경우 노드 전환은 알 수 없고 run_start /
         # done 이벤트만 발화 (로컬 웹 UI 가 "노드별 라이브" 를 원하면 debug=True
         # 로 생성하도록 안내).
+        #
+        # #126: debug=True 경로에서 추가로 subgraph task 의 시작/종료를 받아
+        # 활성 agent (예: Bull/Bear/Trader) 를 node_start / node_complete 로
+        # emit 한다. 라운드 반복이나 agent 호출 대기 시간을 외부에서 관측 가능.
         if self.debug:
             # A state repeats the messages before it, so each prints once (#1027).
             final_state, printed = {}, set()
-            seen_nodes: set[str] = set()
-            for messages, state in self.stream_run(graph_input, **args):
-                for msg in messages:
-                    key = getattr(msg, "id", None) or (type(msg).__name__, getattr(msg, "content", None))
-                    if key not in printed:
-                        printed.add(key)
-                        msg.pretty_print()
-                if state is not None:
+            seen_state_nodes: set[str] = set()
+            for event in self._iter_graph_events(graph_input, **args):
+                kind = event["kind"]
+                if kind == "message":
+                    for msg in event["messages"]:
+                        key = (
+                            getattr(msg, "id", None)
+                            or (type(msg).__name__, getattr(msg, "content", None))
+                        )
+                        if key not in printed:
+                            printed.add(key)
+                            msg.pretty_print()
+                elif kind == "task_start":
+                    self._emit_progress({
+                        "type": "node_start",
+                        "node": event["name"],
+                        "label": _resolve_node_label(event["name"]),
+                        "started_at": event["started_at"],
+                    })
+                elif kind == "task_complete":
+                    self._emit_progress({
+                        "type": "node_complete",
+                        "node": event["name"],
+                        "label": _resolve_node_label(event["name"]),
+                        "elapsed_ms": event.get("elapsed_ms"),
+                    })
+                elif kind == "state_update":
+                    state = event["state"]
                     final_state.update(state)
+                    # top-level state 키 기반 보조 emit — 기존 UI 와 호환.
+                    # task 이벤트가 뜨지 않더라도 완료는 반드시 보이도록.
                     for node_key, label in _PROGRESS_LABELS.items():
-                        if node_key in seen_nodes:
+                        if node_key in seen_state_nodes:
                             continue
                         if final_state.get(node_key):
-                            seen_nodes.add(node_key)
+                            seen_state_nodes.add(node_key)
                             self._emit_progress({
                                 "type": "node_complete",
                                 "node": node_key,
@@ -465,6 +519,87 @@ class TradingAgentsGraph:
             cb(event)
         except Exception as exc:  # noqa: BLE001 — 콜백 격리가 요점
             logger.warning("progress_callback raised: %s", exc)
+
+    def _iter_graph_events(self, graph_input, **args):
+        """#126: LangGraph stream 을 **task 시작 / 완료 / state / messages** 로
+        정규화해 yield 한다.
+
+        ``stream_mode=["values","tasks"]`` + ``subgraphs=True`` 로 돌면 subgraph
+        안의 bull/bear/trader/aggressive/conservative/neutral 각 호출이 "tasks"
+        모드 chunk 로 들어온다. 같은 task 는 **시작 시 result=None, 완료 시
+        result=<dict>** 두 번 등장하므로 그걸로 start/complete 구분.
+
+        yield shape:
+        - ``{"kind": "task_start", "name": str, "started_at": ISO8601}``
+        - ``{"kind": "task_complete", "name": str, "elapsed_ms": int | None}``
+        - ``{"kind": "state_update", "state": dict}``   — top-level values
+        - ``{"kind": "message", "messages": list}``     — top-level messages
+        """
+        args = {**args, "stream_mode": ["values", "tasks"]}
+        context = run_config_context(self.config)
+        stream = context.run(self.graph.stream, graph_input, subgraphs=True, **args)
+
+        # 같은 task 가 두 번 보이므로 처음 등장 시각을 기록.
+        task_started: dict[str, datetime] = {}
+
+        try:
+            while (step := context.run(next, stream, None)) is not None:
+                namespace, mode, chunk = step
+
+                if mode == "tasks" and isinstance(chunk, dict):
+                    name = chunk.get("name")
+                    if not name:
+                        continue
+                    result = chunk.get("result")
+                    # 같은 task 이름이 여러 번 호출될 수 있음 (라운드 반복). task
+                    # ID 가 있으면 그걸 우선, 없으면 name 기반.
+                    task_id = str(chunk.get("id") or name)
+                    if result is None:
+                        # task 시작
+                        now = datetime.now(UTC)
+                        task_started[task_id] = now
+                        yield {
+                            "kind": "task_start",
+                            "name": name,
+                            "started_at": now.isoformat(),
+                        }
+                    else:
+                        started = task_started.pop(task_id, None)
+                        elapsed_ms = None
+                        if started is not None:
+                            elapsed_ms = int(
+                                (datetime.now(UTC) - started).total_seconds() * 1000
+                            )
+                        yield {
+                            "kind": "task_complete",
+                            "name": name,
+                            "elapsed_ms": elapsed_ms,
+                        }
+                        # tasks 모드의 result 도 하위 state/message 참고용으로
+                        # 반환 — 기존 stream_run 과 호환 위해.
+                        if isinstance(result, dict):
+                            report = {
+                                k: v for k, v in result.items()
+                                if k != "messages" and v
+                            }
+                            if result.get("messages"):
+                                yield {
+                                    "kind": "message",
+                                    "messages": result.get("messages", []),
+                                }
+                            if report:
+                                yield {"kind": "state_update", "state": report}
+
+                elif mode == "values" and not namespace:
+                    # top-level graph state. messages 와 state 각각 분리 emit.
+                    if chunk.get("messages"):
+                        yield {
+                            "kind": "message",
+                            "messages": chunk.get("messages", []),
+                        }
+                    yield {"kind": "state_update", "state": chunk}
+        finally:
+            context.run(stream.close)
 
     def stream_run(self, graph_input, **args):
         """Stream a run as ``(messages, state)`` pairs.

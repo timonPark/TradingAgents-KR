@@ -37,6 +37,8 @@ interface Event {
 	node?: string;
 	decision?: string;
 	message?: string;
+	started_at?: string;
+	elapsed_ms?: number;
 }
 
 function todayKst(): string {
@@ -44,6 +46,14 @@ function todayKst(): string {
 	// 로케일 중립적인 KST 환산: UTC + 9 시간.
 	const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
 	return kst.toISOString().slice(0, 10);
+}
+
+/** 초를 "7분 15초" 형식으로. */
+function formatElapsed(seconds: number): string {
+	if (seconds < 60) return `${seconds}초`;
+	const m = Math.floor(seconds / 60);
+	const s = seconds % 60;
+	return s > 0 ? `${m}분 ${s}초` : `${m}분`;
 }
 
 export default function RunPanel() {
@@ -125,7 +135,7 @@ export default function RunPanel() {
 			}
 		};
 
-		for (const type of ["run_start", "node_complete", "done", "error"]) {
+		for (const type of ["run_start", "node_start", "node_complete", "done", "error"]) {
 			source.addEventListener(type, (raw) => {
 				try {
 					const data = JSON.parse((raw as MessageEvent).data) as Event;
@@ -146,6 +156,33 @@ export default function RunPanel() {
 
 	const nodeEvents = events.filter((e) => e.type === "node_complete");
 	const doneEvent = events.find((e) => e.type === "done");
+
+	// #126: 가장 최근 node_start 이후 완료 이벤트가 없으면 "지금 돌고 있는 노드".
+	const activeEvent = (() => {
+		for (let i = events.length - 1; i >= 0; i -= 1) {
+			const e = events[i];
+			if (e.type === "node_start") return e;
+			if (e.type === "node_complete" || e.type === "done" || e.type === "error") {
+				return null;
+			}
+		}
+		return null;
+	})();
+
+	// 지금 활성 노드의 경과 시간을 1초 간격으로 리렌더링.
+	const [, forceTick] = useState(0);
+	useEffect(() => {
+		if (!activeEvent) return;
+		const timer = window.setInterval(() => forceTick((n) => n + 1), 1000);
+		return () => window.clearInterval(timer);
+	}, [activeEvent?.started_at]);
+
+	const activeElapsedSeconds = (() => {
+		if (!activeEvent?.started_at) return null;
+		const start = new Date(activeEvent.started_at).getTime();
+		if (Number.isNaN(start)) return null;
+		return Math.max(0, Math.floor((Date.now() - start) / 1000));
+	})();
 
 	const disableStart =
 		!selected ||
@@ -262,14 +299,40 @@ export default function RunPanel() {
 			{(status === "running" || status === "done" || status === "error") && (
 				<section className="run-live" aria-live="polite">
 					<h3 className="live-head">진행 상황</h3>
+
+					{/* #126: 활성 노드 패널 — 지금 돌고 있는 agent 와 경과 시간 */}
+					{activeEvent && (
+						<div className="live-active">
+							<span className="active-dot" aria-hidden="true" />
+							<div className="active-body">
+								<span className="active-label">
+									{activeEvent.label ?? activeEvent.node}
+								</span>
+								<span className="active-meta">
+									{activeElapsedSeconds != null
+										? `응답 대기 중 · ${formatElapsed(activeElapsedSeconds)}`
+										: "응답 대기 중"}
+								</span>
+							</div>
+						</div>
+					)}
+
 					<ol className="live-steps">
 						{nodeEvents.map((event, i) => (
 							<li key={`${event.node}-${i}`} className="live-step is-done">
 								<span className="step-dot" aria-hidden="true" />
-								<span className="step-label">{event.label ?? event.node}</span>
+								<span className="step-label">
+									{event.label ?? event.node}
+									{typeof event.elapsed_ms === "number" && (
+										<span className="step-elapsed">
+											{" · "}
+											{formatElapsed(Math.round(event.elapsed_ms / 1000))}
+										</span>
+									)}
+								</span>
 							</li>
 						))}
-						{status === "running" && (
+						{status === "running" && !activeEvent && (
 							<li className="live-step is-live">
 								<span className="step-dot" aria-hidden="true" />
 								<span className="step-label">진행 중…</span>

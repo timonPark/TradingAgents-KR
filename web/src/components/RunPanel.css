@@ -104,6 +104,55 @@
 	margin: 0 0 12px;
 }
 
+/* #126: 활성 노드 하이라이트 패널 */
+.live-active {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px 16px;
+	margin-bottom: 16px;
+	border: 1px solid var(--ks-patina);
+	border-radius: 6px;
+	background: oklch(70% 0.12 188 / 0.08);
+}
+
+.active-dot {
+	flex: 0 0 auto;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: var(--ks-patina);
+	animation: pulse 1.6s ease-in-out infinite;
+}
+
+.active-body {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.active-label {
+	font-family: var(--ks-font);
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--ks-ink);
+}
+
+.active-meta {
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-mono-size);
+	color: var(--ks-text-muted);
+	letter-spacing: 0.04em;
+}
+
+.step-elapsed {
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-mono-size);
+	color: var(--ks-text-faint);
+	letter-spacing: 0.04em;
+}
+
 .live-steps {
 	list-style: none;
 	margin: 0;

@@ -34,6 +34,11 @@ class RunState:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decision: str | None = None
     error: str | None = None
+    # #126: 지금 돌고 있는 agent/node 의 사용자 라벨. node_start 에서 세팅되고
+    # node_complete/done/error 에서 해제. 폴링 응답 (``GET /api/runs/{id}``) 에
+    # 포함되어 UI 가 "지금 어떤 호출을 기다리는지" 즉시 알 수 있게 한다.
+    active_node: str | None = None
+    active_node_started_at: datetime | None = None
     # 완료된 이벤트들의 순서가 유지된 히스토리. 늦게 붙는 SSE 클라이언트가
     # 처음부터 replay 할 수 있도록 보관.
     events: list[Event] = field(default_factory=list)
@@ -83,12 +88,28 @@ class RunStore:
         event_type = event.get("type")
         if event_type == "run_start":
             state.status = "running"
+        elif event_type == "node_start":
+            # #126: 지금 돌고 있는 노드/agent 를 state 에 반영.
+            state.active_node = event.get("label") or event.get("node")
+            started_at = event.get("started_at")
+            if started_at:
+                try:
+                    state.active_node_started_at = datetime.fromisoformat(started_at)
+                except (TypeError, ValueError):
+                    state.active_node_started_at = None
+        elif event_type == "node_complete":
+            state.active_node = None
+            state.active_node_started_at = None
         elif event_type == "done":
             state.status = "done"
+            state.active_node = None
+            state.active_node_started_at = None
             if "decision" in event:
                 state.decision = event["decision"]
         elif event_type == "error":
             state.status = "error"
+            state.active_node = None
+            state.active_node_started_at = None
             state.error = event.get("message")
 
         queue = self._queues.get(run_id)
