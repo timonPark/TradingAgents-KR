@@ -132,11 +132,11 @@ TauricResearch/TradingAgents 프레임워크의 핵심 추론 엔진(LangGraph �
 ### Task 7: 거시경제 및 뉴스 도구 현지화
 * **대상 파일:**
   * 삭제: `tradingagents/dataflows/vendors/reddit.py`, `tradingagents/dataflows/vendors/stocktwits.py`, `tradingagents/dataflows/vendors/fred.py`, `tradingagents/dataflows/vendors/polymarket.py`
-  * 신규: `tradingagents/dataflows/vendors/naver_news.py`, `tradingagents/dataflows/vendors/ecos.py`
+  * 신규: `tradingagents/dataflows/vendors/naver_news.py`, `tradingagents/dataflows/vendors/naver_api_hub.py`, `tradingagents/dataflows/vendors/ecos.py`
   * 수정: `tradingagents/dataflows/router.py`, 뉴스 분석가 (`tradingagents/agents/analysts/news_analyst.py`) 및 감성 분석가 (`tradingagents/agents/analysts/sentiment_analyst.py`) 의 사전조회 로직
 * **작업 내용:**
   * Reddit, StockTwits, FRED, Polymarket 호출부를 삭제합니다.
-  * 네이버 금융 주요 뉴스 헤드라인 크롤러(`naver_news.py`)를 작성해 노이즈(광고성 기사)를 제거하고 주요 이슈 5건을 요약 전달합니다.
+  * 네이버 뉴스 vendor 를 작성해 노이즈(광고성 기사)를 제거하고 종목 뉴스를 전달합니다. (#138 갱신: 종목 뉴스는 NAVER API HUB 뉴스 검색 `naver_api_hub.py` 를 1순위, 네이버 증권 JSON `naver_news.py` 를 폴백으로 쓰는 체인 `naver_api_hub,naver_news`. 기존 `finance.naver.com` HTML 크롤은 폐지(HTTP 410)되어 제거. 주요뉴스(`get_global_news`)는 엔드포인트 폐지로 현재 `VendorUnavailableError` — 별도 이슈. 수집 실패는 "뉴스 없음"이 아니라 `DATA_UNAVAILABLE` 로 보고.)
   * 거시 지표는 한국은행 ECOS Open API(`ecos.py`) 호출 또는 환율·기준금리 정적 매핑으로 교체합니다.
 
 ### Task 8: 한국 거래소 캘린더 매핑 (백테스트 시점 격리)

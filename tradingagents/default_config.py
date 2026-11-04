@@ -131,8 +131,10 @@ def build_default_config() -> dict:
             # Task 5 (#46): KRX 상장사의 재무/공시는 금융감독원 Open DART 단일 vendor.
             # 상류의 SEC EDGAR / Alpha Vantage / Yahoo fundamentals 는 전부 제거됨.
             "fundamental_data": "dart",
-            # Task 7c (#64): 네이버 금융 뉴스 단일 vendor (KRX 전용).
-            "news_data": "naver_news",
+            # Task 7c (#64) + #138: KRX 전용 뉴스. NAVER API HUB(공식, 키 필요)를
+            # 1순위로, 키가 없거나 실패하면 네이버 증권 JSON 으로 폴백.
+            # 주요뉴스(get_global_news)는 naver_news 만 지원 (현재 엔드포인트 폐지).
+            "news_data": "naver_api_hub,naver_news",
             # Task 7d (#65): KRX 전용 하드 포크. 한국은행 ECOS 단일 vendor
             # (needs ECOS_API_KEY).
             "macro_data": "ecos",

@@ -15,6 +15,7 @@ from tradingagents.dataflows.vendors.dart import (
     get_insider_transactions as get_dart_insider_transactions,
 )
 from tradingagents.dataflows.vendors.ecos import get_macro_data as get_ecos_macro_data
+from tradingagents.dataflows.vendors.naver_api_hub import get_news as get_naver_api_hub_news
 from tradingagents.dataflows.vendors.naver_news import (
     get_global_news as get_naver_global_news,
     get_news as get_naver_news,
@@ -113,6 +114,9 @@ VENDOR_METHODS = {
     },
     # news_data — Task 7c (#64): KRX 전용 네이버 금융 뉴스 단일 vendor
     "get_news": {
+        # #138: API HUB(공식) 1순위, 네이버 증권 JSON 대체. 체인은 default_config 의
+        # news_data 에서 ``naver_api_hub,naver_news`` 로 지정.
+        "naver_api_hub": get_naver_api_hub_news,
         "naver_news": get_naver_news,
     },
     "get_global_news": {

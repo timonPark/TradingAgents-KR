@@ -8,7 +8,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
+from tradingagents.dataflows.errors import VendorUnavailableError
 from tradingagents.dataflows.vendors import naver_news
 
 
@@ -21,38 +23,43 @@ def _ok_response(html: str, encoding: str = "utf-8"):
     return resp
 
 
-# ---------- 종목 뉴스 파싱 ----------
+# ---------- 종목 뉴스 (네이버 증권 JSON, #138) ----------
 
-_ITEM_NEWS_HTML = """
-<html><body>
-<table class="type5">
-<tbody>
-  <tr>
-    <td class="title"><a href="/item/news_read.naver?article_id=001">삼성전자 4분기 실적 호조</a></td>
-    <td class="info">머니투데이</td>
-    <td class="date">2026.11.03 14:30</td>
-  </tr>
-  <tr>
-    <td class="title"><a href="/item/news_read.naver?article_id=002">[포토] 삼성전자 신제품 발표회</a></td>
-    <td class="info">연합뉴스</td>
-    <td class="date">2026.11.03 10:00</td>
-  </tr>
-  <tr>
-    <td class="title"><a href="/item/news_read.naver?article_id=003">삼성전자, 반도체 투자 확대</a></td>
-    <td class="info">한국경제</td>
-    <td class="date">2026.11.01 09:15</td>
-  </tr>
-</tbody>
-</table>
-</body></html>
-"""
+def _json_response(payload, status=200):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = payload
+    return resp
+
+
+def _item(title, stamp, office="머니투데이", article_id="001"):
+    return {
+        "id": f"015{article_id}",
+        "officeName": office,
+        "datetime": stamp,
+        "title": title,
+        "titleFull": title,
+        "mobileNewsUrl": f"https://n.news.naver.com/mnews/article/015/{article_id}",
+    }
+
+
+def _clusters(*items):
+    """증권 JSON 은 ``[{"total": N, "items": [...]}, ...]`` 클러스터 리스트."""
+    return [{"total": 1, "items": [i]} for i in items]
+
+
+_STOCK_NEWS_JSON = _clusters(
+    _item("삼성전자 4분기 실적 호조", "202611031430", article_id="001"),
+    _item("[포토] 삼성전자 신제품 발표회", "202611031000", office="연합뉴스", article_id="002"),
+    _item("삼성전자, 반도체 투자 확대", "202611010915", office="한국경제", article_id="003"),
+)
 
 
 @pytest.mark.unit
-def test_get_news_filters_date_range_and_noise(monkeypatch):
+def test_get_news_filters_date_range_and_noise():
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response(_ITEM_NEWS_HTML),
+        return_value=_json_response(_STOCK_NEWS_JSON),
     ):
         out = naver_news.get_news("005930", "2026-11-02", "2026-11-03")
 
@@ -64,16 +71,28 @@ def test_get_news_filters_date_range_and_noise(monkeypatch):
 
 
 @pytest.mark.unit
-def test_get_news_renders_markdown_header(monkeypatch):
+def test_get_news_renders_markdown_header():
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response(_ITEM_NEWS_HTML),
+        return_value=_json_response(_STOCK_NEWS_JSON),
     ):
         out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
     assert "## 005930 뉴스 (2026-11-01 ~ 2026-11-03)" in out
     assert "머니투데이" in out
-    assert "finance.naver.com" in out
+    assert "n.news.naver.com" in out
+
+
+@pytest.mark.unit
+def test_get_news_unescapes_html_entities():
+    payload = _clusters(_item("&quot;코스피 반등&quot; 전망", "202611031430"))
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        return_value=_json_response(payload),
+    ):
+        out = naver_news.get_news("005930", "2026-11-03", "2026-11-03")
+    assert '"코스피 반등" 전망' in out
+    assert "&quot;" not in out
 
 
 @pytest.mark.unit
@@ -83,34 +102,54 @@ def test_get_news_handles_bad_date_format():
 
 
 @pytest.mark.unit
-def test_get_news_handles_empty_html(monkeypatch):
+def test_get_news_empty_response_means_no_news():
+    """정상 응답인데 기사가 없을 때만 "뉴스 없음" — 실패와 구분된다."""
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response("<html><body>no table</body></html>"),
+        return_value=_json_response([]),
     ):
         out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
     assert "해당 기간 뉴스가 없습니다" in out
 
 
 @pytest.mark.unit
-def test_get_news_handles_http_error(monkeypatch):
-    err_resp = MagicMock(status_code=500, text="", encoding=None, apparent_encoding="utf-8")
+@pytest.mark.parametrize("status", [410, 404, 500])
+def test_get_news_http_error_raises_not_empty(status):
+    """폐지(410)·서버 오류는 "뉴스 0건" 이 아니라 실패 (#138)."""
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=err_resp,
-    ):
-        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
-    assert "해당 기간 뉴스가 없습니다" in out
+        return_value=_json_response(None, status=status),
+    ), pytest.raises(VendorUnavailableError, match=str(status)):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
 
 @pytest.mark.unit
-def test_get_news_handles_network_exception(monkeypatch):
+def test_get_news_network_exception_raises():
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get",
-        side_effect=ConnectionError("boom"),
-    ):
-        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
-    assert "해당 기간 뉴스가 없습니다" in out
+        side_effect=requests.ConnectionError("boom"),
+    ), pytest.raises(VendorUnavailableError):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("payload", [{"error": "x"}, "<html>spa</html>"])
+def test_get_news_unexpected_structure_raises(payload):
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        return_value=_json_response(payload),
+    ), pytest.raises(VendorUnavailableError):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+
+@pytest.mark.unit
+def test_get_news_non_json_body_raises():
+    resp = MagicMock(status_code=200)
+    resp.json.side_effect = ValueError("not json")
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get", return_value=resp,
+    ), pytest.raises(VendorUnavailableError, match="JSON"):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
 
 # ---------- 날짜 파싱 ----------
@@ -218,6 +257,27 @@ def test_get_global_news_handles_empty(monkeypatch):
 
 
 @pytest.mark.unit
+def test_get_global_news_redirect_to_other_host_raises():
+    """mainnews 가 stock.naver.com 으로 리다이렉트되면 "주요뉴스 없음" 이 아니라 실패."""
+    resp = _ok_response("<html>spa</html>")
+    resp.url = "https://stock.naver.com/news/mainnews"
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get", return_value=resp,
+    ), pytest.raises(VendorUnavailableError, match="stock.naver.com"):
+        naver_news.get_global_news("2026-11-03")
+
+
+@pytest.mark.unit
+def test_get_global_news_http_error_raises():
+    resp = _ok_response("")
+    resp.status_code = 410
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get", return_value=resp,
+    ), pytest.raises(VendorUnavailableError, match="410"):
+        naver_news.get_global_news("2026-11-03")
+
+
+@pytest.mark.unit
 def test_get_global_news_handles_bad_date():
     out = naver_news.get_global_news("not-a-date")
     assert "잘못된 날짜 형식" in out
@@ -244,23 +304,13 @@ def test_get_global_news_dedupes_titles(monkeypatch):
 
 
 @pytest.mark.integration
-def test_live_item_news_for_005930_returns_markdown_header():
-    """실제 네이버 금융에서 005930 뉴스를 크롤 — 최근 3일 범위."""
+def test_live_item_news_for_001210_returns_articles():
+    """실제 네이버 증권 JSON — 최근 30일에 기사가 1건 이상 (0건 위장 회귀 방지, #138)."""
     from datetime import datetime, timedelta
 
     today = datetime.now()
     end = today.strftime("%Y-%m-%d")
-    start = (today - timedelta(days=3)).strftime("%Y-%m-%d")
-    out = naver_news.get_news("005930", start, end)
-    # 네트워크 성공 또는 특정 범위에 뉴스 없음 두 경우 모두 Markdown 헤더는 포함.
-    assert f"## 005930 뉴스 ({start} ~ {end})" in out
-
-
-@pytest.mark.integration
-def test_live_global_news_returns_markdown_header():
-    """실제 네이버 금융 주요뉴스 — 최근 1일."""
-    from datetime import datetime
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    out = naver_news.get_global_news(today, look_back_days=1, limit=5)
-    assert "## 주요뉴스" in out
+    start = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+    out = naver_news.get_news("001210", start, end)
+    assert f"## 001210 뉴스 ({start} ~ {end})" in out
+    assert "해당 기간 뉴스가 없습니다" not in out

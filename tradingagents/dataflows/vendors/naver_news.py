@@ -1,34 +1,49 @@
-"""네이버 금융 뉴스 vendor — KRX 종목·시장 뉴스.
+"""네이버 증권 뉴스 vendor — KRX 종목·시장 뉴스.
 
-Task 7a (#62): 상류 Yahoo/Alpha Vantage 뉴스 vendor 를 네이버 금융 HTML 파싱으로
-교체. API 키 없이 공개 페이지에서 뉴스 헤드라인/날짜/출처/URL 을 추출.
+Task 7a (#62): 상류 Yahoo/Alpha Vantage 뉴스 vendor 를 네이버 금융 뉴스로 교체.
+API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추출.
 
-### URL 패턴
-- 종목별 뉴스: ``https://finance.naver.com/item/news_news.naver?code={ticker}&page={N}``
-- 주요뉴스: ``https://finance.naver.com/news/mainnews.naver?date={YYYYMMDD}&page={N}``
+### 엔드포인트 (#138 갱신)
+- 종목별 뉴스: ``https://m.stock.naver.com/api/news/stock/{ticker}?pageSize=N&page=P``
+  (JSON, 최신순, 비공식 경로). 기존 ``finance.naver.com/item/news_news.naver`` 는
+  2026-11 현재 HTTP 410 으로 폐지됐다.
+- 주요뉴스: ``https://finance.naver.com/news/mainnews.naver`` — ``stock.naver.com``
+  으로 리다이렉트되어 더는 동작하지 않는다. 호출하면 ``VendorUnavailableError``.
+  대체 경로는 별도 이슈.
+
+### 실패 처리
+"뉴스 0건" 과 "수집 실패" 를 구분한다. HTTP 오류·폐지(410)·리다이렉트·JSON 이
+아닌 응답은 ``VendorUnavailableError`` 로 올려 라우터가 ``DATA_UNAVAILABLE`` 로
+보고하게 한다. 정상 응답이 비어 있을 때만 "뉴스 없음".
 
 ### 반환 shape
 상류 ``yahoo.news.get_news`` / ``alpha_vantage.news.get_news`` 와 동일하게
 사람이 읽기 쉬운 Markdown 문자열. 분석가가 바로 프롬프트에 주입 가능.
 
 ### 네트워크 호출
-유닛 테스트는 `requests.get` 을 전부 mock 함. 통합 테스트는 Task 11 로 분산.
+유닛 테스트는 `requests.get` 을 전부 mock 함. 통합 테스트는 ``-m integration``.
 """
 
 from __future__ import annotations
 
+import html as _html
 import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
+from tradingagents.dataflows.errors import VendorUnavailableError
+
 logger = logging.getLogger(__name__)
 
 _BASE = "https://finance.naver.com"
+_STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock"
+_STOCK_NEWS_PAGE_SIZE = 20
+_STOCK_NEWS_MAX_PAGES = 5
 _HEADERS = {
     # 네이버 금융은 User-Agent 가 없으면 가끔 403 을 돌려줌. 일반 브라우저 UA 로.
     "User-Agent": (
@@ -51,24 +66,72 @@ _NOISE_KEYWORDS = (
 )
 
 
-def _fetch_html(url: str) -> str | None:
-    """HTTP GET + 공통 에러 처리. 실패 시 None.
+def _fetch_html(url: str) -> str:
+    """HTTP GET + 공통 에러 처리. 실패 시 ``VendorUnavailableError``.
 
-    통합 테스트 밖에서는 네트워크 호출을 하지 않도록 vendor 호출부에서 mocking.
+    "수집 실패" 를 빈 결과("뉴스 없음") 로 위장하지 않는다 (#138): 폐지된 URL 이
+    410 이나 다른 호스트로의 리다이렉트로 응답해도 호출자가 알 수 있어야 한다.
     """
     try:
         resp = requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
-    except Exception as exc:  # noqa: BLE001 — 네트워크 에러 흡수
-        logger.warning("naver_news HTTP 실패 %s: %s", url, exc)
-        return None
+    except requests.RequestException as exc:
+        raise VendorUnavailableError(f"네이버 요청 실패 ({type(exc).__name__}): {url}") from None
     if resp.status_code != 200:
-        logger.warning("naver_news status=%s %s", resp.status_code, url)
-        return None
+        raise VendorUnavailableError(f"네이버 HTTP {resp.status_code}: {url}")
+    final_host = urlparse(str(getattr(resp, "url", "") or url)).netloc
+    if final_host and final_host != urlparse(url).netloc:
+        raise VendorUnavailableError(f"네이버 엔드포인트가 {final_host} 로 이전됨: {url}")
     # 네이버 금융은 euc-kr 과 utf-8 혼재. 응답 encoding 가이드가 가끔 틀려
     # chardet 결과를 우선 사용.
     if resp.encoding is None or resp.encoding.lower() in ("iso-8859-1", "ascii"):
         resp.encoding = resp.apparent_encoding
     return resp.text
+
+
+def _fetch_stock_news_json(ticker: str, page: int) -> list[dict[str, Any]]:
+    """네이버 증권 종목 뉴스 JSON 한 페이지 → 평탄화된 기사 dict 리스트.
+
+    응답은 ``[{"total": N, "items": [...]}, ...]`` 형태(클러스터 리스트).
+    실패하거나 구조가 다르면 ``VendorUnavailableError``.
+    """
+    url = f"{_STOCK_NEWS_API}/{ticker}"
+    params = {"pageSize": _STOCK_NEWS_PAGE_SIZE, "page": page}
+    try:
+        resp = requests.get(url, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        raise VendorUnavailableError(f"네이버 증권 요청 실패 ({type(exc).__name__})") from None
+    if resp.status_code != 200:
+        raise VendorUnavailableError(f"네이버 증권 HTTP {resp.status_code}")
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise VendorUnavailableError("네이버 증권 응답이 JSON 이 아닙니다") from None
+    if not isinstance(payload, list):
+        raise VendorUnavailableError("네이버 증권 응답 구조가 예상과 다릅니다")
+    items: list[dict[str, Any]] = []
+    for cluster in payload:
+        if isinstance(cluster, dict):
+            items.extend(i for i in cluster.get("items") or [] if isinstance(i, dict))
+    return items
+
+
+def _parse_stock_news_item(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """증권 JSON 기사 → ``{title, source, date, url}``. 제목이 없으면 None."""
+    title = _html.unescape(str(raw.get("titleFull") or raw.get("title") or "")).strip()
+    if not title:
+        return None
+    date = None
+    stamp = str(raw.get("datetime") or "")
+    try:
+        date = datetime.strptime(stamp, "%Y%m%d%H%M")
+    except ValueError:
+        date = None
+    return {
+        "title": title,
+        "source": str(raw.get("officeName") or ""),
+        "date": date,
+        "url": str(raw.get("mobileNewsUrl") or ""),
+    }
 
 
 def _parse_naver_date(text: str) -> datetime | None:
@@ -107,42 +170,6 @@ def _is_noise(title: str) -> bool:
     """노이즈 (광고/묶음/인사) 기사 걸러내기."""
     t = title.strip()
     return any(k in t for k in _NOISE_KEYWORDS)
-
-
-def _parse_item_news_table(html: str) -> list[dict[str, Any]]:
-    """종목별 뉴스 테이블에서 (title, source, date, url) 리스트 추출.
-
-    네이버 금융 ``item/news_news.naver`` 테이블 구조:
-    - `tbody > tr` 에 뉴스 1건 (관련뉴스 묶음은 ``class='relation_tit'``)
-    - ``td.title`` → `a` 에 제목·링크
-    - ``td.info`` → 정보제공 (언론사)
-    - ``td.date`` → 날짜 문자열
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    items: list[dict[str, Any]] = []
-    for row in soup.select("table.type5 tbody tr, table.type_5 tbody tr"):
-        title_td = row.select_one("td.title")
-        info_td = row.select_one("td.info")
-        date_td = row.select_one("td.date")
-        if not (title_td and date_td):
-            continue
-        link = title_td.find("a")
-        if link is None:
-            continue
-        title = link.get_text(strip=True)
-        href = link.get("href", "")
-        if href and not href.startswith("http"):
-            href = urljoin(_BASE, href)
-        source = info_td.get_text(strip=True) if info_td else ""
-        date = _parse_naver_date(date_td.get_text(strip=True))
-        if title and not _is_noise(title):
-            items.append({
-                "title": title,
-                "source": source,
-                "date": date,
-                "url": href,
-            })
-    return items
 
 
 def _parse_main_news(html: str) -> list[dict[str, Any]]:
@@ -208,10 +235,11 @@ def _in_date_range(item_date: datetime | None, start: datetime, end: datetime) -
 
 
 def get_news(ticker: str, start_date: str, end_date: str) -> str:
-    """KRX 종목의 지정 기간 뉴스를 네이버 금융에서 가져와 Markdown 으로.
+    """KRX 종목의 지정 기간 뉴스를 네이버 증권에서 가져와 Markdown 으로.
 
     상류 ``get_news(ticker, start_date, end_date)`` 와 shape 호환.
     종목 뉴스는 최신 순으로 반환되므로 날짜 범위를 벗어나면 조기 종료.
+    수집 실패는 ``VendorUnavailableError`` — "뉴스 없음" 으로 위장하지 않는다.
     """
     start_dt = _parse_ymd(start_date)
     end_dt = _parse_ymd(end_date)
@@ -221,22 +249,25 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
     end_dt = end_dt.replace(hour=23, minute=59)
 
     all_items: list[dict[str, Any]] = []
-    for page in range(1, 6):  # 최대 5페이지 (약 100개)
-        url = f"{_BASE}/item/news_news.naver?code={ticker}&page={page}"
-        html = _fetch_html(url)
-        if html is None:
+    seen: set[str] = set()
+    for page in range(1, _STOCK_NEWS_MAX_PAGES + 1):
+        raw_items = _fetch_stock_news_json(ticker, page)
+        if not raw_items:
             break
-        items = _parse_item_news_table(html)
-        if not items:
-            break
-        # 범위 내 아이템만
-        in_range = [i for i in items if _in_date_range(i["date"], start_dt, end_dt)]
-        all_items.extend(in_range)
+        parsed = [p for p in (_parse_stock_news_item(r) for r in raw_items) if p]
+        for item in parsed:
+            if _is_noise(item["title"]) or item["title"] in seen:
+                continue
+            if not _in_date_range(item["date"], start_dt, end_dt):
+                continue
+            seen.add(item["title"])
+            all_items.append(item)
         # 가장 오래된 아이템이 start 보다 이전이면 조기 종료
-        oldest = min((i["date"] for i in items if i["date"]), default=None)
+        oldest = min((i["date"] for i in parsed if i["date"]), default=None)
         if oldest is not None and oldest < start_dt:
             break
 
+    all_items.sort(key=lambda i: i["date"] or datetime.min, reverse=True)
     return _format_news_markdown(ticker, start_date, end_date, all_items)
 
 
@@ -259,9 +290,7 @@ def get_global_news(as_of_date: str, look_back_days: int | None = None, limit: i
         day_str = day.strftime("%Y%m%d")
         for page in range(1, 4):  # 최대 3페이지/일
             url = f"{_BASE}/news/mainnews.naver?date={day_str}&page={page}"
-            html = _fetch_html(url)
-            if html is None:
-                break
+            html = _fetch_html(url)  # 폐지·리다이렉트면 VendorUnavailableError
             items = _parse_main_news(html)
             if not items:
                 break
