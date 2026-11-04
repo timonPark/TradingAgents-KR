@@ -1,7 +1,7 @@
 # [#138] 네이버 뉴스 엔드포인트 폐지 대응 (NAVER API HUB + 네이버 증권 JSON)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/138
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/141
 - 브랜치: fix/138-naver-news-api-hub
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
