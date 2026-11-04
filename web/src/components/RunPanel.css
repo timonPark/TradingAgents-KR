@@ -164,11 +164,17 @@
 
 .live-step {
 	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 8px 10px;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 12px;
 	border-radius: 4px;
 	border-left: 2px solid transparent;
+}
+
+.step-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
 }
 
 .live-step.is-done {
@@ -206,6 +212,118 @@
 .step-label {
 	color: var(--ks-text);
 	font-size: 0.9375rem;
+}
+
+/* #132: 노드 완료 시 리포트 본문 (details/summary 아코디언) */
+.step-report {
+	margin-left: 20px;
+	border-left: 2px solid var(--ks-rule);
+	padding-left: 14px;
+}
+
+.step-report > summary {
+	cursor: pointer;
+	font-family: var(--ks-font);
+	font-size: var(--ks-type-mono-size);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--ks-text-muted);
+	padding: 4px 0;
+	list-style: none;
+	user-select: none;
+}
+
+.step-report > summary::-webkit-details-marker { display: none; }
+.step-report > summary::before {
+	content: "▸ ";
+	display: inline-block;
+	margin-right: 4px;
+	transition: transform 120ms ease;
+}
+.step-report[open] > summary::before {
+	content: "▾ ";
+}
+
+.step-report-body {
+	padding: 8px 0 12px;
+	font-family: var(--ks-font);
+	font-size: 0.9375rem;
+	line-height: 1.7;
+	color: var(--ks-text);
+}
+
+.step-report-body h1,
+.step-report-body h2,
+.step-report-body h3 {
+	font-family: var(--ks-font-display);
+	font-weight: 300;
+	color: var(--ks-ink);
+	margin-top: 16px;
+	margin-bottom: 6px;
+	line-height: 1.2;
+}
+
+.step-report-body h1 { font-size: 1.25rem; }
+.step-report-body h2 { font-size: 1.125rem; }
+.step-report-body h3 { font-size: 1rem; }
+
+.step-report-body p { margin: 6px 0; }
+
+.step-report-body ul,
+.step-report-body ol {
+	padding-left: 1.4em;
+}
+
+.step-report-body li { margin: 3px 0; }
+
+.step-report-body code {
+	font-family: var(--ks-font);
+	background: var(--ks-paper-deep);
+	padding: 1px 6px;
+	border-radius: 3px;
+	font-size: 0.9375em;
+}
+
+.step-report-body pre {
+	background: var(--ks-instrument-deep);
+	color: var(--ks-instrument-text);
+	padding: 12px;
+	border-radius: 6px;
+	overflow-x: auto;
+	font-size: 0.8125rem;
+}
+
+.step-report-body pre code {
+	background: transparent;
+	color: inherit;
+	padding: 0;
+}
+
+.step-report-body blockquote {
+	border-left: 3px solid var(--ks-kinpaku);
+	margin: 10px 0;
+	padding: 2px 12px;
+	color: var(--ks-text-muted);
+}
+
+.step-report-body table {
+	border-collapse: collapse;
+	margin: 10px 0;
+	width: 100%;
+	font-size: 0.9375rem;
+}
+
+.step-report-body th,
+.step-report-body td {
+	border: 1px solid var(--ks-rule);
+	padding: 6px 10px;
+	text-align: left;
+}
+
+.step-report-body th {
+	background: var(--ks-paper-deep);
+	color: var(--ks-ink);
+	font-weight: 600;
 }
 
 .live-decision {

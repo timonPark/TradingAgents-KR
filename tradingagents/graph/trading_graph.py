@@ -95,6 +95,43 @@ def _resolve_node_label(name: str | None) -> str:
     return _NODE_LABELS.get(name, name)
 
 
+# #132: 토론 state (investment_debate_state 등) 안쪽의 사람이 읽을 만한 필드.
+# 숫자/카운트 같은 메타 필드는 UI 노출 안 함.
+_DEBATE_FIELD_LABELS: dict[str, str] = {
+    "bull_history": "강세 논증",
+    "bear_history": "약세 논증",
+    "history": "토론 기록",
+    "current_response": "최근 발언",
+    "judge_decision": "매니저 판정",
+    "aggressive_history": "공격적 리스크 관점",
+    "conservative_history": "보수적 리스크 관점",
+    "neutral_history": "중립적 리스크 관점",
+    "current_aggressive_response": "공격적 리스크 최근 발언",
+    "current_conservative_response": "보수적 리스크 최근 발언",
+    "current_neutral_response": "중립적 리스크 최근 발언",
+    "latest_speaker": "최근 발언자",
+}
+
+
+def _render_report_content(value) -> str:
+    """노드 결과 state 를 사용자 표시용 마크다운으로 평탄화.
+
+    - 문자열이면 그대로 (분석가 리포트, 트레이더 계획, 최종 결정 본문 등)
+    - dict (debate_state 등) 면 알려진 필드만 소제목과 함께 마크다운으로 결합
+    - 그 외는 빈 문자열 (UI 에 안 보임)
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, label in _DEBATE_FIELD_LABELS.items():
+            v = value.get(key)
+            if isinstance(v, str) and v.strip():
+                parts.append(f"### {label}\n\n{v.strip()}")
+        return "\n\n".join(parts)
+    return ""
+
+
 # Task 14e (#110) / #126: 진행 상황 콜백의 이벤트 dict 타입. 가능한 ``type`` 값:
 #   - ``"run_start"``   : run 시작. ``ticker``, ``trade_date``.
 #   - ``"node_start"``   : 노드 (subgraph 내부 agent 포함) 실행 시작. ``node``,
@@ -492,12 +529,17 @@ class TradingAgentsGraph:
                     for node_key, label in _PROGRESS_LABELS.items():
                         if node_key in seen_state_nodes:
                             continue
-                        if final_state.get(node_key):
+                        value = final_state.get(node_key)
+                        if value:
                             seen_state_nodes.add(node_key)
+                            # #132: 노드가 끝나면 그 분석가/리서처의 **리포트 본문**
+                            # 을 함께 보내 UI 가 즉시 렌더링할 수 있게 한다. 사용자가
+                            # 중간 결과를 못 보고 수십 분 기다리던 문제의 해소.
                             self._emit_progress({
                                 "type": "node_complete",
                                 "node": node_key,
                                 "label": label,
+                                "content": _render_report_content(value),
                             })
         else:
             final_state = self.graph.invoke(graph_input, **args)

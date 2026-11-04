@@ -57,6 +57,8 @@ class RunSnapshot(BaseModel):
     # null. active_node_started_at 는 ISO8601 (UTC).
     active_node: str | None = None
     active_node_started_at: str | None = None
+    # #132: 노드별 리포트 본문. 폴링만으로도 지금까지의 분석 결과 전체 복구.
+    reports: dict[str, str] = Field(default_factory=dict)
 
 
 def _snapshot(state: RunState) -> RunSnapshot:
@@ -75,6 +77,7 @@ def _snapshot(state: RunState) -> RunSnapshot:
             if state.active_node_started_at is not None
             else None
         ),
+        reports=dict(state.reports),
     )
 
 
