@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import re
-import zipfile
 from pathlib import Path
 from typing import Literal
 
@@ -111,15 +108,10 @@ def get_single(report_id: str) -> ReportTreeOut:
 
 
 # ---------------------------------------------------------------------------
-# #128: 다운로드 엔드포인트 (md / html / zip)
+# #128: 다운로드 엔드포인트 (md / html / pdf)
 # ---------------------------------------------------------------------------
 
-DownloadFormat = Literal["md", "html", "zip"]
-
-# Zip 트리에 포함할 하위 폴더 — 14f 와 동일 화이트리스트. complete_report.*
-# 는 루트에 있으므로 별도.
-_ZIP_FOLDERS = ("analysts", "research", "trading", "risk", "portfolio")
-_ALLOWED_FILE_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.(?:md|html)$")
+DownloadFormat = Literal["md", "html", "pdf"]
 
 
 def _safe_report_dir(report_id: str) -> Path:
@@ -154,7 +146,7 @@ def download_report(report_id: str, format: DownloadFormat = "md") -> Response:
 
     - ``md``:   ``complete_report.md`` 원본
     - ``html``: ``complete_report.html`` 원본 (브라우저에서 바로 열람)
-    - ``zip``:  리포트 디렉터리의 모든 ``.md``/``.html`` 을 묶음
+    - ``pdf``:  ``complete_report.html`` 을 WeasyPrint 로 PDF 변환
     """
     report_dir = _safe_report_dir(report_id)
     base = f"trading_report_{report_id}"
@@ -183,27 +175,35 @@ def download_report(report_id: str, format: DownloadFormat = "md") -> Response:
             headers={"Content-Disposition": _attachment(f"{base}.html")},
         )
 
-    # zip — 메모리 BytesIO, 작은 리포트라 디스크 스풀 불필요.
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 루트의 complete_report.{md,html}
-        for name in ("complete_report.md", "complete_report.html"):
-            src = report_dir / name
-            if src.is_file():
-                zf.write(src, arcname=name)
-        # 섹션 폴더 — 화이트리스트 폴더 안의 .md/.html 만
-        for folder in _ZIP_FOLDERS:
-            folder_dir = report_dir / folder
-            if not folder_dir.is_dir():
-                continue
-            for src in sorted(folder_dir.iterdir()):
-                if not src.is_file():
-                    continue
-                if not _ALLOWED_FILE_NAME.match(src.name):
-                    continue
-                zf.write(src, arcname=f"{folder}/{src.name}")
+    # pdf — WeasyPrint 로 complete_report.html 변환.
+    src = report_dir / "complete_report.html"
+    if not src.is_file():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "complete_report.html not found (PDF source)"
+        )
+    pdf_bytes = _render_pdf(src)
     return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": _attachment(f"{base}.zip")},
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _attachment(f"{base}.pdf")},
     )
+
+
+def _render_pdf(html_path: Path) -> bytes:
+    """WeasyPrint 로 complete_report.html → PDF 바이너리.
+
+    weasyprint 는 ``[web]`` extra. 미설치 시 503 Service Unavailable 로 명확한
+    안내. base_url 을 리포트 디렉터리로 지정해 상대경로 이미지도 처리.
+    """
+    try:
+        from weasyprint import HTML  # noqa: PLC0415 — optional dep, lazy import
+    except ImportError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "PDF 변환에 weasyprint 가 필요합니다. "
+            'pip install -e ".[web]" 로 설치하세요.',
+        ) from exc
+    return HTML(
+        filename=str(html_path),
+        base_url=str(html_path.parent),
+    ).write_pdf()

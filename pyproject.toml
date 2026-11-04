@@ -71,11 +71,13 @@ dev = [
 ]
 # Task 14 (#105): 로컬 Astro 프론트엔드 (`web/`) 가 호출하는 FastAPI 백엔드.
 # 기동: `uvicorn api.main:app --port 8000`. 로컬 전용이라 인증/배포/멀티테넌시
-# 미지원. sse-starlette 은 14e (#110) 의 SSE 라이브 진행 스트림용.
+# 미지원. sse-starlette 은 14e (#110) 의 SSE 라이브 진행 스트림용. weasyprint
+# 는 14f (#111) 리포트 뷰어의 PDF 다운로드용 (#128).
 web = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sse-starlette>=2.1",
+    "weasyprint>=62.0",
 ]
 
 [project.scripts]

@@ -164,50 +164,41 @@ def test_download_html_returns_complete_report_html(results_root: Path) -> None:
     assert "HI" in resp.content.decode("utf-8")
 
 
-def test_download_zip_packs_full_report_tree(results_root: Path) -> None:
-    import io
-    import zipfile
+def test_download_pdf_converts_html(results_root: Path) -> None:
+    pytest.importorskip("weasyprint")
 
     _seed(
         results_root,
         "005930_20261104_083000",
         "Buy",
         extras={
-            "complete_report.html": "<html>...</html>",
-            "research/bull.md": "불",
-            "trading/trader.md": "트레이더",
+            "complete_report.html": (
+                "<html><head><meta charset='utf-8'></head>"
+                "<body><h1>삼성전자 분석 보고서</h1>"
+                "<p>등급: Buy</p></body></html>"
+            ),
         },
     )
     client = TestClient(create_app())
-    resp = client.get("/api/reports/005930_20261104_083000/download?format=zip")
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=pdf")
     assert resp.status_code == 200
-    assert resp.headers["content-type"] == "application/zip"
-    assert "trading_report_005930_20261104_083000.zip" in resp.headers["content-disposition"]
-
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        names = set(zf.namelist())
-    assert "complete_report.md" in names
-    assert "complete_report.html" in names
-    assert "analysts/market.md" in names
-    assert "research/bull.md" in names
-    assert "trading/trader.md" in names
-
-
-def test_download_zip_skips_non_whitelisted_folder(results_root: Path) -> None:
-    import io
-    import zipfile
-
-    _seed(
-        results_root,
-        "005930_20261104_083000",
-        "Buy",
-        extras={"secrets/token.md": "비밀"},
+    assert resp.headers["content-type"] == "application/pdf"
+    assert (
+        "trading_report_005930_20261104_083000.pdf"
+        in resp.headers["content-disposition"]
     )
+    # PDF magic number
+    assert resp.content[:4] == b"%PDF"
+    assert len(resp.content) > 1000  # 실제 변환된 PDF 는 수 KB 이상
+
+
+def test_download_pdf_404_when_html_missing(results_root: Path) -> None:
+    pytest.importorskip("weasyprint")
+    _seed(results_root, "005930_20261104_083000", "Buy")
+    # _seed 는 complete_report.md 만 만듦 — HTML 없음
     client = TestClient(create_app())
-    resp = client.get("/api/reports/005930_20261104_083000/download?format=zip")
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        names = set(zf.namelist())
-    assert "secrets/token.md" not in names
+    resp = client.get("/api/reports/005930_20261104_083000/download?format=pdf")
+    assert resp.status_code == 404
 
 
 def test_download_rejects_invalid_report_id(results_root: Path) -> None:
@@ -226,7 +217,10 @@ def test_download_rejects_unknown_format(results_root: Path) -> None:
     _seed(results_root, "005930_20261104_083000", "Buy")
     client = TestClient(create_app())
     assert client.get(
-        "/api/reports/005930_20261104_083000/download?format=pdf"
+        "/api/reports/005930_20261104_083000/download?format=zip"
+    ).status_code == 422
+    assert client.get(
+        "/api/reports/005930_20261104_083000/download?format=xlsx"
     ).status_code == 422
 
 

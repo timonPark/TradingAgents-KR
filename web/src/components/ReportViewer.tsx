@@ -195,10 +195,10 @@ export default function ReportViewer() {
 								</a>
 								<a
 									className="ks-button ks-button-ghost"
-									href={`${API_BASE}/api/reports/${encodeURIComponent(tree.report_id)}/download?format=zip`}
+									href={`${API_BASE}/api/reports/${encodeURIComponent(tree.report_id)}/download?format=pdf`}
 									download
 								>
-									📦 전체 (.zip)
+									📕 PDF (.pdf)
 								</a>
 							</div>
 						</header>
