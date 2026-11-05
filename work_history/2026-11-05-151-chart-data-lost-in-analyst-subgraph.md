@@ -1,7 +1,7 @@
 # [#151] 시장·거시 차트 원본이 분석가 서브그래프에서 사라짐
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/151
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/152
 - 브랜치: fix/151-chart-data-lost-in-analyst-subgraph
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
