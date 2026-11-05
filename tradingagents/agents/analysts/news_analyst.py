@@ -38,7 +38,7 @@ def _news_window(trade_date: str) -> tuple[str, str]:
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
-def _prefetch_news_data(ticker: str, trade_date: str) -> dict[str, str]:
+def _prefetch_news_data(ticker: str, trade_date: str) -> dict:
     """뉴스/거시/예측시장 데이터를 전부 선조회.
 
     각 함수 실패 시 섹션에 에러 메시지만 담아 반환 (분석가 중단 방지 — 다른
@@ -65,12 +65,14 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict[str, str]:
 
     # 거시 지표 — 각 지표를 별도 호출해 결과를 모음.
     macro_sections = []
+    macro_by_indicator: dict[str, str] = {}
     for indicator in _MACRO_INDICATORS:
         section = _safe(get_macro_indicators, {
             "indicator": indicator,
             "curr_date": trade_date,
             "trade_date": trade_date,
         })
+        macro_by_indicator[indicator] = section
         macro_sections.append(f"**{indicator}**\n{section}")
     macro = "\n\n".join(macro_sections)
 
@@ -78,6 +80,7 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict[str, str]:
         "ticker_news": ticker_news,
         "global_news": global_news,
         "macro": macro,
+        "macro_by_indicator": macro_by_indicator,   # 보고서 차트의 원본 (#144)
     }
 
 
@@ -149,6 +152,7 @@ def create_news_analyst(llm):
         return {
             "messages": [result],
             "news_report": report,
+            "macro_data": prefetched["macro_by_indicator"],
         }
 
     return news_analyst_node

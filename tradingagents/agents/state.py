@@ -53,6 +53,7 @@ class AgentState(MessagesState):
     market_data: Annotated[dict, "Raw prefetched market data (ohlcv/indicators/investor_flow strings) the report charts are drawn from (#144)"]
     sentiment_report: Annotated[str, "Report from the Sentiment Analyst"]
     news_report: Annotated[str, "Report from the News Analyst on company and world news"]
+    macro_data: Annotated[dict, "Raw ECOS macro sections keyed by indicator alias, the report's macro charts are drawn from (#144)"]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Analyst"]
 
     # researcher team discussion step

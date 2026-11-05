@@ -430,7 +430,7 @@ def build_market_charts(market_data: dict[str, str] | None) -> list[Chart | Char
     return out
 
 
-def render_charts_html(items: list[Chart | ChartGap]) -> str:
+def render_charts_html(items: list[Chart | ChartGap], heading: str | None = "차트") -> str:
     """차트 묶음을 보고서 HTML 조각으로. 비어 있으면 빈 문자열."""
     if not items:
         return ""
@@ -447,4 +447,206 @@ def render_charts_html(items: list[Chart | ChartGap]) -> str:
                 f'<figure class="viz viz-gap"><div class="viz-title">{escape(item.title)}</div>'
                 f'<p>차트 없음 — {escape(item.reason)}</p></figure>'
             )
-    return '<div class="viz-group"><h4>차트</h4>' + "".join(figures) + "</div>"
+    title = f"<h4>{escape(heading)}</h4>" if heading else ""
+    return f'<div class="viz-group">{title}' + "".join(figures) + "</div>"
+
+
+# ---------------------------------------------------------------------------
+# 한국 거시 지표 (한국은행 ECOS) — 뉴스 분석가 섹션
+# ---------------------------------------------------------------------------
+
+_MACRO_ORDER = (
+    ("treasury_10y", "국고채 10년 금리"),
+    ("usd_krw", "원/달러 환율"),
+    ("base_rate", "한국은행 기준금리"),
+    ("cpi", "소비자물가지수"),
+    ("unemployment_rate", "실업률"),
+    ("consumer_sentiment", "소비자심리지수"),
+)
+
+
+def _macro_gap_reason(text: str) -> str:
+    """수집 실패 문구(``[prefetch failed …]``/``DATA_UNAVAILABLE …``)는 그대로, 아니면 기본 사유."""
+    first = (text or "").strip().splitlines()[0][:160] if (text or "").strip() else ""
+    if first.startswith(("[prefetch failed", "DATA_UNAVAILABLE")):
+        return first
+    return "관측 데이터가 없어 그리지 못했습니다."
+
+
+def _ecos_date(raw: str) -> str | None:
+    if re.fullmatch(r"\d{8}", raw):
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    if re.fullmatch(r"\d{6}", raw):
+        return f"{raw[:4]}-{raw[4:]}"
+    if re.fullmatch(r"\d{4}Q[1-4]", raw):
+        return raw
+    return None
+
+
+def parse_ecos_section(text: str) -> tuple[str, list[tuple[str, float]]] | None:
+    """ECOS vendor 의 지표 섹션 → ``(단위, [(기간, 값)])`` (기간 오름차순). 관측값이 없으면 None.
+
+    섹션은 ``- **단위**: 연%`` 줄과 ``| 기간 | 값 |`` 표로 이루어진다 (``ecos.py`` 포매터).
+    """
+    text = text or ""
+    unit_match = re.search(r"^- \*\*단위\*\*:\s*(.+)$", text, re.MULTILINE)
+    unit = unit_match.group(1).strip() if unit_match else ""
+    rows: list[tuple[str, float]] = []
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = _cells(line)
+        if len(cells) < 2:
+            continue
+        period = _ecos_date(cells[0])
+        value = _number(cells[1])
+        if period and value is not None:
+            rows.append((period, value))
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0])
+    return unit, rows
+
+
+def _value_fmt(values: list[float]):
+    span = max(values) - min(values)
+    digits = 0 if span >= 20 else 1 if span >= 2 else 2 if span >= 0.2 else 3
+    return lambda v: f"{v:,.{digits}f}"
+
+
+def build_macro_charts(macro_data: dict[str, str] | None) -> list[Chart | ChartGap]:
+    """뉴스 분석가가 보존한 ECOS 지표 섹션(``macro_data``)으로 지표별 선 차트를 만든다.
+
+    ``macro_data`` 가 없으면 (예전 run) 빈 리스트. 관측값이 없거나 수집에 실패한 지표는
+    ``ChartGap`` 으로 사유를 남긴다.
+    """
+    if not macro_data:
+        return []
+    out: list[Chart | ChartGap] = []
+    for key, name in _MACRO_ORDER:
+        text = macro_data.get(key)
+        if text is None:
+            continue
+        parsed = parse_ecos_section(text)
+        if parsed is None:
+            out.append(ChartGap(name, _macro_gap_reason(text)))
+            continue
+        unit, rows = parsed
+        title = f"{name} ({unit})" if unit and unit != "—" else name
+        values = [v for _, v in rows]
+        chart = None
+        if len(rows) >= 2:
+            chart = line_chart(title, [Series(name, rows, "s1")], fmt=_value_fmt(values))
+        out.append(chart or ChartGap(title, "관측값이 1개뿐이라 추이를 그리지 못했습니다."))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 한눈에 보기 — 에이전트별 판정 흐름
+# ---------------------------------------------------------------------------
+
+# 방향: up(강세 쪽) / level(중립) / down(약세 쪽) / none(판독 불가)
+_RATING_DIRECTION = {"Buy": "up", "Overweight": "up", "Hold": "level", "Underweight": "down", "Sell": "down"}
+_BAND_DIRECTION = {
+    "Bullish": "up", "Mildly Bullish": "up", "Neutral": "level", "Mixed": "level",
+    "Mildly Bearish": "down", "Bearish": "down",
+}
+_MARK = {"up": "▲", "level": "■", "down": "▼", "none": "?"}
+
+
+@dataclass(frozen=True)
+class VerdictNode:
+    role: str  # 에이전트 이름
+    verdict: str  # 화면 표기 (한국어)
+    direction: str  # up | level | down | none
+
+
+def _recommendation(text: str) -> str | None:
+    """리서치 매니저 ``**추천**: …`` 줄의 등급(내부 값). 없으면 None."""
+    from tradingagents.agents.rating import canonical_rating
+
+    match = re.search(
+        r"^\W*\*\*(?:추천|Recommendation)\*\*\s*:\s*\**\s*(비중\s*확대|비중\s*축소|\w+)",
+        text or "", re.MULTILINE,
+    )
+    return canonical_rating(match.group(1)) if match else None
+
+
+def _sentiment_band(text: str) -> str | None:
+    """감성 분석가 머리글의 센티먼트(내부 값). 한국어·영어 머리글 모두 읽는다."""
+    from tradingagents.agents.schemas import SENTIMENT_BAND_KO
+
+    reverse = {ko: en for en, ko in SENTIMENT_BAND_KO.items()}
+    match = re.search(r"\*\*(?:전체 센티먼트|Overall Sentiment):\*\*\s*\*\*([^*]+)\*\*", text or "")
+    if not match:
+        return None
+    label = match.group(1).strip()
+    return reverse.get(label) or (label if label in _BAND_DIRECTION else None)
+
+
+def build_verdict_flow(final_state: dict) -> list[VerdictNode]:
+    """구조화된 판정 줄에서 에이전트별 판정 흐름을 만든다. 2개 미만이면 빈 리스트.
+
+    감성 분석가 → 리서치 매니저 → 트레이더 → 포트폴리오 매니저. 본문에서 의견을 추정하지
+    않고, 포맷이 보장하는 판정 줄(``전체 센티먼트``/``추천``/``최종 거래 제안``/``등급``)만
+    읽는다. 읽지 못한 단계는 "판독 불가"로 남긴다 (건너뛰어 흐름을 꾸미지 않는다).
+    """
+    from tradingagents.agents.rating import (
+        RATING_REVIEW,
+        display_rating,
+        extract_rating,
+        run_rating,
+    )
+    from tradingagents.agents.schemas import SENTIMENT_BAND_KO
+
+    def node_from_rating(role: str, rating: str | None) -> VerdictNode:
+        if not rating or rating == RATING_REVIEW:
+            return VerdictNode(role, "판독 불가", "none")
+        return VerdictNode(role, display_rating(rating), _RATING_DIRECTION.get(rating, "none"))
+
+    nodes: list[VerdictNode] = []
+    if final_state.get("sentiment_report"):
+        band = _sentiment_band(final_state["sentiment_report"])
+        nodes.append(VerdictNode("감성 분석가", SENTIMENT_BAND_KO.get(band, "판독 불가"),
+                                 _BAND_DIRECTION.get(band, "none")) if band
+                     else VerdictNode("감성 분석가", "판독 불가", "none"))
+    if final_state.get("investment_plan"):
+        nodes.append(node_from_rating("리서치 매니저", _recommendation(final_state["investment_plan"])))
+    if final_state.get("trader_investment_plan"):
+        nodes.append(node_from_rating("트레이더", extract_rating(final_state["trader_investment_plan"])))
+    if final_state.get("final_trade_decision"):
+        nodes.append(node_from_rating("포트폴리오 매니저", run_rating(final_state)))
+    return nodes if len(nodes) >= 2 else []
+
+
+def verdict_flow_chart(nodes: list[VerdictNode]) -> Chart | None:
+    """판정 흐름: 단계별 상자를 화살표로 잇는다. 방향은 색과 기호(▲ ■ ▼)로 함께 표시."""
+    if not nodes:
+        return None
+    gap, box_w, box_h = 28, 132, 78
+    width = len(nodes) * box_w + (len(nodes) - 1) * gap
+    scale_w = max(width, 1)
+    parts = []
+    for i, node in enumerate(nodes):
+        x = i * (box_w + gap)
+        parts.append(
+            f'<g class="flow {node.direction}">'
+            f'<rect class="node" x="{x}" y="14" width="{box_w}" height="{box_h}" rx="6"/>'
+            f'<text class="role" x="{x + box_w / 2}" y="36" text-anchor="middle">{escape(node.role)}</text>'
+            f'<text class="verdict" x="{x + box_w / 2}" y="66" text-anchor="middle">'
+            f'{_MARK[node.direction]} {escape(node.verdict)}</text></g>'
+        )
+        if i < len(nodes) - 1:
+            ax = x + box_w
+            parts.append(
+                f'<path class="arrow" d="M{ax + 4} {14 + box_h / 2} H{ax + gap - 4}"/>'
+                f'<path class="arrow" d="M{ax + gap - 10} {14 + box_h / 2 - 5} L{ax + gap - 4} '
+                f'{14 + box_h / 2} L{ax + gap - 10} {14 + box_h / 2 + 5}"/>'
+            )
+    summary = " → ".join(f"{n.role} {n.verdict}" for n in nodes)
+    height = 14 + box_h + 14
+    svg = (
+        f'<svg viewBox="0 0 {scale_w} {height}" role="img" '
+        f'aria-label="{escape("에이전트별 판정 흐름: " + summary, quote=True)}">{"".join(parts)}</svg>'
+    )
+    return Chart("에이전트별 판정 흐름", svg, summary)
