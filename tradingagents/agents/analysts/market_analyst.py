@@ -183,6 +183,8 @@ KRX 투자자 수급:
         return {
             "messages": [result],
             "market_report": report,
+            # 보고서 차트의 원본 (#144). 스냅샷은 차트에 쓰지 않으므로 제외.
+            "market_data": {k: prefetched[k] for k in ("ohlcv", "indicators", "investor_flow")},
         }
 
     return market_analyst_node

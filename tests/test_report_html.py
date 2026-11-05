@@ -175,3 +175,44 @@ def test_the_packaged_logo_stays_inert(tmp_path):
     tags = set(re.findall(r"<\s*([a-zA-Z][\w:-]*)", logo))
     assert tags <= {"svg", "path", "rect", "circle", "g", "defs", "clipPath", "linearGradient", "stop"}
     assert not re.search(r"\son\w+\s*=|href|url\(|@import|javascript:|<!entity|<!doctype", logo, re.IGNORECASE)
+
+
+# ---- #144: 시장 분석가 섹션의 차트 ----
+
+_MARKET_DATA = {
+    "ohlcv": "Date,Open,High,Low,Close,Volume,ChangePct\n2026-11-02,1,2,1,100,10,0\n2026-11-03,1,2,1,110,10,10\n",
+    "indicators": "",
+    "investor_flow": "[KRX 수급 조회 실패: KRX: x; 네이버 증권: y — 수급 데이터 없음]",
+}
+
+
+@pytest.mark.unit
+def test_market_section_carries_charts_after_the_analyst_text(tmp_path):
+    page = _html(tmp_path, market_data=_MARKET_DATA)
+    market = page[page.index('id="s1-1"'):page.index('id="s1-2"')]
+    assert 'class="viz"' in market and "<svg" in market
+    assert market.index("Market view") < market.index('class="viz-group"')
+    # 수집에 실패한 차트는 빈 그래프가 아니라 사유로 남는다
+    assert "차트 없음" in market and "수급 조회 실패" in market
+
+
+@pytest.mark.unit
+def test_no_market_data_leaves_the_page_without_a_chart_area(tmp_path):
+    page = _html(tmp_path)
+    assert 'class="viz-group"' not in page and 'class="viz"' not in page
+
+
+@pytest.mark.unit
+def test_charts_do_not_break_the_self_contained_page(tmp_path):
+    page = _html(tmp_path, market_data=_MARKET_DATA)
+    assert "<script" not in page.lower()
+    assert "default-src 'none'" in page
+    assert not re.findall(r'(?:src|href)="https?://(?!tauric\.ai|github\.com)', page)
+    assert "--up" in page and ".viz .bar.up" in page      # 색은 페이지 변수
+
+
+@pytest.mark.unit
+def test_charts_only_in_the_market_analyst_section(tmp_path):
+    page = _html(tmp_path, market_data=_MARKET_DATA)
+    news = page[page.index('id="s1-2"'):]
+    assert 'class="viz-group"' not in news.split("<h2")[0]

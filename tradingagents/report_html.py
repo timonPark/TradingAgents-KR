@@ -13,6 +13,7 @@ from importlib.resources import files
 from markdown_it import MarkdownIt
 
 from tradingagents.agents.rating import display_rating, run_rating
+from tradingagents.charts import build_market_charts, render_charts_html
 from tradingagents.reporting import analyst_names
 
 # Ratings by direction, so the page can show which way the call leans.
@@ -168,6 +169,28 @@ tbody tr:last-child td { border-bottom: 0; }
   .run dd { margin-bottom: 0.45rem; }
   .run .group { white-space: normal; }
 }
+
+/* 차트 (#144) — 정적 인라인 SVG. 색은 페이지 변수를 따른다. 선은 색 외에 모양도 달라
+   (실선·긴 점선·짧은 점선) 색만으로 구분하지 않는다. */
+.viz-group h4 { margin: 2rem 0 0.25rem; }
+.viz { margin: 1.4rem 0; }
+.viz-title { font: 600 0.88rem/1.3 var(--sans); color: var(--ink); margin-bottom: 0.3rem; }
+.viz .scroll { overflow-x: auto; }
+.viz svg { display: block; width: 100%; min-width: 480px; height: auto; }
+.viz text.axis { font: 11px var(--sans); fill: var(--muted); }
+.viz .grid { stroke: var(--rule); stroke-width: 1; }
+.viz .zero { stroke: var(--mark); stroke-width: 1; }
+.viz .ref { stroke: var(--mark); stroke-width: 1; stroke-dasharray: 3 3; }
+.viz .line { fill: none; stroke-width: 1.8; stroke-linejoin: round; }
+.viz .s1 { stroke: var(--ink); }
+.viz .s2 { stroke: var(--accent); }
+.viz .s3 { stroke: var(--muted); stroke-dasharray: 6 3; }
+.viz .s4 { stroke: var(--down); stroke-dasharray: 2 3; }
+.viz .bar.up { fill: var(--up); }
+.viz .bar.down { fill: var(--down); }
+.viz figcaption { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.2rem; }
+.viz-gap p { margin: 0; padding: 0.7rem 0.9rem; background: var(--wash); border: 1px dashed var(--edge);
+  color: var(--muted); font: 0.85rem/1.5 var(--sans); }
 @media print {
   :root { --paper: #fff; --ink: #000; --muted: #444; --rule: #bbb; --accent: #000; --wash: #f2f2f2;
     --edge: #bbb; --up: #087a59; --down: #b4372f; --level: #444; }
@@ -279,6 +302,8 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
         body.append(f'<section id="s{n}"><h2>{escape(heading)}</h2>')
         for m, (agent, _filename, text) in enumerate(written, 1):
             body.append(f'<h3 id="s{n}-{m}">{escape(agent)}</h3>\n{_render_agent_text(md, text)}')
+            if _folder == "1_analysts" and _filename == "market.md":
+                body.append(render_charts_html(build_market_charts(final_state.get("market_data"))))
         body.append("</section>")
 
     page_title = " ".join(x for x in (ticker, date, display_rating(rating) if rating else "") if x)
