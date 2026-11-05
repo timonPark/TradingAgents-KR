@@ -631,3 +631,20 @@ def test_market_analyst_keeps_prefetched_data_for_report_charts():
         )
     assert out["market_report"] == "리포트"
     assert out["market_data"] == {"ohlcv": "o", "indicators": "i", "investor_flow": "f"}   # 스냅샷은 제외
+
+
+@pytest.mark.unit
+def test_news_analyst_keeps_each_macro_section_for_report_charts():
+    from unittest.mock import patch
+
+    from tradingagents.agents.analysts import news_analyst
+
+    prefetched = {"ticker_news": "t", "global_news": "g", "macro": "m",
+                  "macro_by_indicator": {"treasury_10y": "section"}}
+    with patch.object(news_analyst, "_prefetch_news_data", return_value=prefetched), \
+         patch.object(news_analyst, "invoke_once", return_value=(MagicMock(), "리포트")):
+        out = news_analyst.create_news_analyst(MagicMock())(
+            {"company_of_interest": "034020", "trade_date": "2026-11-05", "messages": []}
+        )
+    assert out["news_report"] == "리포트"
+    assert out["macro_data"] == {"treasury_10y": "section"}

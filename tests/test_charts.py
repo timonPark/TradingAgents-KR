@@ -269,3 +269,155 @@ def test_module_is_pure_no_io():
     source = Path(charts.__file__).read_text(encoding="utf-8")
     for forbidden in ("import requests", "import socket", "open(", "subprocess"):
         assert forbidden not in source
+
+
+# ---------- #144: 한국은행(ECOS) 거시 지표 ----------
+
+def _ecos_section(indicator: str = "treasury_10y", rows=None) -> str:
+    """실제 vendor(`ecos.get_macro_data`) 포매터 출력."""
+    from tradingagents.dataflows.vendors import ecos
+
+    rows = rows or [("20261102", "4.034"), ("20261103", "4.001"), ("20261104", "3.968")]
+    payload = {"StatisticSearch": {"row": [
+        {"STAT_CODE": "817Y002", "STAT_NAME": "시장금리(일별)", "ITEM_CODE1": "010210000",
+         "ITEM_NAME1": "국고채(10년)", "UNIT_NAME": "연%", "TIME": t, "DATA_VALUE": v}
+        for t, v in rows]}}
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.dict("os.environ", {"ECOS_API_KEY": "k"}), \
+         patch("tradingagents.dataflows.vendors.ecos.get_scrubbed", return_value=resp):
+        return ecos.get_macro_data(indicator, "2026-11-05")
+
+
+@pytest.mark.unit
+def test_parse_ecos_section_reads_unit_and_dates_from_the_real_formatter():
+    unit, rows = charts.parse_ecos_section(_ecos_section())
+    assert unit == "연%"
+    assert rows == [("2026-11-02", 4.034), ("2026-11-03", 4.001), ("2026-11-04", 3.968)]
+
+
+@pytest.mark.unit
+def test_parse_ecos_section_monthly_and_comma_values():
+    section = _ecos_section("cpi", rows=[("202609", "1,234.5"), ("202610", "1,240.0")])
+    assert charts.parse_ecos_section(section)[1] == [("2026-09", 1234.5), ("2026-10", 1240.0)]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text", ["", "DATA_UNAVAILABLE: x", "[prefetch failed: boom]", "표 없음"])
+def test_parse_ecos_section_none_without_observations(text):
+    assert charts.parse_ecos_section(text) is None
+
+
+@pytest.mark.unit
+def test_macro_charts_follow_display_order_and_title_carries_unit():
+    items = charts.build_macro_charts({
+        "usd_krw": _ecos_section("usd_krw"), "treasury_10y": _ecos_section(),
+    })
+    assert [i.title for i in items] == ["국고채 10년 금리 (연%)", "원/달러 환율 (연%)"]
+    assert all(isinstance(i, Chart) for i in items)
+
+
+@pytest.mark.unit
+def test_macro_failure_is_a_stated_gap_and_others_still_draw():
+    items = charts.build_macro_charts({
+        "treasury_10y": _ecos_section(),
+        "cpi": "DATA_UNAVAILABLE: ECOS 요청 실패 (HTTP 500)",
+        "usd_krw": "[prefetch failed: ConnectionError: boom]",
+    })
+    kinds = {i.title.split(" (")[0]: i for i in items}
+    assert isinstance(kinds["국고채 10년 금리"], Chart)
+    assert isinstance(kinds["소비자물가지수"], ChartGap) and "HTTP 500" in kinds["소비자물가지수"].reason
+    assert isinstance(kinds["원/달러 환율"], ChartGap) and "prefetch failed" in kinds["원/달러 환율"].reason
+
+
+@pytest.mark.unit
+def test_macro_single_observation_is_a_gap_not_a_dot():
+    items = charts.build_macro_charts({"treasury_10y": _ecos_section(rows=[("20261104", "3.968")])})
+    assert isinstance(items[0], ChartGap) and "1개" in items[0].reason
+
+
+@pytest.mark.unit
+def test_macro_none_means_no_chart_area():
+    assert charts.build_macro_charts(None) == [] and charts.build_macro_charts({}) == []
+
+
+# ---------- #144: 한눈에 보기 — 판정 흐름 ----------
+
+def _verdict_state(**overrides):
+    from tradingagents.agents.schemas import (
+        PortfolioDecision,
+        PortfolioRating,
+        ResearchPlan,
+        SentimentBand,
+        SentimentReport,
+        TraderAction,
+        TraderProposal,
+        render_pm_decision,
+        render_research_plan,
+        render_sentiment_report,
+        render_trader_proposal,
+    )
+
+    state = {
+        "sentiment_report": render_sentiment_report(SentimentReport(
+            overall_band=SentimentBand.MIXED, overall_score=5.0, confidence="medium", narrative="n")),
+        "investment_plan": render_research_plan(ResearchPlan(
+            recommendation=PortfolioRating.OVERWEIGHT, rationale="r", strategic_actions="a")),
+        "trader_investment_plan": render_trader_proposal(TraderProposal(
+            action=TraderAction.SELL, reasoning="r")),
+        "final_trade_decision": render_pm_decision(PortfolioDecision(
+            rating=PortfolioRating.UNDERWEIGHT, executive_summary="s", investment_thesis="t")),
+    }
+    state.update(overrides)
+    return state
+
+
+@pytest.mark.unit
+def test_verdict_flow_reads_the_structured_lines_of_each_stage():
+    nodes = charts.build_verdict_flow(_verdict_state())
+    assert [(n.role, n.verdict, n.direction) for n in nodes] == [
+        ("감성 분석가", "혼조", "level"),
+        ("리서치 매니저", "비중 확대", "up"),
+        ("트레이더", "매도", "down"),
+        ("포트폴리오 매니저", "비중 축소", "down"),
+    ]
+
+
+@pytest.mark.unit
+def test_verdict_flow_reads_english_headers_of_older_reports():
+    state = _verdict_state(
+        sentiment_report="**Overall Sentiment:** **Bearish** (Score: 3.0/10)\n**Confidence:** Low\n\nn",
+        investment_plan="**추천**: Hold\n\nr",
+        trader_investment_plan="최종 거래 제안: **HOLD**",   # 이전 한국어 보고서: 라벨 한국어, 값 영어
+        final_trade_decision="**등급**: Hold\n\ns",
+    )
+    assert [(n.verdict, n.direction) for n in charts.build_verdict_flow(state)] == [
+        ("약세", "down"), ("보유", "level"), ("보유", "level"), ("보유", "level"),
+    ]
+
+
+@pytest.mark.unit
+def test_verdict_flow_names_an_unreadable_stage_instead_of_skipping_it():
+    nodes = charts.build_verdict_flow(_verdict_state(investment_plan="전략만 있고 추천 줄이 없다"))
+    research = next(n for n in nodes if n.role == "리서치 매니저")
+    assert (research.verdict, research.direction) == ("판독 불가", "none")
+
+
+@pytest.mark.unit
+def test_verdict_flow_needs_at_least_two_stages():
+    assert charts.build_verdict_flow({}) == []
+    assert charts.build_verdict_flow({"final_trade_decision": "**등급**: 매수"}) == []
+
+
+@pytest.mark.unit
+def test_verdict_flow_chart_marks_direction_with_symbols_not_only_color():
+    chart = charts.verdict_flow_chart(charts.build_verdict_flow(_verdict_state()))
+    assert "▲ 비중 확대" in chart.svg and "▼ 매도" in chart.svg and "■ 혼조" in chart.svg
+    assert 'aria-label="에이전트별 판정 흐름:' in chart.svg and "→" in chart.note
+    assert charts.verdict_flow_chart([]) is None
+
+
+@pytest.mark.unit
+def test_render_charts_html_without_heading_has_no_h4():
+    html = render_charts_html([ChartGap("t", "r")], None)
+    assert "<h4>" not in html and 'class="viz-group"' in html

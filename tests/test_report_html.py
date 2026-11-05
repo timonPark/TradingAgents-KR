@@ -216,3 +216,62 @@ def test_charts_only_in_the_market_analyst_section(tmp_path):
     page = _html(tmp_path, market_data=_MARKET_DATA)
     news = page[page.index('id="s1-2"'):]
     assert 'class="viz-group"' not in news.split("<h2")[0]
+
+
+# ---- #144: 한눈에 보기 · 거시 지표 차트 ----
+
+def _decision_state(**overrides):
+    from tradingagents.agents.schemas import (
+        PortfolioDecision,
+        PortfolioRating,
+        ResearchPlan,
+        TraderAction,
+        TraderProposal,
+        render_pm_decision,
+        render_research_plan,
+        render_trader_proposal,
+    )
+    state = {
+        "investment_plan": render_research_plan(ResearchPlan(
+            recommendation=PortfolioRating.OVERWEIGHT, rationale="r", strategic_actions="a")),
+        "trader_investment_plan": render_trader_proposal(TraderProposal(
+            action=TraderAction.SELL, reasoning="r")),
+        "final_trade_decision": render_pm_decision(PortfolioDecision(
+            rating=PortfolioRating.UNDERWEIGHT, executive_summary="s", investment_thesis="t")),
+    }
+    state.update(overrides)
+    return state
+
+
+@pytest.mark.unit
+def test_page_opens_with_the_verdict_flow_and_lists_it_in_the_contents(tmp_path):
+    page = _html(tmp_path, **_decision_state())
+    assert page.index('id="s0"') < page.index('id="s1"')
+    glance = page[page.index('id="s0"'):page.index('id="s1"')]
+    assert "한눈에 보기" in glance and "▲ 비중 확대" in glance and "▼ 비중 축소" in glance
+    assert "<h4>" not in glance
+    nav = page[page.index('<nav class="contents"'):page.index("</nav>")]
+    assert nav.index('href="#s0"') < nav.index('href="#s1"')
+
+
+@pytest.mark.unit
+def test_no_glance_section_when_fewer_than_two_stages_were_decided(tmp_path):
+    page = _html(tmp_path)           # 기본 상태: 최종 결정만 있음
+    assert 'id="s0"' not in page and "한눈에 보기" not in page
+
+
+@pytest.mark.unit
+def test_macro_charts_follow_the_news_analyst_text(tmp_path):
+    macro = {"treasury_10y": "- **단위**: 연%\n\n| 기간 | 값 |\n|---|---:|\n| 20261103 | 4.0 |\n| 20261104 | 3.9 |\n",
+             "cpi": "DATA_UNAVAILABLE: ECOS 요청 실패"}
+    page = _html(tmp_path, macro_data=macro)
+    news = page[page.index('id="s1-2"'):]
+    assert news.index("News text.") < news.index("거시 지표 차트")
+    assert "국고채 10년 금리 (연%)" in news and "차트 없음" in news and "ECOS 요청 실패" in news
+    market = page[page.index('id="s1-1"'):page.index('id="s1-2"')]
+    assert "거시 지표 차트" not in market
+
+
+@pytest.mark.unit
+def test_no_macro_data_leaves_the_news_section_without_charts(tmp_path):
+    assert "거시 지표 차트" not in _html(tmp_path)
