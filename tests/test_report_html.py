@@ -300,3 +300,26 @@ def test_glance_section_carries_price_levels_under_the_verdict_flow(tmp_path):
     glance = page[page.index('id="s0"'):page.index('id="s1"')]
     assert glance.index("에이전트별 판정 흐름") < glance.index("가격 레벨 (거래 계획)")
     assert "진입가 130원 (+18.2%)" in glance and "목표가 90원 (-18.2%)" in glance
+
+
+# ---- #149: 재무 분석가 섹션의 재무 차트 ----
+
+@pytest.mark.unit
+def test_financial_charts_follow_the_fundamentals_text(tmp_path):
+    import json
+
+    accounts = json.dumps({"year": 2026, "report": "반기보고서", "period": "반기 누적 (1~6월)",
+                           "basis": "연결", "unit": "원", "accounts": {
+        "revenue": {"name": "수익", "value": 1.0e10}, "operating_income": {"name": "x", "value": 1.0e9},
+        "net_income": {"name": "y", "value": 8.0e8}}})
+    page = _html(tmp_path, fundamentals_report="재무 본문.", fundamentals_data={"accounts": accounts})
+    fund = page[page.index("재무 본문."):]
+    assert fund.index("재무 본문.") < fund.index("재무 차트")
+    assert "손익 폭포" in fund and "현금 흐름 브리지" in fund
+    assert fund.count("<svg") == 1                     # 손익 폭포만 그려지고
+    assert "차트 없음" in fund and "기초 현금" in fund    # 현금 계정이 없는 브리지는 사유로 남는다
+
+
+@pytest.mark.unit
+def test_no_fundamentals_data_leaves_that_section_without_charts(tmp_path):
+    assert "재무 차트" not in _html(tmp_path, fundamentals_report="재무 본문.")

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from html import escape
@@ -758,3 +759,164 @@ def build_price_levels(final_state: dict) -> Chart | ChartGap | None:
     if final_state.get("trader_investment_plan"):
         return ChartGap("가격 레벨 (거래 계획)", "트레이더가 진입가·손절가를 제시하지 않았고 목표가도 없어 그리지 못했습니다.")
     return None
+
+
+# ---------------------------------------------------------------------------
+# 재무 차트 — DART 표준 계정 ID 로 뽑은 핵심 계정 (#149)
+# ---------------------------------------------------------------------------
+
+
+def parse_financial_accounts(text: str) -> dict | None:
+    """``dart.get_financial_accounts`` 의 JSON 문자열 → dict. 실패 문구·형식 불명이면 None."""
+    try:
+        data = json.loads(text or "")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("accounts"), dict):
+        return None
+    return data
+
+
+def _won_scale(values: list[float]) -> tuple[float, str, int]:
+    """금액 크기에 맞는 단위: (나눌 값, 라벨, 소수 자릿수)."""
+    peak = max((abs(v) for v in values), default=0.0)
+    if peak >= 1e12:
+        return 1e12, "조 원", 2
+    return 1e8, "억 원", 1 if peak < 1e11 else 0
+
+
+def _account(accounts: dict, key: str) -> float | None:
+    item = accounts.get(key)
+    if isinstance(item, dict) and isinstance(item.get("value"), int | float):
+        return float(item["value"])
+    return None
+
+
+def waterfall_chart(
+    title: str, steps: list[tuple[str, float, str]], *, note: str, scale: tuple[float, str, int]
+) -> Chart | None:
+    """폭포 차트. ``steps`` = ``[(이름, 값, "total"|"delta")]`` (값은 원 단위).
+
+    ``total`` 은 0 에서 값까지, ``delta`` 는 직전 수준에서 증감만큼 움직인다. 증가·감소는 색과
+    부호(+/-)로 함께 표시하고, 막대 사이를 직전 수준선으로 잇는다.
+    """
+    if not steps:
+        return None
+    divisor, unit_label, digits = scale
+    spans: list[tuple[float, float, str, float]] = []   # (시작, 끝, 구분, 값) — 억/조 단위
+    level = 0.0
+    for _name, raw, kind in steps:
+        value = raw / divisor
+        if kind == "total":
+            spans.append((0.0, value, "total", value))
+            level = value
+        else:
+            spans.append((level, level + value, "up" if value >= 0 else "down", value))
+            level += value
+    floor = min(0.0, *(min(a, b) for a, b, _, _ in spans))
+    lo, hi = _nice_range(floor, max(0.0, *(max(a, b) for a, b, _, _ in spans)))
+    if floor >= 0.0:      # 음수가 없으면 0 아래로 축을 늘리지 않는다
+        lo = 0.0
+    height, top, bottom = 300, 30, 52
+    pw = _W - _ML - _MR
+    ph = height - top - bottom
+    slot = pw / len(steps)
+    bar = min(slot * 0.56, 64.0)
+
+    def y(v: float) -> float:
+        return top + ph * (1 - (v - lo) / (hi - lo))
+
+    def fmt(v: float) -> str:
+        return f"{v:,.{digits}f}"
+
+    parts = []
+    for tick in _ticks(lo, hi):
+        parts.append(
+            f'<line class="grid" x1="{_ML}" y1="{y(tick):.1f}" x2="{_W - _MR}" y2="{y(tick):.1f}"/>'
+            f'<text class="axis" x="{_ML - 6}" y="{y(tick) + 4:.1f}" text-anchor="end">{escape(fmt(tick))}</text>'
+        )
+    parts.append(f'<line class="zero" x1="{_ML}" y1="{y(0):.1f}" x2="{_W - _MR}" y2="{y(0):.1f}"/>')
+    for i, ((name, _raw, _kind), (start, end, cls, value)) in enumerate(zip(steps, spans, strict=True)):
+        cx = _ML + slot * (i + 0.5)
+        top_v, bottom_v = max(start, end), min(start, end)
+        parts.append(
+            f'<rect class="bar {cls}" x="{cx - bar / 2:.1f}" y="{y(top_v):.1f}" width="{bar:.1f}" '
+            f'height="{max(y(bottom_v) - y(top_v), 1.0):.1f}"/>'
+        )
+        above = value >= 0
+        label_y = y(top_v) - 5 if above else y(bottom_v) + 13
+        shown = fmt(value) if cls == "total" else f"{value:+,.{digits}f}"
+        parts.append(f'<text class="axis val" x="{cx:.1f}" y="{label_y:.1f}" text-anchor="middle">{escape(shown)}</text>')
+        parts.append(f'<text class="axis" x="{cx:.1f}" y="{height - 30}" text-anchor="middle">{escape(name)}</text>')
+        if i < len(steps) - 1:
+            nxt_x = _ML + slot * (i + 1.5)
+            parts.append(
+                f'<line class="link" x1="{cx + bar / 2:.1f}" y1="{y(end):.1f}" '
+                f'x2="{nxt_x - bar / 2:.1f}" y2="{y(end):.1f}"/>'
+            )
+    summary = ", ".join(f"{n} {fmt(sp[3])}" for (n, _r, _k), sp in zip(steps, spans, strict=True))
+    svg = _svg(f"{title}: {summary} ({unit_label})", "".join(parts), height)
+    return Chart(title, svg, f"{note} · 단위: {unit_label}")
+
+
+def _financial_note(data: dict) -> str:
+    return f"{data.get('year', '')}년 {data.get('period', '')} · {data.get('basis', '')} 재무제표 · 출처: DART"
+
+
+def income_waterfall(data: dict) -> Chart | ChartGap:
+    title = "손익 폭포"
+    accounts = data["accounts"]
+    revenue, operating, net = (_account(accounts, k) for k in ("revenue", "operating_income", "net_income"))
+    missing = [name for name, v in (("매출액", revenue), ("영업이익", operating), ("당기순이익", net)) if v is None]
+    if missing:
+        return ChartGap(title, f"{', '.join(missing)} 계정을 DART 표준 계정 ID 로 찾지 못했습니다.")
+    gross = _account(accounts, "gross_profit")
+    steps: list[tuple[str, float, str]] = [("매출액", revenue, "total")]
+    if gross is not None:
+        steps += [("매출원가", gross - revenue, "delta"), ("매출총이익", gross, "total"),
+                  ("판관비 등", operating - gross, "delta")]
+    else:
+        steps.append(("영업비용 등", operating - revenue, "delta"))
+    steps += [("영업이익", operating, "total"), ("영업외·법인세 등", net - operating, "delta"),
+              ("당기순이익", net, "total")]
+    scale = _won_scale([v for _, v, _ in steps])
+    chart = waterfall_chart(title, steps, note=_financial_note(data), scale=scale)
+    return chart or ChartGap(title, "그릴 계정이 없습니다.")
+
+
+def cash_bridge(data: dict) -> Chart | ChartGap:
+    title = "현금 흐름 브리지"
+    accounts = data["accounts"]
+    begin, end, cfo, cfi, cff = (_account(accounts, k) for k in
+                                 ("cash_begin", "cash_end", "cfo", "cfi", "cff"))
+    names = (("기초 현금", begin), ("기말 현금", end), ("영업활동 현금흐름", cfo),
+             ("투자활동 현금흐름", cfi), ("재무활동 현금흐름", cff))
+    missing = [name for name, v in names if v is None]
+    if missing:
+        return ChartGap(title, f"{', '.join(missing)} 계정을 DART 표준 계정 ID 로 찾지 못했습니다.")
+    other = end - begin - cfo - cfi - cff     # 환율 변동 등. 값이 맞지 않으면 숨기지 않고 보여준다
+    steps: list[tuple[str, float, str]] = [("기초 현금", begin, "total"), ("영업활동", cfo, "delta"),
+                                           ("투자활동", cfi, "delta"), ("재무활동", cff, "delta")]
+    if abs(other) >= 1.0:
+        steps.append(("환율·기타", other, "delta"))
+    steps.append(("기말 현금", end, "total"))
+    scale = _won_scale([v for _, v, _ in steps])
+    chart = waterfall_chart(title, steps, note=_financial_note(data), scale=scale)
+    return chart or ChartGap(title, "그릴 계정이 없습니다.")
+
+
+def build_financial_charts(fundamentals_data: dict[str, str] | None) -> list[Chart | ChartGap]:
+    """재무 분석가가 보존한 핵심 계정(``fundamentals_data["accounts"]``)으로 재무 차트를 만든다.
+
+    ``fundamentals_data`` 가 없으면 (예전 run) 빈 리스트. DART 조회 실패·재무제표 없음은 두
+    차트 모두 사유로 표시한다. 계정을 찾지 못한 차트는 추정하지 않고 어떤 계정이 없는지 밝힌다.
+    """
+    if not fundamentals_data or "accounts" not in fundamentals_data:
+        return []
+    text = fundamentals_data.get("accounts") or ""
+    data = parse_financial_accounts(text)
+    if data is None:
+        first = text.strip().splitlines()[0][:160] if text.strip() else ""
+        reason = first or "재무제표 데이터가 없어 그리지 못했습니다."
+        return [ChartGap("손익 폭포", reason), ChartGap("현금 흐름 브리지", reason)]
+    return [income_waterfall(data), cash_bridge(data)]
