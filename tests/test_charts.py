@@ -509,3 +509,104 @@ def test_price_levels_gap_only_when_a_trader_stage_gave_nothing_to_draw():
     # 트레이더 단계도, 그릴 가격도 없으면 영역 자체를 만들지 않는다
     assert charts.build_price_levels({"final_trade_decision": "**등급**: 보유"}) is None
     assert charts.build_price_levels({}) is None
+
+
+# ---------- #149: 재무 차트 (DART 표준 계정 ID 기반) ----------
+
+def _fin(**accounts):
+    """``dart.get_financial_accounts`` 가 돌려주는 JSON 과 같은 모양 (값은 원)."""
+    import json
+
+    return json.dumps({
+        "year": 2026, "report": "반기보고서", "period": "반기 누적 (1~6월)", "basis": "연결", "unit": "원",
+        "accounts": {k: {"name": k, "value": v} for k, v in accounts.items()},
+    }, ensure_ascii=False)
+
+
+_FULL = {
+    "revenue": 18_687_443_966, "gross_profit": 5_650_725_225, "operating_income": -986_018_595,
+    "net_income": 1_922_976_626, "cash_begin": 3_815_574_106, "cfo": -4_713_250_282,
+    "cfi": 6_050_719_351, "cff": -767_821_802, "cash_end": 4_502_405_775,
+}
+
+
+@pytest.mark.unit
+def test_parse_financial_accounts_reads_json_and_rejects_failure_text():
+    assert charts.parse_financial_accounts(_fin(revenue=1))["accounts"]["revenue"]["value"] == 1
+    for text in ("", "조회된 재무제표가 없습니다.", "[DART 조회 실패: x]", "[1, 2]", '{"no": "accounts"}'):
+        assert charts.parse_financial_accounts(text) is None
+
+
+@pytest.mark.unit
+def test_income_waterfall_ties_out_and_shows_losses_below_zero():
+    chart = charts.income_waterfall(charts.parse_financial_accounts(_fin(**_FULL)))
+    assert isinstance(chart, Chart) and chart.title == "손익 폭포"
+    # 단위 억 원: 매출 186.9, 매출원가 -130.4, 매출총이익 56.5, 판관비 등 -66.4, 영업이익 -9.9 …
+    for text in (">186.9<", ">-130.4<", ">56.5<", ">-66.4<", ">-9.9<", ">+29.1<", ">19.2<"):
+        assert text in chart.svg, text
+    assert "반기 누적 (1~6월)" in chart.note and "연결 재무제표" in chart.note and "억 원" in chart.note
+    assert chart.svg.count('class="bar down"') == 2      # 매출원가, 판관비 등
+    assert chart.svg.count('class="bar up"') == 1        # 영업외·법인세 등 (+29.1)
+    assert chart.svg.count('class="bar total"') == 4     # 매출액, 매출총이익, 영업이익, 순이익
+
+
+@pytest.mark.unit
+def test_income_waterfall_without_gross_profit_skips_the_subtotal():
+    accounts = {k: v for k, v in _FULL.items() if k != "gross_profit"}
+    chart = charts.income_waterfall(charts.parse_financial_accounts(_fin(**accounts)))
+    assert isinstance(chart, Chart) and "매출총이익" not in chart.svg and "영업비용 등" in chart.svg
+
+
+@pytest.mark.unit
+def test_missing_accounts_are_named_not_guessed():
+    accounts = {k: v for k, v in _FULL.items() if k != "operating_income"}
+    gap = charts.income_waterfall(charts.parse_financial_accounts(_fin(**accounts)))
+    assert isinstance(gap, ChartGap) and "영업이익" in gap.reason and "표준 계정 ID" in gap.reason
+    cash_gap = charts.cash_bridge(charts.parse_financial_accounts(_fin(revenue=1)))
+    assert isinstance(cash_gap, ChartGap) and "기초 현금" in cash_gap.reason and "영업활동 현금흐름" in cash_gap.reason
+
+
+@pytest.mark.unit
+def test_cash_bridge_ties_to_the_ending_balance_with_the_remainder_shown():
+    chart = charts.cash_bridge(charts.parse_financial_accounts(_fin(**_FULL)))
+    assert isinstance(chart, Chart)
+    # 38.2 + (-47.1) + 60.5 + (-7.7) + 환율·기타 1.2 = 45.0
+    for text in (">38.2<", ">-47.1<", ">+60.5<", ">-7.7<", ">+1.2<", ">45.0<"):
+        assert text in chart.svg, text
+    assert "환율·기타" in chart.svg
+
+
+@pytest.mark.unit
+def test_cash_bridge_omits_the_remainder_step_when_it_is_zero():
+    accounts = dict(_FULL, cash_end=_FULL["cash_begin"] + _FULL["cfo"] + _FULL["cfi"] + _FULL["cff"])
+    chart = charts.cash_bridge(charts.parse_financial_accounts(_fin(**accounts)))
+    assert "환율·기타" not in chart.svg
+
+
+@pytest.mark.unit
+def test_large_amounts_use_trillions_without_a_pointless_negative_axis():
+    chart = charts.income_waterfall(charts.parse_financial_accounts(_fin(
+        revenue=305_372_914_000_000, gross_profit=201_213_884_000_000,
+        operating_income=146_725_209_000_000, net_income=118_849_733_000_000)))
+    assert "조 원" in chart.note and ">305.37<" in chart.svg
+    axis = [float(t) for t in re.findall(r'class="axis" x="[\d.]+" y="[\d.]+" text-anchor="end">(-?[\d.,]+)<', chart.svg)]
+    assert min(axis) == 0.0           # 음수가 없는 손익은 0 아래로 축을 늘리지 않는다
+
+
+@pytest.mark.unit
+def test_build_financial_charts_states_a_dart_failure_for_both_charts():
+    for text in ("[DART 조회 실패: DART_API_KEY 환경변수가 설정되지 않았습니다.]", "조회된 재무제표가 없습니다."):
+        items = charts.build_financial_charts({"accounts": text})
+        assert [type(i) for i in items] == [ChartGap, ChartGap]
+        assert items[0].reason == text.splitlines()[0][:160]
+
+
+@pytest.mark.unit
+def test_no_fundamentals_data_means_no_chart_area():
+    assert charts.build_financial_charts(None) == [] and charts.build_financial_charts({}) == []
+
+
+@pytest.mark.unit
+def test_build_financial_charts_draws_both_from_complete_accounts():
+    items = charts.build_financial_charts({"accounts": _fin(**_FULL)})
+    assert [i.title for i in items] == ["손익 폭포", "현금 흐름 브리지"] and all(isinstance(i, Chart) for i in items)

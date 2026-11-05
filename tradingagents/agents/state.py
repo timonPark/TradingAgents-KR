@@ -55,6 +55,7 @@ class AgentState(MessagesState):
     news_report: Annotated[str, "Report from the News Analyst on company and world news"]
     macro_data: Annotated[dict, "Raw ECOS macro sections keyed by indicator alias, the report's macro charts are drawn from (#144)"]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Analyst"]
+    fundamentals_data: Annotated[dict, "Raw structured key accounts (JSON text under 'accounts') the report's financial charts are drawn from (#149)"]
 
     # researcher team discussion step
     investment_debate_state: Annotated[

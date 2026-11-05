@@ -23,6 +23,8 @@ run 자체는 완결되도록).
 from __future__ import annotations
 
 import importlib
+import json
+import math
 import os
 from datetime import datetime
 from typing import Any
@@ -369,3 +371,105 @@ def get_convertible_bonds(ticker: str, trade_date: str = "") -> str:
         return pretty.to_markdown(index=False)
     except Exception as exc:  # noqa: BLE001
         return f"[CB 공시 포맷 실패: {exc}]"
+
+
+# ---------------------------------------------------------------------------
+# 핵심 계정 구조화 (#149) — 보고서 재무 차트용
+# ---------------------------------------------------------------------------
+
+# 계정명(``account_nm``)은 회사마다 다르다 (``매출액`` / ``수익``, ``반기순이익`` /
+# ``당기순이익(손실)``). 그래서 핵심 계정은 **DART 표준 계정 ID**(``account_id``)로 식별한다.
+# (key, 표준 계정 ID, 찾을 재무제표 구분)  — 삼성전자·두산에너빌리티·금호전기 응답으로 확인.
+_INCOME_DIVS = ("IS", "CIS")   # 손익계산서가 없는 회사는 포괄손익계산서(CIS)에 함께 있다
+_KEY_ACCOUNTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("revenue", "ifrs-full_Revenue", _INCOME_DIVS),
+    ("cost_of_sales", "ifrs-full_CostOfSales", _INCOME_DIVS),
+    ("gross_profit", "ifrs-full_GrossProfit", _INCOME_DIVS),
+    ("operating_income", "dart_OperatingIncomeLoss", _INCOME_DIVS),
+    ("profit_before_tax", "ifrs-full_ProfitLossBeforeTax", _INCOME_DIVS),
+    ("net_income", "ifrs-full_ProfitLoss", _INCOME_DIVS),
+    ("cfo", "ifrs-full_CashFlowsFromUsedInOperatingActivities", ("CF",)),
+    ("cfi", "ifrs-full_CashFlowsFromUsedInInvestingActivities", ("CF",)),
+    ("cff", "ifrs-full_CashFlowsFromUsedInFinancingActivities", ("CF",)),
+    ("fx_effect", "ifrs-full_EffectOfExchangeRateChangesOnCashAndCashEquivalents", ("CF",)),
+    ("cash_begin", "dart_CashAndCashEquivalentsAtBeginningOfPeriodCf", ("CF",)),
+    ("cash_end", "dart_CashAndCashEquivalentsAtEndOfPeriodCf", ("CF",)),
+)
+
+# 손익 항목은 누적 금액(``thstrm_add_amount``)을 쓴다: 반기·3분기 보고서의 ``thstrm_amount`` 는
+# 해당 분기 3개월치라 현금흐름표(누적)와 기간이 다르다. 누적 금액이 없는 보고서(1분기·사업보고서)
+# 는 ``thstrm_amount`` 가 곧 누적(= 해당 기간 전체)이다.
+_PERIOD_LABELS = {
+    "11013": "1분기 누적 (1~3월)",
+    "11012": "반기 누적 (1~6월)",
+    "11014": "3분기 누적 (1~9월)",
+    "11011": "연간",
+}
+
+
+def _amount(raw: Any) -> float | None:
+    """DART 금액 문자열(``'1,234'``/``'-5'``/빈 값/nan) → float. 해석 불가면 None."""
+    if raw is None:
+        return None
+    if isinstance(raw, float) and math.isnan(raw):
+        return None
+    text = str(raw).replace(",", "").strip()
+    if not text or text.lower() == "nan" or text == "-":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _pick_amount(row: Any, division: str) -> float | None:
+    cumulative = _amount(row.get("thstrm_add_amount")) if division in _INCOME_DIVS else None
+    return cumulative if cumulative is not None else _amount(row.get("thstrm_amount"))
+
+
+def extract_key_accounts(df: Any, year: int, reprt_code: str) -> dict[str, Any]:
+    """``finstate_all`` DataFrame 에서 핵심 계정을 표준 계정 ID 로 뽑는다.
+
+    같은 ID 가 손익계산서와 포괄손익계산서에 모두 있으면 손익계산서(IS)가 우선한다. 값이
+    비어 있는 계정은 결과에서 뺀다 (0 으로 채우지 않는다).
+    """
+    accounts: dict[str, dict[str, Any]] = {}
+    if df is not None and not getattr(df, "empty", True) and "account_id" in df.columns:
+        for key, account_id, divisions in _KEY_ACCOUNTS:
+            for division in divisions:
+                rows = df[(df["account_id"] == account_id) & (df["sj_div"] == division)]
+                if "account_detail" in rows.columns:   # 부문별(주석) 행이 아니라 본표 행
+                    main = rows[rows["account_detail"].isin(["-", "", None])]
+                    rows = main if not main.empty else rows
+                for _, row in rows.iterrows():
+                    value = _pick_amount(row, division)
+                    if value is not None:
+                        accounts[key] = {"name": str(row.get("account_nm", "")), "value": value}
+                        break
+                if key in accounts:
+                    break
+    return {
+        "year": year,
+        "reprt_code": reprt_code,
+        "report": _REPRT_LABELS.get(reprt_code, reprt_code),
+        "period": _PERIOD_LABELS.get(reprt_code, ""),
+        "basis": "연결",     # finstate_all 을 CFS(연결)로 요청한다
+        "unit": "원",
+        "accounts": accounts,
+    }
+
+
+def get_financial_accounts(ticker: str, curr_date: str, trade_date: str = "") -> str:
+    """보고서 차트용 핵심 계정(JSON). 표준 계정 ID 로 식별한 값만 담는다 (#149).
+
+    성공하면 ``{"year", "report", "period", "basis", "unit", "accounts": {key: {name, value}}}``
+    JSON 문자열. 실패·데이터 없음은 다른 DART 함수처럼 사람이 읽는 문구를 돌려준다.
+    """
+    try:
+        _dart()
+    except Exception as exc:  # noqa: BLE001
+        return f"[DART 조회 실패: {exc}]"
+    year, code, df = _latest_finstate(ticker, curr_date, "quarterly")
+    if df is None:
+        return "조회된 재무제표가 없습니다."
+    return json.dumps(extract_key_accounts(df, year, code), ensure_ascii=False)

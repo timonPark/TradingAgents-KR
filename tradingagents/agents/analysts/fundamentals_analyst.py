@@ -14,6 +14,7 @@ from tradingagents.agents.tools import (
     get_balance_sheet,
     get_cashflow,
     get_convertible_bonds,
+    get_financial_accounts,
     get_fundamentals,
     get_income_statement,
     get_insider_transactions,
@@ -67,7 +68,14 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
         "ticker": ticker,
         "trade_date": trade_date,
     })
+    # 보고서 재무 차트용 구조화 계정 (#149) — 프롬프트에는 주입하지 않는다.
+    financial_accounts = _safe(get_financial_accounts, {
+        "ticker": ticker,
+        "curr_date": trade_date,
+        "trade_date": trade_date,
+    })
     return {
+        "financial_accounts": financial_accounts,
         "fundamentals": fundamentals,
         "balance_sheet": balance_sheet,
         "cashflow": cashflow,
@@ -143,6 +151,7 @@ def create_fundamentals_analyst(llm):
         return {
             "messages": [result],
             "fundamentals_report": report,
+            "fundamentals_data": {"accounts": prefetched["financial_accounts"]},
         }
 
     return fundamentals_analyst_node

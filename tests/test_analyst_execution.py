@@ -42,12 +42,13 @@ class AnalystChartDataTests(unittest.TestCase):
             ["market", "social", "news", "fundamentals"]).specs}
         self.assertEqual(keys["market"], "market_data")
         self.assertEqual(keys["news"], "macro_data")
+        self.assertEqual(keys["fundamentals"], "fundamentals_data")
         self.assertIsNone(keys["social"])
 
     def test_chart_data_survives_the_analyst_subgraph(self):
         from tradingagents.graph.setup import _analyst_graph
 
-        for analyst in ("market", "news"):
+        for analyst in ("market", "news", "fundamentals"):
             spec = build_analyst_execution_plan([analyst]).specs[0]
 
             def node(state, spec=spec):
