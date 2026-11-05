@@ -34,6 +34,28 @@ RATING_REVIEW = "REVIEW"
 
 _RATING_SET = {r.lower() for r in RATINGS_5_TIER}
 
+# #145: 화면에 보이는 한국어 표기. 내부 값(파서·백테스트·메모리 로그)은 영어 그대로 두고
+# 표시 계층에서만 바꾼다. 파서는 한국어 표기도 같은 등급으로 읽는다.
+RATING_KO: dict[str, str] = {
+    "Buy": "매수", "Overweight": "비중 확대", "Hold": "보유",
+    "Underweight": "비중 축소", "Sell": "매도",
+}
+_KO_TO_RATING = {ko.replace(" ", ""): en for en, ko in RATING_KO.items()}
+# 값 자리에 올 수 있는 토큰. 두 단어짜리 한국어 표기("비중 확대")를 \w+ 보다 먼저 시도한다.
+_VALUE = r"(비중\s*확대|비중\s*축소|\w+)"
+
+
+def display_rating(rating: str) -> str:
+    """내부 등급 값의 한국어 표기. 알 수 없는 값(예: ``REVIEW``)은 그대로 돌려준다."""
+    return RATING_KO.get(rating, rating)
+
+
+def _canonical(value: str) -> str | None:
+    """영어 값 또는 한국어 표기를 내부 등급 값(``Buy`` 등)으로. 등급이 아니면 None."""
+    if value.lower() in _RATING_SET:
+        return value.capitalize()
+    return _KO_TO_RATING.get(re.sub(r"\s+", "", value))
+
 # 라벨 토큰: 영어 ("rating\b", 단어 경계 필수) + 한국어 ("등급" / "최종 거래 제안",
 # 자연 경계). "최종 거래 제안" 은 공백 / 가운뎃점 (·) 구분자 수용.
 _LABEL_TOKEN = r"(?:rating\b|등급|최종[\s·]*거래[\s·]*제안)"
@@ -43,7 +65,7 @@ _LABEL_TOKEN = r"(?:rating\b|등급|최종[\s·]*거래[\s·]*제안)"
 # a model writes as the separator. "rating" 영어는 단어 경계 (lookbehind +
 # `\b`) 로 "Operating margin: Sell-side" 를 걸러냄.
 _RATING_LABEL_RE = re.compile(
-    r"(?<![a-z])" + _LABEL_TOKEN + r"[^:\-‐-―]*[:\-‐-―][\s*]*(\w+)",
+    r"(?<![a-z])" + _LABEL_TOKEN + r"[^:\-‐-―]*[:\-‐-―][\s*]*" + _VALUE,
     re.IGNORECASE,
 )
 
@@ -59,7 +81,7 @@ _OWN_QUALIFIER = (
 )
 _RATING_LINE_RE = re.compile(
     r"\s*(?P<item>(?:[-+*•]|\d+[.)])\s+)?[\s*_#]*" + _OWN_QUALIFIER
-    + _LABEL_TOKEN + r"[^\w:\-‐-―]*[:\-‐-―][\s*]*(?P<value>\w+)",
+    + _LABEL_TOKEN + r"[^\w:\-‐-―]*[:\-‐-―][\s*]*(?P<value>비중\s*확대|비중\s*축소|\w+)",
     re.IGNORECASE,
 )
 
@@ -69,6 +91,12 @@ _RATING_SCALE_RE = re.compile(
     r"(?:rating\s*(scale|options|legend)|등급\s*(?:척도|옵션|범례))",
     re.IGNORECASE,
 )
+
+def canonical_rating(value: str) -> str | None:
+    """영어 값·한국어 표기·``REVIEW`` 를 내부 값으로. 해석 불가면 None (#145)."""
+    value = value.strip()
+    return value if value == RATING_REVIEW else _canonical(value)
+
 
 def extract_rating(text: str) -> str | None:
     """Extract a 5-tier rating from its label, or ``None`` if there is none.
@@ -94,17 +122,17 @@ def extract_rating(text: str) -> str | None:
     first = next((line for line in lines if not line.lstrip().startswith("#")
                   or _RATING_LINE_RE.match(line)), "")
     m = _RATING_LINE_RE.match(first)
-    opening = m if m and m.group("value").lower() in _RATING_SET else None
+    opening = m if m and _canonical(m.group("value")) else None
     if opening and not opening.group("item"):
-        return opening.group("value").capitalize()
+        return _canonical(opening.group("value"))
 
-    own = [opening.group("value").capitalize()] if opening else []
+    own = [_canonical(opening.group("value"))] if opening else []
     labels = []
     for line in lines:
         m = _RATING_LINE_RE.match(line)
-        if m and not m.group("item") and m.group("value").lower() in _RATING_SET:
-            own.append(m.group("value").capitalize())
-        labels += [v.capitalize() for v in _RATING_LABEL_RE.findall(line) if v.lower() in _RATING_SET]
+        if m and not m.group("item") and _canonical(m.group("value")):
+            own.append(_canonical(m.group("value")))
+        labels += [c for v in _RATING_LABEL_RE.findall(line) if (c := _canonical(v))]
     # Without a label there is no call to read: a rating word in the prose may be
     # one the text argues against ("not a Sell"), and reading it reports a
     # direction nobody decided.

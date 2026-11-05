@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from tradingagents.agents.rating import canonical_rating
+
 logger = logging.getLogger(__name__)
 
 # `ticker_YYYYMMDD_HHMMSS` 디렉터리명 (6자리 한국 종목코드 + stamp).
@@ -21,8 +23,15 @@ _REPORT_ID_PATTERN = re.compile(r"^(\d{6})_(\d{8})_(\d{6})$")
 _ALLOWED_FOLDERS = frozenset({"analysts", "research", "trading", "risk", "portfolio"})
 _SECTION_FILE_PATTERN = re.compile(r"^[a-z_]+\.md$")
 
-# 등급 파싱용: "- 등급: BUY" 형태의 라인에서 등급 추출.
-_RATING_PATTERN = re.compile(r"^-\s*등급\s*:\s*([A-Za-z]+)")
+# 등급 파싱용: "- 등급: 비중 축소" / "- 등급: Underweight" 형태의 라인에서 등급 추출.
+# 헤더는 한국어 표기(#145)로 쓰지만 이전에 저장된 보고서는 영어 값이라 둘 다 읽는다.
+_RATING_PATTERN = re.compile(r"^-\s*등급\s*:\s*(\S.*)$")
+
+
+def rating_from_header_line(line: str) -> str | None:
+    """헤더 라인에서 내부 등급 값(``Underweight`` 등)을 읽는다. 없으면 None."""
+    match = _RATING_PATTERN.match(line.strip())
+    return canonical_rating(match.group(1)) if match else None
 
 
 @dataclass(frozen=True)
@@ -62,9 +71,9 @@ def _extract_decision(complete_report_path: Path) -> str | None:
     except OSError:
         return None
     for line in text.splitlines()[:20]:
-        match = _RATING_PATTERN.match(line.strip())
-        if match:
-            return match.group(1)
+        rating = rating_from_header_line(line)
+        if rating:
+            return rating
     return None
 
 

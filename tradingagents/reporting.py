@@ -9,7 +9,7 @@ run produces the same on-disk report tree a CLI run does.
 from datetime import datetime
 from pathlib import Path
 
-from tradingagents.agents.rating import run_rating
+from tradingagents.agents.rating import display_rating, run_rating
 
 
 def analyst_names(keys) -> list[str]:
@@ -28,7 +28,7 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
     if final_state.get("trade_date"):
         lines.append(f"- 분석일: {final_state['trade_date']}")
     if final_state.get("final_trade_decision"):
-        lines.append(f"- 등급: {run_rating(final_state)}")
+        lines.append(f"- 등급: {display_rating(run_rating(final_state))}")
     lines.append(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if settings:
         s = settings.get

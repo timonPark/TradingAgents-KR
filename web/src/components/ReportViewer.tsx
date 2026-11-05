@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import "./ReportViewer.css";
+import { ratingLabel } from "../utils/rating";
 
 const API_BASE =
 	(import.meta.env.PUBLIC_API_BASE as string | undefined) ??
@@ -149,7 +150,7 @@ export default function ReportViewer() {
 								{s.name ? ` · ${s.name}` : ""}
 							</span>
 							{s.decision && (
-								<span className={`ks-tag ${decisionClass(s.decision)}`}>{s.decision}</span>
+								<span className={`ks-tag ${decisionClass(s.decision)}`}>{ratingLabel(s.decision)}</span>
 							)}
 						</li>
 					))}
@@ -174,7 +175,7 @@ export default function ReportViewer() {
 							</h1>
 							{tree.decision && (
 								<span className={`ks-tag report-decision ${decisionClass(tree.decision)}`}>
-									{tree.decision}
+									{ratingLabel(tree.decision)}
 								</span>
 							)}
 

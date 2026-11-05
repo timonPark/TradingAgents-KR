@@ -765,7 +765,7 @@ class TestPortfolioManagerInjection:
         md = result["final_trade_decision"]
         # Task 9b (#81): Korean 디폴트 라벨 (등급/요약 전략/투자 논리/목표가/투자 기간),
         # 값 (Overweight 등) 은 영어 유지로 파서 호환.
-        assert "**등급**: Overweight" in md
+        assert "**등급**: 비중 확대" in md
         assert "**요약 전략**: Build position gradually" in md
         assert "**투자 논리**: AI capex cycle" in md
         assert "**목표가**: 215.0" in md
