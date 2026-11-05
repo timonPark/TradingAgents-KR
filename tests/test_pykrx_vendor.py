@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import patch
 
 import pandas as pd
@@ -114,58 +115,114 @@ def test_get_stock_stats_indicators_window_marks_non_trading_days():
     assert "N/A" in result
 
 
-@pytest.mark.unit
-def test_get_investor_net_purchases_fails_safe_without_credentials(monkeypatch):
-    """로그인을 지원하는 pykrx 에서 자격증명 없음 → 명확한 사용자 안내 (예외 아님)."""
-    monkeypatch.delenv("KRX_ID", raising=False)
-    monkeypatch.delenv("KRX_PW", raising=False)
-    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: True)
-    result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
-    assert "KRX 로그인 자격증명이 없습니다" in result
-    assert "KRX 수급 조회 실패" in result
+# ---------- 투자자별 수급 (#139): KRX 로그인 세션 → 네이버 증권 폴백 → 조회 실패 ----------
+
+FETCH_KRX = "tradingagents.dataflows.vendors.pykrx._fetch_krx_investor_table"
+FETCH_NAVER = "tradingagents.dataflows.vendors.naver_investor.get_investor_flow"
 
 
-@pytest.mark.unit
-def test_get_investor_net_purchases_formats_series(monkeypatch):
-    monkeypatch.setenv("KRX_ID", "x")
-    monkeypatch.setenv("KRX_PW", "y")
-    df = pd.DataFrame({
+def _investor_df():
+    return pd.DataFrame({
         "매도": [100, 200, 300],
         "매수": [120, 180, 350],
         "순매수": [20_000_000, -20_000_000, 50_000_000],
     }, index=["외국인", "기관", "개인"])
-    with patch("pykrx.stock.get_market_trading_value_by_investor", return_value=df):
-        result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
-    assert "외국인" in result
-    assert "기관" in result
-    assert "순매수" in result or "20000000" in result or "20,000,000" in result
 
 
 @pytest.mark.unit
-def test_get_investor_net_purchases_bad_date(monkeypatch):
-    monkeypatch.setenv("KRX_ID", "x")
-    monkeypatch.setenv("KRX_PW", "y")
+def test_investor_net_purchases_formats_krx_table():
+    with patch(FETCH_KRX, return_value=_investor_df()):
+        result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
+    assert "외국인" in result and "기관" in result
+    assert "출처: KRX" in result
+    assert "단위: 원" in result
+
+
+@pytest.mark.unit
+def test_investor_net_purchases_bad_date():
     result = pykrx.get_investor_net_purchases("005930", "bad-date")
     assert "잘못된 날짜 형식" in result
 
 
 @pytest.mark.unit
-def test_get_investor_net_purchases_handles_vendor_error(monkeypatch):
-    monkeypatch.setenv("KRX_ID", "x")
-    monkeypatch.setenv("KRX_PW", "y")
-    with patch("pykrx.stock.get_market_trading_value_by_investor", side_effect=RuntimeError("boom")):
+def test_investor_net_purchases_handles_empty_table():
+    with patch(FETCH_KRX, return_value=pd.DataFrame()):
         result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
-    assert "KRX 수급 조회 실패" in result
-    assert "boom" in result
+    assert "수급 데이터가 없습니다" in result
 
 
 @pytest.mark.unit
-def test_get_investor_net_purchases_handles_empty(monkeypatch):
-    monkeypatch.setenv("KRX_ID", "x")
-    monkeypatch.setenv("KRX_PW", "y")
-    with patch("pykrx.stock.get_market_trading_value_by_investor", return_value=pd.DataFrame()):
-        result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
-    assert "수급 데이터가 없습니다" in result
+def test_investor_falls_back_to_naver_when_krx_login_fails():
+    from tradingagents.dataflows.vendors.krx_session import KrxLoginError
+
+    with patch(FETCH_KRX, side_effect=KrxLoginError("거부", code="CD007")), patch(
+        FETCH_NAVER, return_value="네이버 수급 표 (단위: 주)"
+    ) as naver:
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert result == "네이버 수급 표 (단위: 주)"
+    naver.assert_called_once_with("001210", "2026-11-04", 5)
+
+
+@pytest.mark.unit
+def test_investor_falls_back_to_naver_without_krx_credentials():
+    from tradingagents.dataflows.errors import VendorNotConfiguredError
+
+    with patch(FETCH_KRX, side_effect=VendorNotConfiguredError("KRX_ID 없음")), patch(
+        FETCH_NAVER, return_value="네이버 수급 표"
+    ):
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert result == "네이버 수급 표"
+
+
+@pytest.mark.unit
+def test_investor_reports_both_causes_when_every_source_fails():
+    from tradingagents.dataflows.errors import VendorUnavailableError
+
+    with patch(FETCH_KRX, side_effect=KeyError("거래대금")), patch(
+        FETCH_NAVER, side_effect=VendorUnavailableError("네이버 증권 수급 HTTP 500")
+    ):
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert result.startswith("[KRX 수급 조회 실패")
+    assert "KeyError" in result and "거래대금" in result
+    assert "네이버 증권: 네이버 증권 수급 HTTP 500" in result
+    assert "수급을 추정하거나 언급하지 마세요" in result
+
+
+@pytest.mark.unit
+def test_investor_failure_with_plain_error_keeps_detail():
+    from tradingagents.dataflows.errors import VendorUnavailableError
+
+    with patch(FETCH_KRX, side_effect=RuntimeError("boom")), patch(
+        FETCH_NAVER, side_effect=VendorUnavailableError("x")
+    ):
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert "RuntimeError: boom" in result
+
+
+# ---------- 조회 창: 정확히 최근 N 거래일 ----------
+
+@pytest.mark.unit
+def test_window_start_is_nth_trading_day_back():
+    # 2026-11-04(수) 기준 5거래일 = 10/29, 10/30, 11/02, 11/03, 11/04
+    start = pykrx._window_start(datetime(2026, 11, 4), 5)
+    assert start.strftime("%Y-%m-%d") == "2026-10-29"
+
+
+@pytest.mark.unit
+def test_window_start_falls_back_to_weekdays_when_calendar_breaks(monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("calendar broke")
+
+    monkeypatch.setattr("tradingagents.dataflows.krx_calendar.trading_days_in_range", boom)
+    start = pykrx._window_start(datetime(2026, 11, 4), 5)
+    assert start.strftime("%Y-%m-%d") == "2026-10-29"  # 주말만 제외한 근사
+
+
+@pytest.mark.unit
+def test_investor_queries_the_exact_window():
+    with patch(FETCH_KRX, return_value=_investor_df()) as fetch:
+        pykrx.get_investor_net_purchases("001210", "2026-11-04", look_back_days=5)
+    assert fetch.call_args.args == ("001210", "20261029", "20261104")
 
 
 @pytest.mark.unit
@@ -218,51 +275,3 @@ def test_live_indicator_window_renders_rsi_values():
     assert "rsi" in out.lower()
     # 영업일/주말 라인 둘 다 가능
     assert "2026-11-03" in out or "2026-11-02" in out
-
-
-# ---------- #139: 수급 조회 실패 원인 진단 ----------
-
-@pytest.mark.unit
-def test_investor_failure_explains_missing_login_support_for_keyerror(monkeypatch):
-    """pykrx 1.0.x 의 ``KeyError: '거래대금'`` 을 원인과 함께 설명한다."""
-    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: False)
-    monkeypatch.setattr(pykrx, "_pykrx_version", lambda: "1.0.51")
-    with patch("pykrx.stock.get_market_trading_value_by_investor", side_effect=KeyError("거래대금")):
-        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
-    assert result.startswith("[KRX 수급 조회 실패")
-    assert "KeyError" in result
-    assert "pykrx 1.0.51" in result
-    assert "로그인을 지원하지 않는" in result
-    assert "수급을 추정하거나 언급하지 마세요" in result
-
-
-@pytest.mark.unit
-def test_investor_credentials_not_required_when_login_unsupported(monkeypatch):
-    """로그인 미지원 pykrx 는 KRX_ID/PW 를 읽지 않으므로 사전 검사로 막지 않는다."""
-    monkeypatch.delenv("KRX_ID", raising=False)
-    monkeypatch.delenv("KRX_PW", raising=False)
-    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: False)
-    df = pd.DataFrame({"순매수": [1, 2, 3]}, index=["외국인", "기관", "개인"])
-    with patch("pykrx.stock.get_market_trading_value_by_investor", return_value=df) as mock_call:
-        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
-    assert mock_call.call_count == 1
-    assert "자격증명이 없습니다" not in result
-    assert "외국인" in result
-
-
-@pytest.mark.unit
-def test_investor_failure_with_login_support_keeps_plain_detail(monkeypatch):
-    monkeypatch.setenv("KRX_ID", "x")
-    monkeypatch.setenv("KRX_PW", "y")
-    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: True)
-    with patch("pykrx.stock.get_market_trading_value_by_investor", side_effect=RuntimeError("boom")):
-        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
-    assert "RuntimeError: boom" in result
-    assert "로그인을 지원하지 않는" not in result
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("spec,expected", [(object(), True), (None, False)])
-def test_pykrx_supports_login_detects_auth_module(monkeypatch, spec, expected):
-    monkeypatch.setattr(pykrx.importlib.util, "find_spec", lambda name: spec)
-    assert pykrx._pykrx_supports_login() is expected
