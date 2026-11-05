@@ -1,7 +1,7 @@
 # [#163] 보고서에 회사 개요 추가 (사업 내용 + 표지 회사명)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/163
-- PR: (PR 생성 후 기입)
+- PR: 
 - 브랜치: feat/163-company-overview
 - 작업 기간: 2026-11-06
 
