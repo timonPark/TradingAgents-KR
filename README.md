@@ -192,10 +192,13 @@ pip install pykrx OpenDartReader finance-datareader
 # 한국 데이터 소스
 export DART_API_KEY=...            # 금융감독원 Open DART 인증키 (필수)
 export ECOS_API_KEY=...            # 한국은행 ECOS API 인증키 (선택)
+export NAVER_API_HUB_CLIENT_ID=... # NAVER API HUB 뉴스 검색 Client ID (선택)
+export NAVER_API_HUB_CLIENT_SECRET=...  # NAVER API HUB 뉴스 검색 Client Secret (선택)
 ```
 
 - **DART 인증키 발급**: [opendart.fss.or.kr](https://opendart.fss.or.kr/) 에서 무료 발급
 - **ECOS 인증키 발급**: [ecos.bok.or.kr](https://ecos.bok.or.kr/) 에서 무료 발급
+- **NAVER API HUB 키 발급**: NCP 콘솔 > NAVER API HUB > Application 등록 (카테고리 `NAVER 검색` > `뉴스`) 후 [인증 정보] 에서 확인. 네이버 검색 오픈 API 는 2026-07-31 부터 개발자센터 신규 신청이 막히고 NAVER API HUB 로 이관됐습니다. 키가 없으면 네이버 증권 뉴스(keyless)로 자동 폴백합니다.
 
 > ⚠️ **LLM API 키는 설정하지 마세요.** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` 등은 Task 2 (#21) 로 코드베이스에서 제거되었고 참조되지 않습니다. 유일한 예외는 디버깅용 `TRADINGAGENTS_CLAUDE_BARE=1` escape hatch 가 `ANTHROPIC_API_KEY` 를 요구하는 경우입니다 (CLAUDE.md §4.6).
 
@@ -428,7 +431,8 @@ pytest tests/test_pykrx_vendor.py -m integration -q
 | Vendor | 요구 환경변수 / 전제 조건 | 환경 미구성 시 |
 |---|---|---|
 | **pykrx** (OHLCV / 기술지표) | 없음 (keyless) | 항상 실행 |
-| **네이버뉴스** (뉴스 크롤러) | 없음 (keyless) | 항상 실행 |
+| **네이버뉴스** (네이버 증권 종목 뉴스 JSON) | 없음 (keyless) | 항상 실행 |
+| **NAVER API HUB** (뉴스 검색) | `NAVER_API_HUB_CLIENT_ID` / `NAVER_API_HUB_CLIENT_SECRET` | `pytest.skip` |
 | **DART** (재무 / 공시) | `DART_API_KEY` — https://opendart.fss.or.kr/ 발급 | `pytest.skip` |
 | **ECOS** (한국은행 거시) | `ECOS_API_KEY` — https://ecos.bok.or.kr/ 발급 | `pytest.skip` |
 | **Claude Code** (LLM 어댑터) | `claude` CLI PATH 등록 + Max/Pro OAuth 로그인 | `pytest.skip` |
