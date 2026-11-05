@@ -275,3 +275,28 @@ def test_macro_charts_follow_the_news_analyst_text(tmp_path):
 @pytest.mark.unit
 def test_no_macro_data_leaves_the_news_section_without_charts(tmp_path):
     assert "거시 지표 차트" not in _html(tmp_path)
+
+
+@pytest.mark.unit
+def test_glance_section_carries_price_levels_under_the_verdict_flow(tmp_path):
+    from tradingagents.agents.schemas import (
+        PortfolioDecision,
+        PortfolioRating,
+        TraderAction,
+        TraderProposal,
+        render_pm_decision,
+        render_trader_proposal,
+    )
+    page = _html(
+        tmp_path, **_decision_state(
+            trader_investment_plan=render_trader_proposal(TraderProposal(
+                action=TraderAction.SELL, reasoning="r", entry_price=130, stop_loss=140)),
+            final_trade_decision=render_pm_decision(PortfolioDecision(
+                rating=PortfolioRating.UNDERWEIGHT, executive_summary="s", investment_thesis="t",
+                price_target=90)),
+            market_data=_MARKET_DATA,       # 마지막 종가 110
+        ),
+    )
+    glance = page[page.index('id="s0"'):page.index('id="s1"')]
+    assert glance.index("에이전트별 판정 흐름") < glance.index("가격 레벨 (거래 계획)")
+    assert "진입가 130원 (+18.2%)" in glance and "목표가 90원 (-18.2%)" in glance

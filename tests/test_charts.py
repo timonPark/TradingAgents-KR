@@ -421,3 +421,91 @@ def test_verdict_flow_chart_marks_direction_with_symbols_not_only_color():
 def test_render_charts_html_without_heading_has_no_h4():
     html = render_charts_html([ChartGap("t", "r")], None)
     assert "<h4>" not in html and 'class="viz-group"' in html
+
+
+# ---------- #144: 가격 레벨 (거래 계획) ----------
+
+def _levels_state(**overrides):
+    from tradingagents.agents.schemas import (
+        PortfolioDecision,
+        PortfolioRating,
+        TraderAction,
+        TraderProposal,
+        render_pm_decision,
+        render_trader_proposal,
+    )
+
+    state = {
+        "market_data": {"ohlcv": OHLCV},       # 마지막 종가 57,500
+        "trader_investment_plan": render_trader_proposal(TraderProposal(
+            action=TraderAction.SELL, reasoning="r", entry_price=60000, stop_loss=63000.5)),
+        "final_trade_decision": render_pm_decision(PortfolioDecision(
+            rating=PortfolioRating.UNDERWEIGHT, executive_summary="s", investment_thesis="t",
+            price_target=50000)),
+    }
+    state.update(overrides)
+    return state
+
+
+@pytest.mark.unit
+def test_price_levels_come_from_structured_lines_and_last_close():
+    levels = charts.parse_price_levels(_levels_state())
+    assert [(lv.kind, lv.value) for lv in levels] == [
+        ("current", 57500.0), ("entry", 60000.0), ("stop", 63000.5), ("target", 50000.0),
+    ]
+
+
+@pytest.mark.unit
+def test_not_provided_levels_are_skipped_not_read_as_zero():
+    from tradingagents.agents.schemas import TraderAction, TraderProposal, render_trader_proposal
+
+    state = _levels_state(trader_investment_plan=render_trader_proposal(
+        TraderProposal(action=TraderAction.HOLD, reasoning="r")))
+    assert [lv.kind for lv in charts.parse_price_levels(state)] == ["current", "target"]
+
+
+@pytest.mark.unit
+def test_price_levels_are_not_read_from_free_prose():
+    state = _levels_state(trader_investment_plan="진입가는 60,000원 정도가 좋아 보입니다.",
+                          final_trade_decision="목표가 50,000원")
+    assert [lv.kind for lv in charts.parse_price_levels(state)] == ["current"]
+
+
+@pytest.mark.unit
+def test_price_levels_chart_shows_distance_from_current_and_all_labels():
+    chart = charts.build_price_levels(_levels_state())
+    assert isinstance(chart, Chart)
+    for text in ("현재가 57,500원", "진입가 60,000원 (+4.3%)", "손절가 63,000원 (+9.6%)", "목표가 50,000원 (-13.0%)"):
+        assert text in chart.svg
+    assert 'aria-label="가격 레벨:' in chart.svg and 'viewBox="0 0 660 300"' in chart.svg
+
+
+@pytest.mark.unit
+def test_price_level_labels_do_not_overlap_when_prices_are_close():
+    from tradingagents.charts import PriceLevel, price_levels_chart
+
+    chart = price_levels_chart([
+        PriceLevel("current", "현재가", 57500), PriceLevel("entry", "진입가", 57600),
+        PriceLevel("stop", "손절가", 57550), PriceLevel("target", "목표가", 100000),
+    ])
+    ys = sorted(float(y) for y in re.findall(r'<text x="[\d.]+" y="([\d.]+)"', chart.svg))
+    assert all(b - a >= 17.9 for a, b in zip(ys, ys[1:], strict=False))
+    assert max(ys) < 300
+
+
+@pytest.mark.unit
+def test_price_levels_need_two_levels():
+    from tradingagents.charts import PriceLevel, price_levels_chart
+
+    assert price_levels_chart([PriceLevel("current", "현재가", 1)]) is None
+    assert price_levels_chart([]) is None
+
+
+@pytest.mark.unit
+def test_price_levels_gap_only_when_a_trader_stage_gave_nothing_to_draw():
+    nothing = {"trader_investment_plan": "최종 거래 제안: **보유**", "final_trade_decision": "**등급**: 보유"}
+    gap = charts.build_price_levels(nothing)
+    assert isinstance(gap, ChartGap) and "제시하지 않았" in gap.reason
+    # 트레이더 단계도, 그릴 가격도 없으면 영역 자체를 만들지 않는다
+    assert charts.build_price_levels({"final_trade_decision": "**등급**: 보유"}) is None
+    assert charts.build_price_levels({}) is None

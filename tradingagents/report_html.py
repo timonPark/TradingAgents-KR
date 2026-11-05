@@ -16,6 +16,7 @@ from tradingagents.agents.rating import display_rating, run_rating
 from tradingagents.charts import (
     build_macro_charts,
     build_market_charts,
+    build_price_levels,
     build_verdict_flow,
     render_charts_html,
     verdict_flow_chart,
@@ -204,6 +205,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .viz svg .flow.up .verdict { fill: var(--up); }
 .viz svg .flow.down .verdict { fill: var(--down); }
 .viz svg .arrow { fill: none; stroke: var(--mark); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.viz svg .lvl line { stroke-width: 1.8; }
+.viz svg .lvl text { font: 12px var(--sans); fill: var(--ink); }
+.viz svg .lvl.current line { stroke: var(--ink); }
+.viz svg .lvl.target line { stroke: var(--up); stroke-dasharray: 6 3; }
+.viz svg .lvl.target text { fill: var(--up); }
+.viz svg .lvl.stop line { stroke: var(--down); stroke-dasharray: 2 3; }
+.viz svg .lvl.stop text { fill: var(--down); }
+.viz svg .lvl.entry line { stroke: var(--accent); stroke-dasharray: 10 3 2 3; }
 .viz figcaption { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.2rem; }
 .viz-gap p { margin: 0; padding: 0.7rem 0.9rem; background: var(--wash); border: 1px dashed var(--edge);
   color: var(--muted); font: 0.85rem/1.5 var(--sans); }
@@ -324,11 +333,12 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
                 body.append(render_charts_html(build_macro_charts(final_state.get("macro_data")), "거시 지표 차트"))
         body.append("</section>")
 
-    glance = verdict_flow_chart(build_verdict_flow(final_state))
+    glance = [c for c in (verdict_flow_chart(build_verdict_flow(final_state)),
+                          build_price_levels(final_state)) if c]
     if glance:
         contents.insert(0, '<li><a href="#s0"><span class="num">·</span> <span class="label">한눈에 보기</span></a></li>')
         body.insert(0, '<section id="s0"><h2>한눈에 보기</h2>'
-                       + render_charts_html([glance], None) + "</section>")
+                       + render_charts_html(glance, None) + "</section>")
 
     page_title = " ".join(x for x in (ticker, date, display_rating(rating) if rating else "") if x)
     return f"""<!doctype html>

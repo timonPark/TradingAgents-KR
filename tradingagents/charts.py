@@ -174,9 +174,9 @@ def _ticks(lo: float, hi: float, count: int = 4) -> list[float]:
     return [lo + (hi - lo) * i / count for i in range(count + 1)]
 
 
-def _svg(label: str, body: str) -> str:
+def _svg(label: str, body: str, height: int = _H) -> str:
     return (
-        f'<svg viewBox="0 0 {_W} {_H}" role="img" aria-label="{escape(label, quote=True)}">'
+        f'<svg viewBox="0 0 {_W} {height}" role="img" aria-label="{escape(label, quote=True)}">'
         f"{body}</svg>"
     )
 
@@ -650,3 +650,111 @@ def verdict_flow_chart(nodes: list[VerdictNode]) -> Chart | None:
         f'aria-label="{escape("에이전트별 판정 흐름: " + summary, quote=True)}">{"".join(parts)}</svg>'
     )
     return Chart("에이전트별 판정 흐름", svg, summary)
+
+
+# ---------------------------------------------------------------------------
+# 가격 레벨 — 트레이더·포트폴리오 매니저가 제시한 가격
+# ---------------------------------------------------------------------------
+
+_LEVEL_LABELS = {
+    "entry": (("진입가", "Entry Price"), "진입가"),
+    "stop": (("손절가", "Stop Loss"), "손절가"),
+    "target": (("목표가", "Price Target"), "목표가"),
+}
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
+@dataclass(frozen=True)
+class PriceLevel:
+    kind: str  # current | entry | stop | target
+    label: str
+    value: float
+
+
+def _labelled_price(text: str, labels: tuple[str, ...]) -> float | None:
+    """``**진입가**: 52000.0`` 줄의 숫자. "제공되지 않음" 등 숫자가 없으면 None."""
+    pattern = r"^\W*\*\*(?:" + "|".join(re.escape(label) for label in labels) + r")\*\*\s*:\s*([^\n]+)"
+    match = re.search(pattern, text or "", re.MULTILINE)
+    if not match:
+        return None
+    number = _NUMBER_RE.search(match.group(1))
+    return _number(number.group(0)) if number else None
+
+
+def parse_price_levels(final_state: dict) -> list[PriceLevel]:
+    """상태에서 현재가·진입가·손절가·목표가를 읽는다.
+
+    진입가·손절가는 트레이더, 목표가는 포트폴리오 매니저의 구조화 줄에서, 현재가는 사전조회
+    OHLCV 의 마지막 종가에서 읽는다. 에이전트 본문의 가격은 읽지 않는다.
+    """
+    levels: list[PriceLevel] = []
+    closes = parse_ohlcv((final_state.get("market_data") or {}).get("ohlcv", ""))
+    if closes:
+        levels.append(PriceLevel("current", "현재가", closes[-1][1]))
+    trader = final_state.get("trader_investment_plan", "")
+    decision = final_state.get("final_trade_decision", "")
+    for kind, source in (("entry", trader), ("stop", trader), ("target", decision)):
+        labels, shown = _LEVEL_LABELS[kind]
+        value = _labelled_price(source, labels)
+        if value is not None:
+            levels.append(PriceLevel(kind, shown, value))
+    return levels
+
+
+def price_levels_chart(levels: list[PriceLevel]) -> Chart | None:
+    """가격 사다리: 현재가 대비 진입가·손절가·목표가의 위치와 차이(%).
+
+    선 모양(실선·점선·긴 점선)과 글자로도 구분해 색만으로 구분하지 않는다.
+    """
+    if len(levels) < 2:
+        return None
+    current = next((lv.value for lv in levels if lv.kind == "current"), None)
+    lo, hi = _nice_range(min(lv.value for lv in levels), max(lv.value for lv in levels))
+    top, bottom = 24, 276
+    x0, x1 = 24, _W - 24
+
+    def y(value: float) -> float:
+        return top + (bottom - top) * (1 - (value - lo) / (hi - lo))
+
+    ordered = sorted(levels, key=lambda lv: y(lv.value))
+    label_y: list[float] = []
+    for lv in ordered:  # 글자가 겹치지 않게 위에서부터 최소 간격을 둔다
+        pos = y(lv.value)
+        if label_y and pos < label_y[-1] + 18:
+            pos = label_y[-1] + 18
+        label_y.append(pos)
+    overflow = label_y[-1] - (bottom + 8)
+    if overflow > 0:
+        label_y = [pos - overflow for pos in label_y]
+        for i in range(len(label_y) - 2, -1, -1):
+            label_y[i] = min(label_y[i], label_y[i + 1] - 18)
+
+    parts = []
+    for lv, ly in zip(ordered, label_y, strict=True):
+        py = y(lv.value)
+        diff = ""
+        if current and lv.kind != "current":
+            diff = f" ({(lv.value / current - 1) * 100:+.1f}%)"
+        parts.append(
+            f'<g class="lvl {lv.kind}"><line x1="{x0}" y1="{py:.1f}" x2="{x1 - 230}" y2="{py:.1f}"/>'
+            f'<text x="{x1}" y="{ly + 4:.1f}" text-anchor="end">'
+            f"{escape(lv.label)} {escape(_fmt_price(lv.value))}원{escape(diff)}</text></g>"
+        )
+    summary = ", ".join(f"{lv.label} {_fmt_price(lv.value)}원" for lv in sorted(levels, key=lambda lv: -lv.value))
+    svg = _svg(f"가격 레벨: {summary}", "".join(parts), 300)
+    note = "현재가는 사전조회 마지막 종가, 진입가·손절가는 트레이더, 목표가는 포트폴리오 매니저가 제시한 값"
+    return Chart("가격 레벨 (거래 계획)", svg, note)
+
+
+def build_price_levels(final_state: dict) -> Chart | ChartGap | None:
+    """거래 계획이 있는 run 의 가격 레벨 차트.
+
+    그릴 수 있으면 차트. 트레이더 단계가 있었는데 가격을 하나도 제시하지 않았으면 빈 차트
+    대신 사유. 트레이더 단계가 없고 그릴 가격도 없으면 None (영역을 만들지 않는다).
+    """
+    chart = price_levels_chart(parse_price_levels(final_state))
+    if chart:
+        return chart
+    if final_state.get("trader_investment_plan"):
+        return ChartGap("가격 레벨 (거래 계획)", "트레이더가 진입가·손절가를 제시하지 않았고 목표가도 없어 그리지 못했습니다.")
+    return None
