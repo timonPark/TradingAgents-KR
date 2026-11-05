@@ -6,10 +6,10 @@ Task 6a (#52): Yahoo Finance / Alpha Vantage 가격·지표 vendor 를 KRX 전�
 ### API 요구사항
 - **OHLCV** (`get_market_ohlcv_by_date`): keyless, 공개 엔드포인트
 - **투자자별 수급** (`get_market_trading_value_by_investor`): KRX 가 로그인을 요구.
-  KRX 로그인(``KRX_ID`` / ``KRX_PW`` 환경변수 자동 로그인)은 **pykrx 1.2.x 이상**
-  만 지원하고, 이 프로젝트가 쓰는 1.0.x (pandas 3 호환) 는 지원하지 않는다 (#139).
-  1.0.x 에서는 호출이 실패하므로 원인을 밝혀 "조회 실패" 로 표시하고, 보고서가
-  수급을 추정하지 않게 한다.
+  pykrx 1.0.x (pandas 3 호환) 는 로그인을 지원하지 않으므로 ``krx_session`` 이
+  ``KRX_ID`` / ``KRX_PW`` 로 로그인한 세션을 pykrx 의 HTTP 요청에 붙인다 (#139).
+  KRX 조회가 실패하면 네이버 증권 매매동향(수량, 비공식)으로 폴백하고, 그것도
+  실패하면 원인을 밝혀 "조회 실패" 로 표시해 보고서가 수급을 추정하지 않게 한다.
 
 ### 반환 shape
 상류 `yahoo.ohlcv.load_ohlcv`, `yahoo.market.get_stock_stats_indicators_window`,
@@ -25,9 +25,7 @@ pykrx 는 OHLCV 를 한국어 컬럼으로 반환하므로 upstream 과 호환�
 from __future__ import annotations
 
 import importlib.metadata
-import importlib.util
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -44,17 +42,6 @@ logger = logging.getLogger(__name__)
 _KRX_LOGIN_ENV = ("KRX_ID", "KRX_PW")
 
 
-def _pykrx_supports_login() -> bool:
-    """설치된 pykrx 가 KRX 로그인(``KRX_ID``/``KRX_PW`` 자동 로그인)을 지원하는지.
-
-    1.2.x 부터 ``pykrx.website.comm.auth`` 가 생겼고, 1.0.x 에는 없다 (#139).
-    """
-    try:
-        return importlib.util.find_spec("pykrx.website.comm.auth") is not None
-    except (ImportError, ValueError):
-        return False
-
-
 def _pykrx_version() -> str:
     try:
         return importlib.metadata.version("pykrx")
@@ -68,31 +55,37 @@ def _diagnose_investor_failure(exc: Exception) -> str:
     ``KeyError: '거래대금'`` 같은 파서 내부 예외는 그대로 보여주면 원인을 알 수 없다.
     """
     detail = f"{type(exc).__name__}: {exc}"
-    if _pykrx_supports_login():
-        return detail
-    return (
-        f"{detail}. 설치된 pykrx {_pykrx_version()} 는 KRX 로그인을 지원하지 않는데 "
-        "KRX 가 투자자별 수급 조회에 로그인을 요구해, 응답 형식이 달라진 것으로 보입니다 (#139)"
-    )
-
-
-def _check_krx_credentials() -> None:
-    """로그인을 지원하는 pykrx 에서만 환경변수를 확인한다. 실패 시 명확한 에러.
-
-    로그인을 지원하지 않는 pykrx(1.0.x)는 ``KRX_ID``/``KRX_PW`` 를 읽지 않으므로
-    검사해도 의미가 없다 — 그 경우는 호출 실패 시 ``_diagnose_investor_failure`` 가
-    원인을 설명한다.
-
-    Raises:
-        RuntimeError: 자격증명이 없을 때.
-    """
-    missing = [name for name in _KRX_LOGIN_ENV if not os.environ.get(name, "").strip()]
-    if missing:
-        raise RuntimeError(
-            f"KRX 로그인 자격증명이 없습니다 ({', '.join(missing)} 환경변수 미설정). "
-            "KRX API 중 투자자별 수급·시가총액 등 일부 지표는 로그인 필요. "
-            "http://data.krx.co.kr 에서 계정 발급 후 .env 에 추가하세요."
+    if isinstance(exc, KeyError):
+        return (
+            f"{detail}. KRX 응답이 pykrx {_pykrx_version()} 가 기대한 형식이 아닙니다 "
+            "(로그인 세션이 없거나 만료됐거나 KRX 응답 형식이 바뀐 것으로 보입니다)"
         )
+    return detail
+
+
+def _window_start(as_of_dt: datetime, look_back_days: int) -> datetime:
+    """``as_of_dt`` 포함 최근 ``look_back_days`` 거래일의 첫 날.
+
+    pykrx 의 투자자별 거래실적은 **기간 합계** 라서 시작일을 정확히 잡아야 "최근 N
+    거래일" 이 된다. KRX 캘린더가 안 되면 주말만 제외한 영업일로 근사한다.
+    """
+    n = max(1, look_back_days)
+    try:
+        from tradingagents.dataflows.krx_calendar import trading_days_in_range
+
+        lo = (as_of_dt - timedelta(days=n * 2 + 14)).strftime("%Y-%m-%d")
+        days = trading_days_in_range(lo, as_of_dt.strftime("%Y-%m-%d"))
+        if len(days) >= n:
+            return datetime.strptime(days[-n], "%Y-%m-%d")
+    except Exception as exc:  # noqa: BLE001 — 캘린더 호환성 문제는 근사로 대체
+        logger.warning("KRX 캘린더 사용 불가, 주말 제외 근사 (%s): %s", type(exc).__name__, exc)
+    day, counted = as_of_dt, 0
+    while True:
+        if day.weekday() < 5:
+            counted += 1
+            if counted == n:
+                return day
+        day -= timedelta(days=1)
 
 
 # pykrx 는 날짜를 YYYYMMDD 포맷으로 받음.
@@ -323,12 +316,23 @@ def get_indicator(
 _NO_ESTIMATE_NOTE = " — 수급 데이터 없음. 수급을 추정하거나 언급하지 마세요"
 
 
+def _fetch_krx_investor_table(ticker: str, start_str: str, end_str: str):
+    """KRX 로그인 세션으로 투자자별 거래대금(원) 기간합계 DataFrame 을 가져온다."""
+    from pykrx import stock
+
+    from tradingagents.dataflows.vendors import krx_session
+
+    with krx_session.authenticated_pykrx():
+        return stock.get_market_trading_value_by_investor(start_str, end_str, ticker)
+
+
 def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int = 5) -> str:
     """최근 ``look_back_days`` 거래일간 외국인·기관 순매수 — KRX 전용 신규 지표.
 
-    KRX 가 로그인을 요구한다. pykrx 1.0.x 는 로그인을 지원하지 않아 조회가 실패할 수
-    있으며(#139) 그 경우 원인을 담은 ``[KRX 수급 조회 실패: ...]`` 를 반환한다.
-    수급은 가격 변동 **선행 지표** 로 분석가가 활용하되, 조회 실패 시 추정하지 않는다.
+    1순위 KRX 로그인 세션(원 단위, 투자자 세부 구분) → 실패 시 네이버 증권 매매동향
+    (수량, 외국인·기관·개인만) → 둘 다 실패하면 원인을 담은
+    ``[KRX 수급 조회 실패: ...]`` 를 반환한다 (#139). 수급은 가격 변동 **선행 지표** 로
+    분석가가 활용하되, 조회 실패 시 추정하지 않는다.
 
     Args:
         ticker: KRX 6자리 종목코드
@@ -339,42 +343,44 @@ def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int
         수급 요약 Markdown 문자열. 로그인 실패 / 데이터 없음 시 사람 읽기 쉬운
         안내 문자열 (분석가 run 중단 방지).
     """
-    if _pykrx_supports_login():
-        try:
-            _check_krx_credentials()
-        except RuntimeError as exc:
-            return f"[KRX 수급 조회 실패: {exc}{_NO_ESTIMATE_NOTE}]"
-
     try:
         as_of_dt = datetime.strptime(trade_date, "%Y-%m-%d")
     except (ValueError, TypeError):
         return f"[KRX 수급 조회 실패: 잘못된 날짜 형식 {trade_date!r}]"
 
-    # 영업일 look_back_days 만큼 거슬러 가기 위해 넉넉히 2배로 가져와 영업일로
-    # 재필터. 주말/공휴일 섞여도 안전.
-    start_dt = as_of_dt - relativedelta(days=look_back_days * 2 + 10)
+    start_dt = _window_start(as_of_dt, look_back_days)
     start_str = start_dt.strftime("%Y%m%d")
     end_str = as_of_dt.strftime("%Y%m%d")
 
-    from pykrx import stock
+    krx_error: str
+    try:
+        df = _fetch_krx_investor_table(ticker, start_str, end_str)
+    except Exception as exc:  # noqa: BLE001 — 로그인·네트워크·파서 실패 모두 폴백 대상
+        krx_error = _diagnose_investor_failure(exc)
+        logger.warning("KRX 수급 조회 실패 (%s): %s", ticker, krx_error)
+    else:
+        if df is None or (hasattr(df, "empty") and df.empty):
+            return "최근 수급 데이터가 없습니다."
+        # 투자자별 순매수만 추출. 컬럼: 매도/매수/순매수 — 순매수 열만 사용.
+        try:
+            series = df["순매수"] if "순매수" in df.columns else df.iloc[:, -1]
+            header = (
+                f"**{trade_date} 기준 최근 {look_back_days} 거래일 순매수** "
+                f"({start_dt:%Y-%m-%d} ~ {trade_date}, 단위: 원, 출처: KRX)\n\n"
+            )
+            return header + series.to_markdown()
+        except Exception as exc:  # noqa: BLE001
+            krx_error = f"포맷 실패: {exc}"
+
+    from tradingagents.dataflows.errors import VendorError
+    from tradingagents.dataflows.vendors.naver_investor import get_investor_flow
 
     try:
-        df = stock.get_market_trading_value_by_investor(start_str, end_str, ticker)
-    except Exception as exc:  # noqa: BLE001
-        return f"[KRX 수급 조회 실패: {_diagnose_investor_failure(exc)}{_NO_ESTIMATE_NOTE}]"
-    if df is None or (hasattr(df, "empty") and df.empty):
-        return "최근 수급 데이터가 없습니다."
-
-    # 투자자별 순매수만 추출. 컬럼: 매도/매수/순매수 — 순매수 열만 사용.
-    try:
-        series = df["순매수"] if "순매수" in df.columns else df.iloc[:, -1]
-        header = (
-            f"**{trade_date} 기준 최근 {look_back_days} 거래일 순매수** "
-            f"(단위: 원)\n\n"
+        return get_investor_flow(ticker, trade_date, look_back_days)
+    except VendorError as exc:
+        return (
+            f"[KRX 수급 조회 실패: KRX: {krx_error}; 네이버 증권: {exc}{_NO_ESTIMATE_NOTE}]"
         )
-        return header + series.to_markdown()
-    except Exception as exc:  # noqa: BLE001
-        return f"[KRX 수급 포맷 실패: {exc}{_NO_ESTIMATE_NOTE}]"
 
 
 _SNAPSHOT_INDICATORS: tuple[str, ...] = (
