@@ -517,3 +517,74 @@ def test_live_income_table_shows_cumulative_and_key_accounts_first(ticker, dart_
     assert "누적" in out and "전년 동기 누적" in out
     first_rows = [ln.split("|")[1].strip() for ln in out.splitlines() if ln.startswith("|")][2:5]
     assert any(name.startswith(("매출", "수익")) for name in first_rows), first_rows
+
+
+# ---- #149 유동성: 재무상태표 단기 차입·현금 계정은 회사마다 표준 ID 가 다르다 ----
+
+def _bs(*rows):
+    """(account_id, account_nm, 당기말 잔액) → BS 행만 가진 DataFrame."""
+    return pd.DataFrame([
+        {"sj_div": "BS", "account_id": aid, "account_nm": nm, "thstrm_amount": amt,
+         "thstrm_add_amount": NAN, "account_detail": "-"}
+        for aid, nm, amt in rows
+    ])
+
+
+@pytest.mark.unit
+def test_balance_sheet_cash_and_short_debt_use_ids_of_a_manufacturer_like_doosan():
+    out = dart.extract_key_accounts(_bs(
+        ("ifrs-full_CashAndCashEquivalents", "현금및현금성자산", "2,541,888"),
+        ("ifrs-full_ShorttermDepositsNotClassifiedAsCashEquivalents", "단기금융상품", "276,246"),
+        ("ifrs-full_ShorttermBorrowings", "단기차입금", "2,916,241"),
+        ("ifrs-full_CurrentPortionOfLongtermBorrowings", "유동성장기부채", "1,578,345"),
+    ), 2026, "11012")["accounts"]
+    assert out["cash"]["value"] == 2_541_888 and out["short_term_deposits"]["value"] == 276_246
+    assert out["short_borrowings"]["value"] == 2_916_241
+    assert out["current_long_term_debt"]["value"] == 1_578_345
+    assert "current_convertible_bonds" not in out      # 없는 계정은 0 으로 채우지 않는다
+
+
+@pytest.mark.unit
+def test_short_borrowings_found_by_the_samsung_style_id():
+    out = dart.extract_key_accounts(_bs(
+        ("dart_CurrentLoansReceived", "단기차입금", "13,710,121"),
+    ), 2026, "11012")["accounts"]
+    assert out["short_borrowings"]["value"] == 13_710_121
+
+
+@pytest.mark.unit
+def test_convertible_bond_current_portion_is_a_separate_account():
+    out = dart.extract_key_accounts(_bs(
+        ("ifrs-full_ShorttermBorrowings", "유동 차입금(사채 포함)", "1,357,209"),
+        ("dart_CurrentPortionOfConvertibleBonds", "유동성전환사채", "2,948,032"),
+    ), 2026, "11012")["accounts"]
+    assert out["short_borrowings"]["value"] == 1_357_209
+    assert out["current_convertible_bonds"]["value"] == 2_948_032
+
+
+@pytest.mark.unit
+def test_same_key_with_two_standard_ids_takes_the_first_not_the_sum():
+    out = dart.extract_key_accounts(_bs(
+        ("dart_CurrentLoansReceived", "단기차입금(다른 ID)", "999"),
+        ("ifrs-full_ShorttermBorrowings", "단기차입금", "100"),
+    ), 2026, "11012")["accounts"]
+    assert out["short_borrowings"]["value"] == 100
+
+
+@pytest.mark.unit
+def test_balance_sheet_key_accounts_come_first_in_the_prompt_table():
+    filler = [(f"x_{i}", f"기타{i}", "1") for i in range(40)]
+    key = [("ifrs-full_CashAndCashEquivalents", "현금및현금성자산", "5")]
+    out = dart._format_statement(_bs(*filler, *key), "BS", "11012")
+    assert [ln for ln in out.splitlines() if ln.startswith("|")][2].split("|")[1].strip() == "현금및현금성자산"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("ticker", ["005930", "034020", "001210"])
+def test_live_balance_sheet_cash_and_short_debt_are_identified(ticker, dart_api_key):
+    import json
+
+    accounts = json.loads(dart.get_financial_accounts(ticker, datetime.now().strftime("%Y-%m-%d")))["accounts"]
+    assert accounts["cash"]["value"] > 0
+    debt = [k for k in ("short_borrowings", "current_long_term_debt", "current_convertible_bonds") if k in accounts]
+    assert debt, f"{ticker}: 단기 차입 계정을 표준 계정 ID 로 찾지 못함 ({sorted(accounts)})"

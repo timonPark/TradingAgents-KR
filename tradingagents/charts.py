@@ -792,13 +792,17 @@ def _account(accounts: dict, key: str) -> float | None:
     return None
 
 
+_STANDALONE_BARS = {"asset": "up", "debt": "down"}   # kind → 막대 색 구분
+
+
 def waterfall_chart(
     title: str, steps: list[tuple[str, float, str]], *, note: str, scale: tuple[float, str, int]
 ) -> Chart | None:
-    """폭포 차트. ``steps`` = ``[(이름, 값, "total"|"delta")]`` (값은 원 단위).
+    """폭포 차트. ``steps`` = ``[(이름, 값, "total"|"delta"|"asset"|"debt")]`` (값은 원 단위).
 
     ``total`` 은 0 에서 값까지, ``delta`` 는 직전 수준에서 증감만큼 움직인다. 증가·감소는 색과
-    부호(+/-)로 함께 표시하고, 막대 사이를 직전 수준선으로 잇는다.
+    부호(+/-)로 함께 표시하고, 막대 사이를 직전 수준선으로 잇는다. ``asset``·``debt`` 는 수준을
+    잇지 않고 0 에서 값까지 서 있는 독립 막대다 (유동성 차트: 자산은 ``up`` 색, 부채는 ``down`` 색).
     """
     if not steps:
         return None
@@ -810,6 +814,8 @@ def waterfall_chart(
         if kind == "total":
             spans.append((0.0, value, "total", value))
             level = value
+        elif kind in _STANDALONE_BARS:
+            spans.append((0.0, value, _STANDALONE_BARS[kind], value))
         else:
             spans.append((level, level + value, "up" if value >= 0 else "down", value))
             level += value
@@ -836,7 +842,7 @@ def waterfall_chart(
             f'<text class="axis" x="{_ML - 6}" y="{y(tick) + 4:.1f}" text-anchor="end">{escape(fmt(tick))}</text>'
         )
     parts.append(f'<line class="zero" x1="{_ML}" y1="{y(0):.1f}" x2="{_W - _MR}" y2="{y(0):.1f}"/>')
-    for i, ((name, _raw, _kind), (start, end, cls, value)) in enumerate(zip(steps, spans, strict=True)):
+    for i, ((name, _raw, kind), (start, end, cls, value)) in enumerate(zip(steps, spans, strict=True)):
         cx = _ML + slot * (i + 0.5)
         top_v, bottom_v = max(start, end), min(start, end)
         parts.append(
@@ -845,10 +851,10 @@ def waterfall_chart(
         )
         above = value >= 0
         label_y = y(top_v) - 5 if above else y(bottom_v) + 13
-        shown = fmt(value) if cls == "total" else f"{value:+,.{digits}f}"
+        shown = f"{value:+,.{digits}f}" if kind == "delta" else fmt(value)
         parts.append(f'<text class="axis val" x="{cx:.1f}" y="{label_y:.1f}" text-anchor="middle">{escape(shown)}</text>')
         parts.append(f'<text class="axis" x="{cx:.1f}" y="{height - 30}" text-anchor="middle">{escape(name)}</text>')
-        if i < len(steps) - 1:
+        if i < len(steps) - 1 and kind not in _STANDALONE_BARS and steps[i + 1][2] not in _STANDALONE_BARS:
             nxt_x = _ML + slot * (i + 1.5)
             parts.append(
                 f'<line class="link" x1="{cx + bar / 2:.1f}" y1="{y(end):.1f}" '
@@ -905,10 +911,44 @@ def cash_bridge(data: dict) -> Chart | ChartGap:
     return chart or ChartGap(title, "그릴 계정이 없습니다.")
 
 
+_LIQUIDITY_ASSETS = (("cash", "현금및현금성자산"), ("short_term_deposits", "단기금융상품"))
+_LIQUIDITY_DEBTS = (("short_borrowings", "단기차입금"), ("current_long_term_debt", "유동성장기부채"),
+                    ("current_convertible_bonds", "유동성전환사채"))
+
+
+def liquidity_chart(data: dict) -> Chart | ChartGap:
+    """현금성 자산(자산 색) vs 단기 차입·전환사채(부채 색) — 재무상태표 표준 계정 ID 로만.
+
+    현금및현금성자산이 없거나 단기 차입 계정이 하나도 없으면 사유를 표시한다 (차입이 없는
+    회사와 계정을 못 찾은 경우를 구분할 수 없으므로 추정해 0 으로 그리지 않는다). 찾은 계정만
+    그리며, 못 찾은 항목은 부제에 밝힌다.
+    """
+    title = "유동성 (현금 vs 단기 차입)"
+    accounts = data["accounts"]
+    if _account(accounts, "cash") is None:
+        return ChartGap(title, "현금및현금성자산 계정을 DART 표준 계정 ID 로 찾지 못했습니다.")
+    assets = [(label, v) for key, label in _LIQUIDITY_ASSETS if (v := _account(accounts, key)) is not None]
+    debts = [(label, v) for key, label in _LIQUIDITY_DEBTS if (v := _account(accounts, key)) is not None]
+    if not debts:
+        return ChartGap(title, "단기차입금·유동성장기부채·유동성전환사채 계정을 DART 표준 계정 ID 로 찾지 못했습니다 "
+                               "(차입이 없는 회사이거나 다른 계정을 쓰는 회사일 수 있습니다).")
+    steps = [(name, v, "asset") for name, v in assets] + [(name, v, "debt") for name, v in debts]
+    scale = _won_scale([v for _, v, _ in steps])
+    cash_total, debt_total = sum(v for _, v in assets), sum(v for _, v in debts)
+    divisor, unit_label, digits = scale
+    coverage = f"현금성 {cash_total / divisor:,.{digits}f} vs 단기 차입 {debt_total / divisor:,.{digits}f}"
+    missing = [label for key, label in (*_LIQUIDITY_ASSETS, *_LIQUIDITY_DEBTS) if _account(accounts, key) is None]
+    note = f"{_financial_note(data)} · 초록=현금성 자산, 빨강=단기 차입 · {coverage}"
+    if missing:
+        note += f" · 보고서에서 찾지 못한 항목: {', '.join(missing)}"
+    chart = waterfall_chart(title, steps, note=note, scale=scale)
+    return chart or ChartGap(title, "그릴 계정이 없습니다.")
+
+
 def build_financial_charts(fundamentals_data: dict[str, str] | None) -> list[Chart | ChartGap]:
     """재무 분석가가 보존한 핵심 계정(``fundamentals_data["accounts"]``)으로 재무 차트를 만든다.
 
-    ``fundamentals_data`` 가 없으면 (예전 run) 빈 리스트. DART 조회 실패·재무제표 없음은 두
+    ``fundamentals_data`` 가 없으면 (예전 run) 빈 리스트. DART 조회 실패·재무제표 없음은 세
     차트 모두 사유로 표시한다. 계정을 찾지 못한 차트는 추정하지 않고 어떤 계정이 없는지 밝힌다.
     """
     if not fundamentals_data or "accounts" not in fundamentals_data:
@@ -918,5 +958,5 @@ def build_financial_charts(fundamentals_data: dict[str, str] | None) -> list[Cha
     if data is None:
         first = text.strip().splitlines()[0][:160] if text.strip() else ""
         reason = first or "재무제표 데이터가 없어 그리지 못했습니다."
-        return [ChartGap("손익 폭포", reason), ChartGap("현금 흐름 브리지", reason)]
-    return [income_waterfall(data), cash_bridge(data)]
+        return [ChartGap(t, reason) for t in ("손익 폭포", "현금 흐름 브리지", "유동성 (현금 vs 단기 차입)")]
+    return [income_waterfall(data), cash_bridge(data), liquidity_chart(data)]

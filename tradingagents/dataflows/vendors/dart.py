@@ -464,6 +464,15 @@ _KEY_ACCOUNTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("fx_effect", "ifrs-full_EffectOfExchangeRateChangesOnCashAndCashEquivalents", ("CF",)),
     ("cash_begin", "dart_CashAndCashEquivalentsAtBeginningOfPeriodCf", ("CF",)),
     ("cash_end", "dart_CashAndCashEquivalentsAtEndOfPeriodCf", ("CF",)),
+    # 재무상태표 — 유동성 차트 (#149). 단기 차입은 회사마다 표준 ID 가 다르다:
+    #   두산에너빌리티·금호전기 ``ifrs-full_ShorttermBorrowings`` / 삼성전자 ``dart_CurrentLoansReceived``.
+    # 같은 key 가 여러 줄이면 먼저 찾은 것만 쓴다 (합산하지 않는다).
+    ("cash", "ifrs-full_CashAndCashEquivalents", ("BS",)),
+    ("short_term_deposits", "ifrs-full_ShorttermDepositsNotClassifiedAsCashEquivalents", ("BS",)),
+    ("short_borrowings", "ifrs-full_ShorttermBorrowings", ("BS",)),
+    ("short_borrowings", "dart_CurrentLoansReceived", ("BS",)),
+    ("current_long_term_debt", "ifrs-full_CurrentPortionOfLongtermBorrowings", ("BS",)),
+    ("current_convertible_bonds", "dart_CurrentPortionOfConvertibleBonds", ("BS",)),
 )
 
 # 손익 항목은 누적 금액(``thstrm_add_amount``)을 쓴다: 반기·3분기 보고서의 ``thstrm_amount`` 는
@@ -506,6 +515,8 @@ def extract_key_accounts(df: Any, year: int, reprt_code: str) -> dict[str, Any]:
     accounts: dict[str, dict[str, Any]] = {}
     if df is not None and not getattr(df, "empty", True) and "account_id" in df.columns:
         for key, account_id, divisions in _KEY_ACCOUNTS:
+            if key in accounts:      # 같은 key 의 앞선 표준 ID 로 이미 찾았다
+                continue
             for division in divisions:
                 rows = df[(df["account_id"] == account_id) & (df["sj_div"] == division)]
                 if "account_detail" in rows.columns:   # 부문별(주석) 행이 아니라 본표 행
