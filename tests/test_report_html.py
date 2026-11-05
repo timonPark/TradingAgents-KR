@@ -323,3 +323,83 @@ def test_financial_charts_follow_the_fundamentals_text(tmp_path):
 @pytest.mark.unit
 def test_no_fundamentals_data_leaves_that_section_without_charts(tmp_path):
     assert "재무 차트" not in _html(tmp_path, fundamentals_report="재무 본문.")
+
+
+# ---------- #161: PDF 변환 — WeasyPrint 는 페이지 CSS 를 인라인 SVG 에 적용하지 않는다 ----------
+
+_BARS = ('<svg viewBox="0 0 100 40" width="300" height="120">'
+         '<rect class="bar up" x="5" y="5" width="20" height="30"/>'
+         '<rect class="bar down" x="35" y="5" width="20" height="30"/></svg>')
+
+
+def _page_with(svg):
+    from tradingagents.report_html import _CSS
+
+    return f"<html><head><style>{_CSS}</style></head><body><figure class='viz'>{svg}</figure></body></html>"
+
+
+def _pdf_fill_colors(html):
+    import contextlib
+    import re as _re
+    import zlib
+
+    from weasyprint import HTML
+
+    pdf = HTML(string=html).write_pdf()
+    content = b""
+    for m in _re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf, _re.S):
+        with contextlib.suppress(zlib.error):
+            content += zlib.decompress(m.group(1))
+    return set(_re.findall(rb"([\d.]+ [\d.]+ [\d.]+) rg", content))
+
+
+@pytest.mark.unit
+def test_svg_print_css_has_literal_svg_relative_rules():
+    from tradingagents.report_html import svg_print_css
+
+    css = svg_print_css()
+    assert ".bar.up{fill: #087a59;}" in css and ".bar.down{fill: #b4372f;}" in css
+    assert ".flow.up .node{stroke: #087a59;}" in css and ".lvl.stop line{" in css
+    assert "var(" not in css                     # WeasyPrint 는 SVG 안에서 변수를 풀지 못한다
+    assert ".viz" not in css and "svg " not in css  # SVG 안에서는 조상 선택자가 맞지 않는다
+    assert "scroll" not in css and "figcaption" not in css   # SVG 바깥 규칙은 뺀다
+    assert not re.search(r"font:\s", css)        # 단축 속성은 글자를 거대하게 만든다
+    assert "font-size: 15px" in css and "font-weight: 600" in css
+
+
+@pytest.mark.unit
+def test_svg_print_css_uses_the_light_palette_not_the_print_override():
+    from tradingagents.report_html import svg_print_css
+
+    # 인쇄용 :root 는 --accent 를 검정으로 덮어써 .s1(잉크) 과 .s2(강조) 가 같은 검정이 된다
+    assert ".s1{stroke: #1c2126;}" in svg_print_css() and ".s2{stroke: #087a59;}" in svg_print_css()
+
+
+@pytest.mark.unit
+def test_prepare_html_for_pdf_puts_the_style_in_every_svg_and_leaves_the_page_alone():
+    from tradingagents.report_html import prepare_html_for_pdf
+
+    html = _page_with(_BARS + _BARS)
+    out = prepare_html_for_pdf(html)
+    assert out.count("<svg") == 2 and out.count('<svg viewBox="0 0 100 40" width="300" height="120"><style>') == 2
+    assert "white-space: nowrap" in out                  # 표지 등급이 갈라지지 않게 (PDF 전용)
+    assert html.count("<style>") == 1                    # 입력은 바뀌지 않는다 (문자열 변환)
+
+
+@pytest.mark.unit
+def test_browser_html_is_not_changed_by_the_pdf_preparation(tmp_path):
+    html = _html(tmp_path)
+    assert html.count("<style>") == 1                      # SVG 안 <style> 이나 PDF 보정 <style> 이 없다
+    assert ".masthead .rating { white-space: nowrap; }" not in html
+
+
+@pytest.mark.unit
+def test_pdf_bars_get_their_up_and_down_colours():
+    pytest.importorskip("weasyprint")
+    from tradingagents.report_html import prepare_html_for_pdf
+
+    html = _page_with(_BARS)
+    before = _pdf_fill_colors(html)
+    after = _pdf_fill_colors(prepare_html_for_pdf(html))
+    assert b"0.031373 0.478431 0.34902" not in before          # 고치기 전: 검정뿐
+    assert b"0.031373 0.478431 0.34902" in after and b"0.705882 0.215686 0.184314" in after   # up / down
