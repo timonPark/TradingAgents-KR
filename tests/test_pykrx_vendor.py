@@ -116,9 +116,10 @@ def test_get_stock_stats_indicators_window_marks_non_trading_days():
 
 @pytest.mark.unit
 def test_get_investor_net_purchases_fails_safe_without_credentials(monkeypatch):
-    """로그인 자격증명 없음 → 명확한 사용자 안내 (예외 아님)."""
+    """로그인을 지원하는 pykrx 에서 자격증명 없음 → 명확한 사용자 안내 (예외 아님)."""
     monkeypatch.delenv("KRX_ID", raising=False)
     monkeypatch.delenv("KRX_PW", raising=False)
+    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: True)
     result = pykrx.get_investor_net_purchases("005930", "2025-01-10")
     assert "KRX 로그인 자격증명이 없습니다" in result
     assert "KRX 수급 조회 실패" in result
@@ -217,3 +218,51 @@ def test_live_indicator_window_renders_rsi_values():
     assert "rsi" in out.lower()
     # 영업일/주말 라인 둘 다 가능
     assert "2026-11-03" in out or "2026-11-02" in out
+
+
+# ---------- #139: 수급 조회 실패 원인 진단 ----------
+
+@pytest.mark.unit
+def test_investor_failure_explains_missing_login_support_for_keyerror(monkeypatch):
+    """pykrx 1.0.x 의 ``KeyError: '거래대금'`` 을 원인과 함께 설명한다."""
+    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: False)
+    monkeypatch.setattr(pykrx, "_pykrx_version", lambda: "1.0.51")
+    with patch("pykrx.stock.get_market_trading_value_by_investor", side_effect=KeyError("거래대금")):
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert result.startswith("[KRX 수급 조회 실패")
+    assert "KeyError" in result
+    assert "pykrx 1.0.51" in result
+    assert "로그인을 지원하지 않는" in result
+    assert "수급을 추정하거나 언급하지 마세요" in result
+
+
+@pytest.mark.unit
+def test_investor_credentials_not_required_when_login_unsupported(monkeypatch):
+    """로그인 미지원 pykrx 는 KRX_ID/PW 를 읽지 않으므로 사전 검사로 막지 않는다."""
+    monkeypatch.delenv("KRX_ID", raising=False)
+    monkeypatch.delenv("KRX_PW", raising=False)
+    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: False)
+    df = pd.DataFrame({"순매수": [1, 2, 3]}, index=["외국인", "기관", "개인"])
+    with patch("pykrx.stock.get_market_trading_value_by_investor", return_value=df) as mock_call:
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert mock_call.call_count == 1
+    assert "자격증명이 없습니다" not in result
+    assert "외국인" in result
+
+
+@pytest.mark.unit
+def test_investor_failure_with_login_support_keeps_plain_detail(monkeypatch):
+    monkeypatch.setenv("KRX_ID", "x")
+    monkeypatch.setenv("KRX_PW", "y")
+    monkeypatch.setattr(pykrx, "_pykrx_supports_login", lambda: True)
+    with patch("pykrx.stock.get_market_trading_value_by_investor", side_effect=RuntimeError("boom")):
+        result = pykrx.get_investor_net_purchases("001210", "2026-11-04")
+    assert "RuntimeError: boom" in result
+    assert "로그인을 지원하지 않는" not in result
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("spec,expected", [(object(), True), (None, False)])
+def test_pykrx_supports_login_detects_auth_module(monkeypatch, spec, expected):
+    monkeypatch.setattr(pykrx.importlib.util, "find_spec", lambda name: spec)
+    assert pykrx._pykrx_supports_login() is expected

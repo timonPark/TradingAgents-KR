@@ -5,9 +5,11 @@ Task 6a (#52): Yahoo Finance / Alpha Vantage 가격·지표 vendor 를 KRX 전�
 
 ### API 요구사항
 - **OHLCV** (`get_market_ohlcv_by_date`): keyless, 공개 엔드포인트
-- **투자자별 수급** (`get_market_net_purchases_of_equities_by_ticker`): KRX_ID /
-  KRX_PW 환경변수 요구. 없으면 `_login()` 이 명확한 에러를 올리고 상위 레이어가
-  fail-safe 로 처리.
+- **투자자별 수급** (`get_market_trading_value_by_investor`): KRX 가 로그인을 요구.
+  KRX 로그인(``KRX_ID`` / ``KRX_PW`` 환경변수 자동 로그인)은 **pykrx 1.2.x 이상**
+  만 지원하고, 이 프로젝트가 쓰는 1.0.x (pandas 3 호환) 는 지원하지 않는다 (#139).
+  1.0.x 에서는 호출이 실패하므로 원인을 밝혀 "조회 실패" 로 표시하고, 보고서가
+  수급을 추정하지 않게 한다.
 
 ### 반환 shape
 상류 `yahoo.ohlcv.load_ohlcv`, `yahoo.market.get_stock_stats_indicators_window`,
@@ -22,6 +24,8 @@ pykrx 는 OHLCV 를 한국어 컬럼으로 반환하므로 upstream 과 호환�
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
 import logging
 import os
 from datetime import datetime, timedelta
@@ -40,8 +44,44 @@ logger = logging.getLogger(__name__)
 _KRX_LOGIN_ENV = ("KRX_ID", "KRX_PW")
 
 
+def _pykrx_supports_login() -> bool:
+    """설치된 pykrx 가 KRX 로그인(``KRX_ID``/``KRX_PW`` 자동 로그인)을 지원하는지.
+
+    1.2.x 부터 ``pykrx.website.comm.auth`` 가 생겼고, 1.0.x 에는 없다 (#139).
+    """
+    try:
+        return importlib.util.find_spec("pykrx.website.comm.auth") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _pykrx_version() -> str:
+    try:
+        return importlib.metadata.version("pykrx")
+    except importlib.metadata.PackageNotFoundError:
+        return "미설치"
+
+
+def _diagnose_investor_failure(exc: Exception) -> str:
+    """수급 조회 예외를 사람이 이해할 원인 문구로.
+
+    ``KeyError: '거래대금'`` 같은 파서 내부 예외는 그대로 보여주면 원인을 알 수 없다.
+    """
+    detail = f"{type(exc).__name__}: {exc}"
+    if _pykrx_supports_login():
+        return detail
+    return (
+        f"{detail}. 설치된 pykrx {_pykrx_version()} 는 KRX 로그인을 지원하지 않는데 "
+        "KRX 가 투자자별 수급 조회에 로그인을 요구해, 응답 형식이 달라진 것으로 보입니다 (#139)"
+    )
+
+
 def _check_krx_credentials() -> None:
-    """로그인 요구 API 호출 전 환경변수 확인. 실패 시 명확한 에러.
+    """로그인을 지원하는 pykrx 에서만 환경변수를 확인한다. 실패 시 명확한 에러.
+
+    로그인을 지원하지 않는 pykrx(1.0.x)는 ``KRX_ID``/``KRX_PW`` 를 읽지 않으므로
+    검사해도 의미가 없다 — 그 경우는 호출 실패 시 ``_diagnose_investor_failure`` 가
+    원인을 설명한다.
 
     Raises:
         RuntimeError: 자격증명이 없을 때.
@@ -280,11 +320,15 @@ def get_indicator(
     return get_stock_stats_indicators_window(ticker, indicator, curr_date, look_back_days)
 
 
+_NO_ESTIMATE_NOTE = " — 수급 데이터 없음. 수급을 추정하거나 언급하지 마세요"
+
+
 def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int = 5) -> str:
     """최근 ``look_back_days`` 거래일간 외국인·기관 순매수 — KRX 전용 신규 지표.
 
-    KRX_ID / KRX_PW 환경변수 로그인 필요. 수급은 가격 변동 **선행 지표** 로
-    분석가가 활용해야 함.
+    KRX 가 로그인을 요구한다. pykrx 1.0.x 는 로그인을 지원하지 않아 조회가 실패할 수
+    있으며(#139) 그 경우 원인을 담은 ``[KRX 수급 조회 실패: ...]`` 를 반환한다.
+    수급은 가격 변동 **선행 지표** 로 분석가가 활용하되, 조회 실패 시 추정하지 않는다.
 
     Args:
         ticker: KRX 6자리 종목코드
@@ -295,10 +339,11 @@ def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int
         수급 요약 Markdown 문자열. 로그인 실패 / 데이터 없음 시 사람 읽기 쉬운
         안내 문자열 (분석가 run 중단 방지).
     """
-    try:
-        _check_krx_credentials()
-    except RuntimeError as exc:
-        return f"[KRX 수급 조회 실패: {exc}]"
+    if _pykrx_supports_login():
+        try:
+            _check_krx_credentials()
+        except RuntimeError as exc:
+            return f"[KRX 수급 조회 실패: {exc}{_NO_ESTIMATE_NOTE}]"
 
     try:
         as_of_dt = datetime.strptime(trade_date, "%Y-%m-%d")
@@ -316,7 +361,7 @@ def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int
     try:
         df = stock.get_market_trading_value_by_investor(start_str, end_str, ticker)
     except Exception as exc:  # noqa: BLE001
-        return f"[KRX 수급 조회 실패: {exc}]"
+        return f"[KRX 수급 조회 실패: {_diagnose_investor_failure(exc)}{_NO_ESTIMATE_NOTE}]"
     if df is None or (hasattr(df, "empty") and df.empty):
         return "최근 수급 데이터가 없습니다."
 
@@ -329,7 +374,7 @@ def get_investor_net_purchases(ticker: str, trade_date: str, look_back_days: int
         )
         return header + series.to_markdown()
     except Exception as exc:  # noqa: BLE001
-        return f"[KRX 수급 포맷 실패: {exc}]"
+        return f"[KRX 수급 포맷 실패: {exc}{_NO_ESTIMATE_NOTE}]"
 
 
 _SNAPSHOT_INDICATORS: tuple[str, ...] = (
