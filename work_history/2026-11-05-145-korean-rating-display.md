@@ -1,7 +1,7 @@
 # [#145] 보고서·UI 의 영어 등급·라벨 한국어 표기
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/145
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/146
 - 브랜치: feat/145-korean-rating-display
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
