@@ -1,7 +1,7 @@
 # [#144] 보고서 차트 — 가격 레벨 (거래 계획)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/144 (이 PR 로 닫지 않음 — 재무 차트는 #149 로 분리)
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/150
 - 브랜치: feat/144-report-price-levels
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
