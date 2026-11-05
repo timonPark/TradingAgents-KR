@@ -146,6 +146,15 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
                     "get_insider_transactions", "get_convertible_bonds",
                     "get_investor_net_purchases", "ohlcv"}
     assert offline == tool_methods
+    # 보고서 차트의 원본(#144)이 분석가 서브그래프를 통과해 최종 상태까지 남는다 (#151)
+    assert set(state["market_data"]) == {"ohlcv", "indicators", "investor_flow"}
+    assert state["macro_data"]
+    # 그 상태로 만든 보고서에는 차트 영역(시장·거시)이 생긴다 — 원본이 없으면 영역 자체가 없다
+    from tradingagents.reporting import write_report_tree
+
+    write_report_tree(state, "NVDA", tmp_path / "report")
+    page = (tmp_path / "report" / "complete_report.html").read_text(encoding="utf-8")
+    assert page.count('class="viz-group"') >= 2 and "거시 지표 차트" in page
     assert [e["rating"] for e in graph.memory_log.load_entries()] == ["Overweight"]
 
 

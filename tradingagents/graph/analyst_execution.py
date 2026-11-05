@@ -7,6 +7,9 @@ class AnalystNodeSpec:
     key: str
     agent_node: str
     report_key: str
+    # 보고서 차트의 원본 데이터 키 (#144). 분석가 서브그래프는 output_schema 에 있는 키만
+    # 부모 상태로 내보내므로, 여기에 이름을 올려야 최종 상태까지 남는다.
+    data_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,7 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         key="market",
         agent_node="Market Analyst",
         report_key="market_report",
+        data_key="market_data",
     ),
     "social": AnalystNodeSpec(
         # Saved configs select this analyst as "social". Pre-fetches its sources
@@ -33,6 +37,7 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         key="news",
         agent_node="News Analyst",
         report_key="news_report",
+        data_key="macro_data",
     ),
     "fundamentals": AnalystNodeSpec(
         key="fundamentals",

@@ -49,7 +49,10 @@ def _analyst_graph(spec, agent):
     LangGraph `ToolNode` 와 조건부 엣지, `WRAP_UP` 로직은 전부 제거되었습니다 —
     남은 것은 "START → agent → END" 뿐.
     """
-    output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str})
+    fields: dict[str, type] = {spec.report_key: str}
+    if spec.data_key:   # 보고서 차트의 원본 (#144) — 서브그래프 밖으로 내보낸다
+        fields[spec.data_key] = dict
+    output = TypedDict(f"{spec.key.capitalize()}Report", fields)
     graph = StateGraph(AgentState, output_schema=output)
     graph.add_node("agent", agent)
     graph.add_edge(START, "agent")
