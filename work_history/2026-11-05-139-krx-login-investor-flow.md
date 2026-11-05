@@ -1,7 +1,7 @@
 # [#139] 투자자별 수급 — KRX 로그인 세션 + 네이버 증권 폴백 (2단계)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/139
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/143
 - 브랜치: feat/139-krx-login-investor-flow
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
