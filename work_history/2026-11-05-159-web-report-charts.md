@@ -1,7 +1,7 @@
 # [#159] 웹 보고서 화면에서도 차트·한눈에 보기 표시
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/159
-- PR: (PR 생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/160
 - 브랜치: feat/159-web-report-charts
 - 작업 기간: 2026-11-05
 
