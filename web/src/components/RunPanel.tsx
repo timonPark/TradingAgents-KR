@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import ReportFrame from "./ReportFrame";
 import SymbolSearch, { type SymbolHit } from "./SymbolSearch";
 import "./RunPanel.css";
 import { ratingLabel } from "../utils/rating";
@@ -396,6 +397,8 @@ export default function RunPanel() {
 							<a className="ks-button" href={`/report?id=${encodeURIComponent(savedEvent.report_id)}`}>리포트 뷰어로 이동</a>
 						</div>
 					)}
+
+					{savedEvent?.report_id && <ReportFrame reportId={savedEvent.report_id} />}
 
 					{errorMsg && <p className="live-error">에러: {errorMsg}</p>}
 

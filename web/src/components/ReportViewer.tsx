@@ -11,6 +11,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import "./ReportViewer.css";
 import { ratingLabel } from "../utils/rating";
+import ReportFrame from "./ReportFrame";
 
 const API_BASE =
 	(import.meta.env.PUBLIC_API_BASE as string | undefined) ??
@@ -40,6 +41,7 @@ interface Tree {
 
 /** 섹션 라벨 — kinpaku 디자인 가드. */
 const SECTION_LABELS: Record<string, string> = {
+	charts: "차트 보고서",
 	complete: "전체",
 	analysts: "분석가",
 	research: "리서치",
@@ -47,6 +49,9 @@ const SECTION_LABELS: Record<string, string> = {
 	risk: "리스크",
 	portfolio: "포트폴리오",
 };
+
+/** 차트 포함 HTML 보고서 탭 — 파일 목록에 없고 항상 맨 앞, 기본 선택. */
+const CHARTS_SECTION = "charts";
 
 function sectionOf(path: string): string {
 	if (path === "complete_report.md") return "complete";
@@ -67,7 +72,7 @@ export default function ReportViewer() {
 	const [selected, setSelected] = useState<string | null>(null);
 	const [tree, setTree] = useState<Tree | null>(null);
 	const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
-	const [activeSection, setActiveSection] = useState<string>("complete");
+	const [activeSection, setActiveSection] = useState<string>(CHARTS_SECTION);
 
 	useEffect(() => {
 		fetch(`${API_BASE}/api/reports?limit=50`)
@@ -90,7 +95,7 @@ export default function ReportViewer() {
 		if (!selected) return;
 		setStatus("loading");
 		setTree(null);
-		setActiveSection("complete");
+		setActiveSection(CHARTS_SECTION);
 		fetch(`${API_BASE}/api/reports/${encodeURIComponent(selected)}`)
 			.then((r) => {
 				if (!r.ok) throw new Error(String(r.status));
@@ -119,7 +124,7 @@ export default function ReportViewer() {
 
 	const sectionOrder = useMemo(() => {
 		const known = Object.keys(SECTION_LABELS);
-		return known.filter((s) => filesBySection[s]?.length);
+		return known.filter((s) => s === CHARTS_SECTION || filesBySection[s]?.length);
 	}, [filesBySection]);
 
 	useEffect(() => {
@@ -220,6 +225,7 @@ export default function ReportViewer() {
 						</nav>
 
 						<div className="report-panel">
+							{activeSection === CHARTS_SECTION && <ReportFrame reportId={tree.report_id} />}
 							{(filesBySection[activeSection] ?? []).map((file) => (
 								<article key={file.path} className="report-article">
 									<p className="article-path">{file.path}</p>
