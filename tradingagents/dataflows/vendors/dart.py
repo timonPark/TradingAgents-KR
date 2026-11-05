@@ -554,3 +554,133 @@ def get_financial_accounts(ticker: str, curr_date: str, trade_date: str = "") ->
     if df is None:
         return "조회된 재무제표가 없습니다."
     return json.dumps(extract_key_accounts(df, year, code), ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# 회사 개요 (#163) — 사업보고서 "1. 사업의 개요" 원문 발췌. 모델이 학습 지식으로 지어내지 않도록
+# 1차 자료(공시)를 그대로 가져오고, 보고서에는 출처를 함께 표기한다.
+# ---------------------------------------------------------------------------
+
+_OVERVIEW_MAX_CHARS = 1800
+_MARKET_BY_CLS = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
+_BLOCK_END = ("</p>", "</tr>", "</div>", "</li>", "<br>", "<br/>", "<br />")
+_INLINE_TAG = r"</?(?:b|i|u|em|strong|span|font|a|sup|sub)\b[^>]*>"   # 글자 사이에 공백을 만들지 않는 태그
+
+
+def _table_rows(table_markup: str) -> str:
+    """``<table>`` → 행마다 한 줄, 셀은 `` | `` 로 잇는다 (셀 안의 문단 태그로 줄이 갈라지지 않게)."""
+    import html as html_lib
+    import re
+
+    rows = []
+    for row in re.findall(r"<tr\b.*?</tr>", table_markup, flags=re.S | re.I):
+        cells = []
+        for cell in re.findall(r"<t[dh]\b.*?</t[dh]>", row, flags=re.S | re.I):
+            text = html_lib.unescape(re.sub(r"<[^>]+>", " ", re.sub(_INLINE_TAG, "", cell))).replace("\xa0", " ")
+            cells.append(re.sub(r"\s+", " ", text).strip())
+        if any(cells):
+            rows.append(" | ".join(c for c in cells if c))
+    return "\n" + "\n".join(rows) + "\n"
+
+
+def _plain_text(markup: str) -> str:
+    """DART 뷰어 HTML → 문단 구분이 남은 평문."""
+    import html as html_lib
+    import re
+
+    text = re.sub(_INLINE_TAG, "", markup, flags=re.I)
+    text = re.sub(r"<table\b.*?</table>", lambda m: _table_rows(m.group(0)), text, flags=re.S | re.I)
+    for cell in ("</td>", "</th>"):     # 표 한 줄이 셀마다 갈라지지 않게
+        text = text.replace(cell, " | ").replace(cell.upper(), " | ")
+    for tag in _BLOCK_END:
+        text = text.replace(tag, "\n").replace(tag.upper(), "\n")
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", text, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_lib.unescape(text).replace("\xa0", " ")
+    lines = [re.sub(r"[ \t]+", " ", line).strip(" |\r\t") for line in text.split("\n")]
+    return "\n".join(line for line in lines if line)
+
+
+def _trim_overview(text: str, limit: int = _OVERVIEW_MAX_CHARS) -> str:
+    """문장 경계에서 자른다. 잘렸으면 끝에 표시를 단다."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = max(cut.rfind("다. "), cut.rfind("다.\n"), cut.rfind(".\n"))
+    if boundary > limit * 0.5:
+        cut = cut[: boundary + 2]
+    return cut.rstrip() + " …(이하 생략)"
+
+
+def _latest_business_report(ticker: str, curr_date: str) -> tuple[Any, str, str] | None:
+    """분석 기준일 이전에 공시된 가장 최근 정기보고서 (사업보고서 우선): (행, 접수번호, 보고서명)."""
+    try:
+        end = datetime.strptime(curr_date, "%Y-%m-%d").date()
+    except ValueError:
+        end = datetime.utcnow().date()
+    start = end.replace(year=end.year - 2)
+    listing = _dart().list(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), kind="A")
+    if listing is None or getattr(listing, "empty", True) or "report_nm" not in listing.columns:
+        return None
+    rows = listing.sort_values("rcept_dt", ascending=False)
+    annual = rows[rows["report_nm"].astype(str).str.contains("사업보고서")]
+    chosen = annual if not annual.empty else rows
+    row = chosen.iloc[0]
+    return row, str(row["rcept_no"]), str(row["report_nm"])
+
+
+def get_business_overview(ticker: str, curr_date: str, trade_date: str = "") -> str:
+    """회사 개요(JSON): 기업 개황 + 사업보고서 "사업의 개요" 원문 발췌와 출처 (#163).
+
+    성공하면 ``{"company_name", "market", "ceo", "established", "homepage", "report",
+    "rcept_no", "source_url", "overview"}`` JSON 문자열. 실패·공시 없음은 사람이 읽는 문구.
+    """
+    import re
+
+    import requests
+
+    try:
+        _dart()
+    except Exception as exc:  # noqa: BLE001
+        return f"[DART 조회 실패: {exc}]"
+    try:
+        company = _dart().company(ticker) or {}
+    except Exception:  # noqa: BLE001 — 개황이 없어도 사업 개요는 시도한다
+        company = {}
+    try:
+        found = _latest_business_report(ticker, curr_date)
+    except Exception as exc:  # noqa: BLE001
+        return f"[DART 공시 목록 조회 실패: {exc}]"
+    if found is None:
+        return "조회된 정기보고서가 없습니다."
+    _row, rcept_no, report_name = found
+    try:
+        docs = _dart().sub_docs(rcept_no, match="사업의 개요")
+        if docs is None or getattr(docs, "empty", True):
+            docs = _dart().sub_docs(rcept_no, match="사업의 내용")
+        if docs is None or getattr(docs, "empty", True):
+            return f"{report_name}에서 '사업의 개요' 항목을 찾지 못했습니다."
+        url = str(docs.iloc[0]["url"])
+        response = requests.get(url, timeout=30)
+        response.encoding = "utf-8"
+        text = _plain_text(response.text)
+    except Exception as exc:  # noqa: BLE001
+        return f"[사업의 개요 조회 실패: {type(exc).__name__}: {exc}]"
+    # 항목 제목("II. 사업의 내용", "1. 사업의 개요")은 본문이 아니다.
+    lines = text.split("\n")
+    while lines and len(lines[0]) < 20 and "사업의" in lines[0]:
+        lines.pop(0)
+    body = "\n".join(lines).strip()
+    if not body:
+        return f"{report_name}의 '사업의 개요' 본문이 비어 있습니다."
+    return json.dumps({
+        "company_name": str(company.get("corp_name") or "").strip(),
+        "market": _MARKET_BY_CLS.get(str(company.get("corp_cls") or "").strip(), ""),
+        "ceo": str(company.get("ceo_nm") or "").strip(),
+        "established": str(company.get("est_dt") or "").strip(),
+        "homepage": str(company.get("hm_url") or "").strip(),
+        "report": re.sub(r"^(?:\[[^\]]+\]\s*)+", "", report_name),   # "[첨부추가]" 같은 접수 구분 접두어는 뗀다
+        "rcept_no": rcept_no,
+        "source_url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
+        "overview": _trim_overview(body),
+    }, ensure_ascii=False)

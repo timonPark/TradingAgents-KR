@@ -588,3 +588,130 @@ def test_live_balance_sheet_cash_and_short_debt_are_identified(ticker, dart_api_
     assert accounts["cash"]["value"] > 0
     debt = [k for k in ("short_borrowings", "current_long_term_debt", "current_convertible_bonds") if k in accounts]
     assert debt, f"{ticker}: 단기 차입 계정을 표준 계정 ID 로 찾지 못함 ({sorted(accounts)})"
+
+
+# ---- #163: 회사 개요 — 사업보고서 "사업의 개요" 원문 발췌 ----
+
+_VIEWER_HTML = (
+    "<div><p>II. 사업의 내용</p><p>1. 사업의 개요</p>"
+    "<p>당사는 <b>바이오</b>기업입니다.&nbsp;라이선스 계약을 체결했습니다.</p>"
+    "<table><tr><td><p>구분</p></td><td><p>주요제품</p></td></tr>"
+    "<tr><td><p>일반조명</p></td><td><p>LED조명</p></td></tr></table>"
+    "<p>끝 문단입니다.</p></div>"
+)
+
+
+def _listing(*rows):
+    return pd.DataFrame(rows, columns=["rcept_dt", "report_nm", "rcept_no"])
+
+
+def _overview_dart(listing, *, docs=None, company=None):
+    fake = MagicMock()
+    fake.list.return_value = listing
+    fake.company.return_value = company if company is not None else {
+        "corp_name": "(주)알테오젠", "corp_cls": "K", "ceo_nm": "전태연", "est_dt": "20080513",
+        "hm_url": "www.alteogen.com"}
+    fake.sub_docs.return_value = docs if docs is not None else pd.DataFrame(
+        [{"title": "1. 사업의 개요", "url": "http://dart.fss.or.kr/report/viewer.do?rcpNo=1"}])
+    return fake
+
+
+def _run_overview(fake, *, html=_VIEWER_HTML, curr_date="2026-11-05"):
+    resp = MagicMock(text=html)
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake), \
+            patch("requests.get", return_value=resp):
+        return dart.get_business_overview("196170", curr_date)
+
+
+@pytest.mark.unit
+def test_plain_text_keeps_paragraphs_and_flattens_tables_to_rows():
+    text = dart._plain_text(_VIEWER_HTML)
+    assert "당사는 바이오기업입니다. 라이선스 계약을 체결했습니다." in text    # 태그·&nbsp; 제거
+    assert "구분 | 주요제품" in text and "일반조명 | LED조명" in text           # 표는 행 단위
+    assert text.splitlines()[-1] == "끝 문단입니다."
+
+
+@pytest.mark.unit
+def test_trim_overview_cuts_at_a_sentence_and_marks_it():
+    text = "첫 문장입니다. " * 400
+    out = dart._trim_overview(text, 100)
+    assert out.endswith("…(이하 생략)") and "첫 문장입니다." in out and len(out) < 130
+    assert dart._trim_overview("짧은 글입니다.", 100) == "짧은 글입니다."
+
+
+@pytest.mark.unit
+def test_business_overview_returns_company_facts_overview_and_source():
+    import json
+
+    fake = _overview_dart(_listing(("20260323", "사업보고서 (2025.12)", "20260323001596")))
+    data = json.loads(_run_overview(fake))
+    assert data["company_name"] == "(주)알테오젠" and data["market"] == "KOSDAQ"
+    assert data["ceo"] == "전태연" and data["established"] == "20080513"
+    assert data["report"] == "사업보고서 (2025.12)" and data["rcept_no"] == "20260323001596"
+    assert data["source_url"] == "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260323001596"
+    assert data["overview"].startswith("당사는 바이오기업입니다.")      # 항목 제목 줄은 빠진다
+    assert "II. 사업의 내용" not in data["overview"] and "1. 사업의 개요" not in data["overview"]
+
+
+@pytest.mark.unit
+def test_business_overview_prefers_the_annual_report_over_a_newer_half_year_report():
+    import json
+
+    fake = _overview_dart(_listing(
+        ("20260814", "반기보고서 (2026.06)", "20260814001294"),
+        ("20260323", "[첨부추가]사업보고서 (2025.12)", "20260323001596")))
+    data = json.loads(_run_overview(fake))
+    assert data["rcept_no"] == "20260323001596"
+    assert data["report"] == "사업보고서 (2025.12)"                     # [첨부추가] 접두어는 뗀다
+
+
+@pytest.mark.unit
+def test_business_overview_falls_back_to_the_latest_periodic_report_when_no_annual_one():
+    import json
+
+    fake = _overview_dart(_listing(("20260515", "분기보고서 (2026.03)", "20260515001517")))
+    assert json.loads(_run_overview(fake))["rcept_no"] == "20260515001517"
+
+
+@pytest.mark.unit
+def test_business_overview_only_looks_at_filings_before_the_analysis_date():
+    fake = _overview_dart(_listing(("20260323", "사업보고서 (2025.12)", "20260323001596")))
+    _run_overview(fake, curr_date="2026-04-01")
+    kwargs = fake.list.call_args.kwargs
+    assert kwargs["end"] == "2026-04-01" and kwargs["start"] == "2024-04-01" and kwargs["kind"] == "A"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("listing, docs, expected", [
+    (pd.DataFrame(), None, "조회된 정기보고서가 없습니다."),
+    (_listing(("20260323", "사업보고서 (2025.12)", "1")), pd.DataFrame(columns=["title", "url"]),
+     "'사업의 개요' 항목을 찾지 못했습니다"),
+])
+def test_business_overview_failures_are_readable_text_not_json(listing, docs, expected):
+    out = _run_overview(_overview_dart(listing, docs=docs))
+    assert expected in out and not out.startswith("{")
+
+
+@pytest.mark.unit
+def test_business_overview_reports_an_empty_body_and_network_errors():
+    fake = _overview_dart(_listing(("20260323", "사업보고서 (2025.12)", "1")))
+    assert "본문이 비어 있습니다" in _run_overview(fake, html="<p>1. 사업의 개요</p>")
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake), \
+            patch("requests.get", side_effect=OSError("boom")):
+        assert dart.get_business_overview("196170", "2026-11-05").startswith("[사업의 개요 조회 실패")
+
+
+@pytest.mark.unit
+def test_business_overview_without_api_key_is_a_readable_failure(monkeypatch):
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+    assert dart.get_business_overview("196170", "2026-11-05").startswith("[DART 조회 실패")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("ticker", ["196170", "005930", "001210"])   # 알테오젠·삼성전자·금호전기
+def test_live_business_overview_comes_from_the_filing(ticker, dart_api_key):
+    import json
+
+    data = json.loads(dart.get_business_overview(ticker, datetime.now().strftime("%Y-%m-%d")))
+    assert data["company_name"] and data["market"] in {"KOSPI", "KOSDAQ"}
+    assert len(data["overview"]) > 100 and data["rcept_no"] in data["source_url"]
