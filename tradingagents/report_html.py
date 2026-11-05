@@ -6,6 +6,7 @@ forbids any fetch. Report text is rendered as CommonMark with raw HTML and image
 off, so nothing a model wrote can inject markup or load a remote asset.
 """
 
+import re
 from datetime import datetime
 from html import escape
 from importlib.resources import files
@@ -234,6 +235,66 @@ tbody tr:last-child td { border-bottom: 0; }
   table { break-inside: avoid; }
 }
 """
+
+
+# ---------------------------------------------------------------------------
+# PDF (#161) — WeasyPrint 는 페이지 CSS 를 인라인 SVG 에 적용하지 않는다 (색·선 스타일이 모두
+# 사라져 막대가 검정이 된다). SVG 안의 ``<style>`` 은 적용되지만 ``var(--x)`` 는 풀지 못하므로,
+# 차트 규칙(``_CSS`` 의 ``.viz`` 규칙)에서 인쇄용 팔레트로 변수를 치환한 literal 규칙을 SVG 안에
+# 넣는다. 규칙을 따로 복제하지 않고 ``_CSS`` 에서 뽑아 쓰므로 브라우저용 규칙과 어긋나지 않는다.
+# 팔레트는 밝은 화면용 ``:root`` 값을 쓴다 — ``@media print`` 는 강조색을 검정으로 덮어써서 같은
+# 검정 선(가격·이동평균 등)이 구분되지 않는다. PDF 종이는 흰색이라 밝은 팔레트가 그대로 어울린다.
+# ---------------------------------------------------------------------------
+
+_VAR_DECL = re.compile(r"--([\w-]+):\s*([^;]+);")
+_VIZ_RULE = re.compile(r"^\.viz ((?:svg )?[^{\n]+)\{([^}\n]*)\}", re.MULTILINE)
+_SVG_TAG = re.compile(r"(<svg\b[^>]*>)")
+# WeasyPrint 의 SVG 는 ``font: 600 15px a, b, "c"`` 단축 속성을 제대로 읽지 못해 글자가 거대해진다.
+_FONT_SHORTHAND = re.compile(r"font:\s*(?:(\d{3}|bold)\s+)?(\d+(?:\.\d+)?px)\s+[^;]+")
+_NOT_SVG_INTERNAL = (".scroll", "figcaption")   # SVG 안쪽이 아닌 ``.viz`` 규칙 (``svg`` 자체 포함)
+
+
+def _light_palette() -> dict[str, str]:
+    """밝은 화면용 ``:root`` 변수 값."""
+    root = re.search(r":root \{([^}]*)\}", _CSS)
+    palette = dict(_VAR_DECL.findall(root.group(1))) if root else {}
+    return {name: value.strip() for name, value in palette.items()}
+
+
+def svg_print_css() -> str:
+    """차트 SVG 안에 넣을 literal CSS (밝은 팔레트). ``.viz `` / ``svg `` 접두사는 뗀다."""
+    palette = _light_palette()
+    rules = []
+    for selector, body in _VIZ_RULE.findall(_CSS):
+        selector = selector.strip().removeprefix("svg ").strip()
+        if selector == "svg" or selector.startswith(_NOT_SVG_INTERNAL):
+            continue
+        body = _FONT_SHORTHAND.sub(
+            lambda m: (f"font-weight: {m.group(1)}; " if m.group(1) else "")
+            + f"font-size: {m.group(2)}; font-family: sans-serif",
+            body,
+        )
+        body = re.sub(r"var\(--([\w-]+)\)", lambda m: palette.get(m.group(1), "inherit"), body)
+        rules.append(f"{selector}{{{body.strip()}}}")
+    return "".join(rules)
+
+
+# WeasyPrint 의 flex 레이아웃은 표지 제목의 등급(``비중 축소``)을 "비중 축 / 소" 로 가른다.
+_PDF_EXTRA_CSS = ".masthead .rating { white-space: nowrap; }"
+
+
+def prepare_html_for_pdf(html: str) -> str:
+    """WeasyPrint 변환용으로 HTML 을 손본다 (브라우저용 파일은 그대로 둔다).
+
+    - 각 ``<svg>`` 첫머리에 ``svg_print_css()`` 를 ``<style>`` 로 넣는다.
+    - ``</head>`` 앞에 PDF 전용 보정 CSS 를 넣는다.
+
+    저장된 보고서는 만들어질 때의 CSS 를 담고 있으므로, 이미 만들어진 보고서도 변환 때 보정된다.
+    """
+    css = svg_print_css()
+    if css:
+        html = _SVG_TAG.sub(lambda m: f"{m.group(1)}<style>{css}</style>", html)
+    return html.replace("</head>", f"<style>{_PDF_EXTRA_CSS}</style></head>", 1)
 
 
 def _markdown() -> MarkdownIt:

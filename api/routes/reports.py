@@ -15,6 +15,7 @@ from api.reports_store import (
     list_reports,
 )
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.report_html import prepare_html_for_pdf
 
 router = APIRouter()
 
@@ -202,7 +203,7 @@ def _render_pdf(html_path: Path) -> bytes:
             "PDF 변환에 weasyprint 가 필요합니다. "
             'pip install -e ".[web]" 로 설치하세요.',
         ) from exc
-    return HTML(
-        filename=str(html_path),
-        base_url=str(html_path.parent),
-    ).write_pdf()
+    # WeasyPrint 는 페이지 CSS 를 인라인 SVG 에 적용하지 않아 차트가 검정으로 나온다 (#161).
+    # 각 <svg> 안에 literal 색 규칙 등을 넣어서 변환한다 (브라우저용 HTML 파일은 그대로).
+    html = prepare_html_for_pdf(html_path.read_text(encoding="utf-8"))
+    return HTML(string=html, base_url=str(html_path.parent)).write_pdf()
