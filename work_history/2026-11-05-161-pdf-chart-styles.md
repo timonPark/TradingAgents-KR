@@ -1,7 +1,7 @@
 # [#161] PDF 다운로드에서 차트가 깨짐 — 인라인 SVG 스타일
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/161
-- PR: (PR 생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/162
 - 브랜치: fix/161-pdf-chart-styles
 - 작업 기간: 2026-11-05
 
