@@ -14,7 +14,8 @@ Task 14a (#106): CLI (``cli/prompts.py``) 와 웹 API (``api/routes/symbols.py``
 ### 캐시
 전종목 수집은 수초가 걸리므로 하루 단위 JSON 캐시를 사용한다.
 
-- 경로: ``~/.tradingagents/cache/krx_tickers_YYYYMMDD.json``
+- 경로: ``~/.tradingagents/cache/krx_tickers_v2_YYYYMMDD.json``
+  (``v2``: #157 에서 코스닥 우량기업부 50종목을 포함하도록 바뀌어, 그 전 캐시를 버린다)
 - 캐시 키는 KRX 영업일 (``krx_calendar.current_trading_date()``)
 - 환경변수 ``TRADINGAGENTS_CACHE_DIR`` 로 base 경로 override 가능
 - 캐시 손상 (JSON 파싱 실패, 스키마 불일치) 시 재생성
@@ -42,6 +43,9 @@ Market = Literal["KOSPI", "KOSDAQ"]
 
 _TICKER_PATTERN = re.compile(r"^\d{6}$")
 _MARKETS: tuple[Market, ...] = ("KOSPI", "KOSDAQ")
+# FDR 의 ``Market`` 은 코스닥 우량기업부를 ``KOSDAQ GLOBAL`` 로 따로 내려준다 (알테오젠·에코프로 등
+# 50종목). 같은 코스닥 시장이므로 ``KOSDAQ`` 으로 합친다. KONEX 는 의도적으로 제외.
+_MARKET_ALIASES: dict[str, Market] = {"KOSDAQ GLOBAL": "KOSDAQ"}
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,7 @@ def _cache_dir() -> Path:
 
 
 def _cache_path(as_of: date) -> Path:
-    return _cache_dir() / f"krx_tickers_{as_of.strftime('%Y%m%d')}.json"
+    return _cache_dir() / f"krx_tickers_v2_{as_of.strftime('%Y%m%d')}.json"
 
 
 def _load_cached(path: Path) -> list[SymbolHit] | None:
@@ -109,7 +113,7 @@ def _fetch_tickers(as_of: date) -> list[SymbolHit]:
     hits: list[SymbolHit] = []
     valid_markets = set(_MARKETS)
     for _, row in listing.iterrows():
-        market = row["Market"]
+        market = _MARKET_ALIASES.get(row["Market"], row["Market"])
         if market not in valid_markets:
             continue
         code = str(row["Code"]).zfill(6)

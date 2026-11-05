@@ -142,7 +142,7 @@ def test_first_search_hits_pykrx_and_writes_cache(
 ) -> None:
     kss.search("삼성", as_of=fixed_as_of)
     assert patched_fetch[0] == 1
-    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file = isolated_cache / "krx_tickers_v2_20261103.json"
     assert cache_file.exists()
     data = json.loads(cache_file.read_text(encoding="utf-8"))
     assert {d["ticker"] for d in data} >= {"005930", "006400"}
@@ -159,7 +159,7 @@ def test_second_search_hits_cache_not_pykrx(
 def test_corrupt_cache_triggers_regeneration(
     isolated_cache: Path, fixed_as_of: date, patched_fetch: list[int]
 ) -> None:
-    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file = isolated_cache / "krx_tickers_v2_20261103.json"
     cache_file.write_text("{{broken json", encoding="utf-8")
 
     hits = kss.search("삼성", as_of=fixed_as_of)
@@ -170,7 +170,7 @@ def test_corrupt_cache_triggers_regeneration(
 def test_cache_schema_mismatch_triggers_regeneration(
     isolated_cache: Path, fixed_as_of: date, patched_fetch: list[int]
 ) -> None:
-    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file = isolated_cache / "krx_tickers_v2_20261103.json"
     cache_file.write_text(
         json.dumps([{"wrong_key": "005930"}], ensure_ascii=False), encoding="utf-8"
     )
@@ -210,7 +210,7 @@ def test_empty_fetch_result_is_not_cached(
     monkeypatch.setattr(kss, "_fetch_tickers", empty_fetch)
 
     assert kss.search("삼성", as_of=fixed_as_of) == []
-    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file = isolated_cache / "krx_tickers_v2_20261103.json"
     assert not cache_file.exists()
 
     # 다음 호출도 fetch 를 다시 때려야 함 — 빈 캐시가 들어있지 않으므로.
@@ -224,7 +224,7 @@ def test_cached_empty_file_is_treated_as_miss(
     patched_fetch: list[int],
 ) -> None:
     """#124: 디스크에 남아 있는 빈 ``[]`` 캐시는 미스로 취급해 재생성."""
-    cache_file = isolated_cache / "krx_tickers_20261103.json"
+    cache_file = isolated_cache / "krx_tickers_v2_20261103.json"
     cache_file.write_text("[]", encoding="utf-8")
 
     hits = kss.search("삼성", as_of=fixed_as_of)
@@ -260,4 +260,67 @@ def test_default_as_of_uses_current_trading_date(
     monkeypatch.setattr(cal, "current_trading_date", lambda: "2026-10-30")
     hits = kss.search("삼성")
     assert len(hits) >= 1
-    assert (isolated_cache / "krx_tickers_20261030.json").exists()
+    assert (isolated_cache / "krx_tickers_v2_20261030.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# #157: 코스닥 우량기업부(KOSDAQ GLOBAL) 종목이 검색에서 빠지던 문제
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_fdr(monkeypatch: pytest.MonkeyPatch):
+    """``FinanceDataReader.StockListing("KRX")`` 를 주어진 행으로 대체한다."""
+    import sys
+    import types
+
+    import pandas as pd
+
+    def install(rows: list[tuple[str, str, str]]) -> None:
+        listing = pd.DataFrame(rows, columns=["Code", "Name", "Market"])
+        module = types.SimpleNamespace(StockListing=lambda _market: listing)
+        monkeypatch.setitem(sys.modules, "FinanceDataReader", module)
+
+    return install
+
+
+_LISTING = [
+    ("005930", "삼성전자", "KOSPI"),
+    ("247540", "에코프로비엠", "KOSDAQ GLOBAL"),
+    ("196170", "알테오젠", "KOSDAQ GLOBAL"),
+    ("086520", "에코프로", "KOSDAQ GLOBAL"),
+    ("035760", "CJ ENM", "KOSDAQ GLOBAL"),
+    ("293490", "카카오게임즈", "KOSDAQ"),
+    ("000000", "코넥스종목", "KONEX"),
+]
+
+
+def test_kosdaq_global_stocks_are_listed_as_kosdaq(fake_fdr) -> None:
+    fake_fdr(_LISTING)
+    by_ticker = {h.ticker: h for h in kss._fetch_tickers(date(2026, 11, 5))}
+    assert by_ticker["196170"] == SymbolHit(ticker="196170", name="알테오젠", market="KOSDAQ")
+    assert by_ticker["247540"].market == "KOSDAQ" and by_ticker["005930"].market == "KOSPI"
+
+
+def test_konex_is_still_excluded(fake_fdr) -> None:
+    fake_fdr(_LISTING)
+    assert "000000" not in {h.ticker for h in kss._fetch_tickers(date(2026, 11, 5))}
+
+
+def test_alteogen_is_found_by_name_and_by_code(isolated_cache: Path, fake_fdr) -> None:
+    fake_fdr(_LISTING)
+    as_of = date(2026, 11, 5)
+    assert [h.ticker for h in kss.search("알테오젠", as_of=as_of)] == ["196170"]
+    assert [h.name for h in kss.search("196170", as_of=as_of)] == ["알테오젠"]
+    assert {h.ticker for h in kss.search("에코프로", as_of=as_of)} == {"086520", "247540"}
+
+
+def test_cache_made_before_the_fix_is_not_reused(isolated_cache: Path, fake_fdr) -> None:
+    """알테오젠이 빠진 옛 캐시(``krx_tickers_YYYYMMDD.json``)가 남아 있어도 새로 받는다."""
+    old = isolated_cache / "krx_tickers_20261105.json"
+    old.write_text(
+        json.dumps([{"ticker": "005930", "name": "삼성전자", "market": "KOSPI"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    fake_fdr(_LISTING)
+    assert [h.ticker for h in kss.search("알테오젠", as_of=date(2026, 11, 5))] == ["196170"]
