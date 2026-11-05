@@ -252,7 +252,7 @@ def get_investor_net_purchases(
     """
     최근 ``look_back_days`` 거래일간 외국인·기관·개인 순매수 (KRX 전용).
     수급은 가격 변동의 선행 지표라 시장 분석가가 활용해야 함.
-    KRX_ID / KRX_PW 환경변수 로그인 필요.
+    KRX 로그인이 필요한 API — pykrx 1.0.x 에서는 조회가 실패할 수 있음 (#139).
     """
     return route_to_vendor(
         "get_investor_net_purchases", ticker, trade_date, look_back_days
