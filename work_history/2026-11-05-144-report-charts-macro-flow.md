@@ -1,7 +1,7 @@
 # [#144] 보고서 차트 — 한국은행 거시 지표 + 한눈에 보기 판정 흐름
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/144 (이 PR 로 닫지 않음 — 가격 레벨·재무 차트 남음)
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/148
 - 브랜치: feat/144-report-charts-macro-flow
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
