@@ -1,7 +1,7 @@
 # [#157] 종목 검색에서 코스닥 우량기업부(KOSDAQ GLOBAL) 50개 종목 누락
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/157
-- PR: (PR 생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/158
 - 브랜치: fix/157-kosdaq-global-search
 - 작업 기간: 2026-11-05
 
