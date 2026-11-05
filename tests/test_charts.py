@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -594,10 +595,10 @@ def test_large_amounts_use_trillions_without_a_pointless_negative_axis():
 
 
 @pytest.mark.unit
-def test_build_financial_charts_states_a_dart_failure_for_both_charts():
+def test_build_financial_charts_states_a_dart_failure_for_every_chart():
     for text in ("[DART 조회 실패: DART_API_KEY 환경변수가 설정되지 않았습니다.]", "조회된 재무제표가 없습니다."):
         items = charts.build_financial_charts({"accounts": text})
-        assert [type(i) for i in items] == [ChartGap, ChartGap]
+        assert [type(i) for i in items] == [ChartGap, ChartGap, ChartGap]
         assert items[0].reason == text.splitlines()[0][:160]
 
 
@@ -607,6 +608,57 @@ def test_no_fundamentals_data_means_no_chart_area():
 
 
 @pytest.mark.unit
-def test_build_financial_charts_draws_both_from_complete_accounts():
+def test_build_financial_charts_draws_the_income_and_cash_charts_and_gaps_the_missing_liquidity():
     items = charts.build_financial_charts({"accounts": _fin(**_FULL)})
-    assert [i.title for i in items] == ["손익 폭포", "현금 흐름 브리지"] and all(isinstance(i, Chart) for i in items)
+    assert [i.title for i in items] == ["손익 폭포", "현금 흐름 브리지", "유동성 (현금 vs 단기 차입)"]
+    assert isinstance(items[0], Chart) and isinstance(items[1], Chart)
+    assert isinstance(items[2], ChartGap) and "현금및현금성자산" in items[2].reason   # BS 계정 없음 → 사유
+
+
+# ---------- #149: 유동성 (현금 vs 단기 차입) ----------
+
+_BS_DOOSAN = {   # 두산에너빌리티 반기 (원)
+    "cash": 2_541_888_000_000, "short_term_deposits": 276_246_000_000,
+    "short_borrowings": 2_916_241_000_000, "current_long_term_debt": 1_578_345_000_000,
+}
+
+
+@pytest.mark.unit
+def test_liquidity_chart_draws_cash_and_debt_bars_with_asset_and_debt_colours():
+    chart = charts.liquidity_chart(json.loads(_fin(**_BS_DOOSAN)))
+    assert isinstance(chart, Chart)
+    assert chart.svg.count('class="bar up"') == 2 and chart.svg.count('class="bar down"') == 2
+    for label in ("현금및현금성자산", "단기금융상품", "단기차입금", "유동성장기부채"):
+        assert f">{label}<" in chart.svg
+    assert "조 원" in chart.note and "현금성 2.82 vs 단기 차입 4.49" in chart.note
+    assert "유동성전환사채" in chart.note          # 못 찾은 항목은 부제에 밝힌다
+    assert 'class="link"' not in chart.svg         # 독립 막대 — 수준선으로 잇지 않는다
+    assert "+" not in "".join(re.findall(r'class="axis val"[^>]*>([^<]*)<', chart.svg))
+
+
+@pytest.mark.unit
+def test_liquidity_chart_includes_convertible_bonds_when_present():
+    chart = charts.liquidity_chart(json.loads(_fin(
+        cash=4_502_405_775, short_borrowings=1_357_209_246, current_convertible_bonds=2_948_032_257)))
+    assert chart.svg.count('class="bar down"') == 2 and ">유동성전환사채<" in chart.svg
+    assert "억 원" in chart.note and "단기금융상품" in chart.note   # 단기금융상품은 못 찾은 항목
+
+
+@pytest.mark.unit
+def test_liquidity_chart_without_cash_account_names_the_missing_account():
+    gap = charts.liquidity_chart(json.loads(_fin(short_borrowings=1.0)))
+    assert isinstance(gap, ChartGap) and "현금및현금성자산" in gap.reason
+
+
+@pytest.mark.unit
+def test_liquidity_chart_without_any_debt_account_is_a_gap_not_a_zero_bar():
+    gap = charts.liquidity_chart(json.loads(_fin(cash=1_000_000_000)))
+    assert isinstance(gap, ChartGap)
+    assert "단기차입금" in gap.reason and "차입이 없는 회사" in gap.reason
+
+
+@pytest.mark.unit
+def test_standalone_bars_do_not_change_the_waterfall_links():
+    steps = [("a", 10e8, "total"), ("b", -4e8, "delta"), ("c", 6e8, "total")]
+    chart = charts.waterfall_chart("t", steps, note="n", scale=(1e8, "억 원", 1))
+    assert chart.svg.count('class="link"') == 2
