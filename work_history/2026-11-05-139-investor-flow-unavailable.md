@@ -1,7 +1,7 @@
 # [#139] 투자자별 수급 조회 실패 원인 표시 (1단계: 조회 불가를 명시)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/139 (이 PR 로 닫지 않음 — 2단계 남음)
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/142
 - 브랜치: fix/139-investor-flow-unavailable
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
