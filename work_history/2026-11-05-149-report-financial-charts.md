@@ -1,7 +1,7 @@
 # [#149] 보고서 재무 차트 — 손익 폭포·현금 브리지 (DART 표준 계정 ID 기반)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/149
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/153
 - 브랜치: feat/149-report-financial-charts
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
