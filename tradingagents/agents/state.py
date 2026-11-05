@@ -50,6 +50,7 @@ class AgentState(MessagesState):
 
     # research step
     market_report: Annotated[str, "Report from the Market Analyst"]
+    market_data: Annotated[dict, "Raw prefetched market data (ohlcv/indicators/investor_flow strings) the report charts are drawn from (#144)"]
     sentiment_report: Annotated[str, "Report from the Sentiment Analyst"]
     news_report: Annotated[str, "Report from the News Analyst on company and world news"]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Analyst"]

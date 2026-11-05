@@ -613,3 +613,21 @@ def test_korean_rendered_lines_parse_back_to_internal_rating():
         assert parse_rating(render_pm_decision(decision)) == rating.value
     proposal = TraderProposal(action=TraderAction.BUY, reasoning="r")
     assert parse_rating(render_trader_proposal(proposal)) == "Buy"
+
+
+# ---- #144: 시장 분석가는 차트 원본을 상태로 남긴다 ----
+
+@pytest.mark.unit
+def test_market_analyst_keeps_prefetched_data_for_report_charts():
+    from unittest.mock import patch
+
+    from tradingagents.agents.analysts import market_analyst
+
+    prefetched = {"ohlcv": "o", "indicators": "i", "snapshot": "s", "investor_flow": "f"}
+    with patch.object(market_analyst, "_prefetch_market_data", return_value=prefetched), \
+         patch.object(market_analyst, "invoke_once", return_value=(MagicMock(), "리포트")):
+        out = market_analyst.create_market_analyst(MagicMock())(
+            {"company_of_interest": "034020", "trade_date": "2026-11-05", "messages": []}
+        )
+    assert out["market_report"] == "리포트"
+    assert out["market_data"] == {"ohlcv": "o", "indicators": "i", "investor_flow": "f"}   # 스냅샷은 제외
