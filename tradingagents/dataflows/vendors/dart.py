@@ -145,24 +145,93 @@ _REPRT_LABELS = {
 }
 
 
-def _format_statement(df, division_code: str) -> str:
-    """``finstate_all`` DataFrame 에서 특정 재무제표 섹션을 Markdown 표로 포맷."""
+_STATEMENT_ROWS = 30  # 표 하나에 싣는 최대 행 수
+
+
+def _money_text(raw: Any) -> str:
+    """금액 셀 → ``1,234`` (소수는 2자리). 값이 없으면 ``-``."""
+    value = _amount(raw)
+    if value is None:
+        return "-"
+    return f"{int(value):,}" if value.is_integer() else f"{value:,.2f}"
+
+
+def _has_cumulative(sub) -> bool:
+    """누적 열(``thstrm_add_amount``)에 값이 있는가 — 반기·3분기 보고서의 손익 표."""
+    if "thstrm_add_amount" not in sub.columns:
+        return False
+    return any(_amount(v) is not None for v in sub["thstrm_add_amount"])
+
+
+def _key_first(sub, division_code: str):
+    """핵심 계정(``_KEY_ACCOUNTS``)을 맨 앞에 두고 나머지는 원래 순서를 유지한다.
+
+    DART 응답은 행 순서가 회사마다 달라, 앞에서 자르면 매출·영업이익이 잘릴 수 있다.
+    """
+    if "account_id" not in sub.columns:
+        return sub
+    order = {
+        account_id: i
+        for i, (_, account_id, divisions) in enumerate(_KEY_ACCOUNTS)
+        if division_code in divisions
+    }
+    rank = sub["account_id"].map(lambda a: order.get(a, len(_KEY_ACCOUNTS)))
+    return sub.assign(_rank=rank).sort_values("_rank", kind="stable").drop(columns="_rank")
+
+
+def _period_note(division_code: str, reprt_code: str | None, cumulative: bool) -> str:
+    """표 머리말 — 금액 단위와 각 열이 가리키는 기간."""
+    report = _REPRT_LABELS.get(reprt_code or "", "")
+    prefix = f"{report} · " if report else ""
+    if division_code in _INCOME_DIVS and cumulative:
+        return (
+            f"_{prefix}금액 단위: 원. **당기(분기 3개월)** 는 해당 분기만, **누적** 은 연초부터 "
+            "보고 기간 끝까지의 합계입니다. 현금흐름표의 '당기'는 누적 기준이므로 "
+            "손익과 비교할 때는 **누적** 열을 쓰세요._"
+        )
+    if division_code in _INCOME_DIVS:
+        return f"_{prefix}금액 단위: 원. '당기'는 연초부터 보고 기간 끝까지의 누적입니다._"
+    if division_code == "CF":
+        return f"_{prefix}금액 단위: 원. '당기'는 연초부터 보고 기간 끝까지의 누적입니다._"
+    return f"_{prefix}금액 단위: 원. '당기'는 보고 기간 말 시점 잔액입니다._"
+
+
+def _format_statement(df, division_code: str, reprt_code: str | None = None) -> str:
+    """``finstate_all`` DataFrame 에서 특정 재무제표 섹션을 Markdown 표로 포맷.
+
+    반기·3분기 보고서의 손익 표는 ``thstrm_amount`` 가 해당 분기 3개월치라, 누적 열과
+    전년 동기 누적 열을 함께 보여 현금흐름표(누적)와 같은 기간으로 비교할 수 있게 한다.
+    """
     if df is None or df.empty:
         return "조회된 데이터가 없습니다."
     sub = df[df["sj_div"] == division_code] if "sj_div" in df.columns else df
     if sub.empty:
         return f"{_FS_LABELS.get(division_code, division_code)} 섹션이 보고서에 포함되지 않았습니다."
-    # 핵심 컬럼만 선택
-    keep = [c for c in ("account_nm", "thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount") if c in sub.columns]
-    if not keep:
+    sub = _key_first(sub, division_code)
+    cumulative = division_code in _INCOME_DIVS and _has_cumulative(sub)
+    if cumulative:
+        columns = {
+            "account_nm": "계정",
+            "thstrm_amount": "당기(분기 3개월)",
+            "thstrm_add_amount": "누적",
+            "frmtrm_add_amount": "전년 동기 누적",
+        }
+    else:
+        columns = {
+            "account_nm": "계정",
+            "thstrm_amount": "당기",
+            "frmtrm_amount": "전기",
+            "bfefrmtrm_amount": "전전기",
+        }
+    keep = [c for c in columns if c in sub.columns]
+    if len(keep) < 2:
         return str(sub.head(20))
-    pretty = sub[keep].rename(columns={
-        "account_nm": "계정",
-        "thstrm_amount": "당기",
-        "frmtrm_amount": "전기",
-        "bfefrmtrm_amount": "전전기",
-    }).head(30)
-    return pretty.to_markdown(index=False)
+    pretty = sub[keep].head(_STATEMENT_ROWS).copy()
+    for column in keep[1:]:  # 금액 열: 지수 표기·nan 대신 천 단위 구분 정수로
+        pretty[column] = pretty[column].map(_money_text)
+    pretty = pretty.rename(columns=columns)
+    note = _period_note(division_code, reprt_code, cumulative)
+    return note + "\n\n" + pretty.to_markdown(index=False)
 
 
 def get_fundamentals(ticker: str, curr_date: str, trade_date: str = "") -> str:
@@ -202,9 +271,9 @@ def get_fundamentals(ticker: str, curr_date: str, trade_date: str = "") -> str:
             f"## 최근 재무제표 ({year}년 {_REPRT_LABELS.get(code, code)})"
         )
         sections.append("### 손익계산서 요약")
-        sections.append(_format_statement(df, "IS"))
+        sections.append(_format_statement(df, "IS", code))
         sections.append("### 재무상태표 요약")
-        sections.append(_format_statement(df, "BS"))
+        sections.append(_format_statement(df, "BS", code))
 
     return "\n\n".join(sections) if sections else "조회된 공시가 없습니다."
 
@@ -245,7 +314,7 @@ def get_balance_sheet(
     if df is None:
         return "조회된 재무상태표가 없습니다."
     header = f"**{year}년 {_REPRT_LABELS.get(code, code)}** 재무상태표\n\n"
-    return header + _format_statement(df, "BS")
+    return header + _format_statement(df, "BS", code)
 
 
 def get_cashflow(
@@ -264,7 +333,7 @@ def get_cashflow(
     if df is None:
         return "조회된 현금흐름표가 없습니다."
     header = f"**{year}년 {_REPRT_LABELS.get(code, code)}** 현금흐름표\n\n"
-    return header + _format_statement(df, "CF")
+    return header + _format_statement(df, "CF", code)
 
 
 def get_income_statement(
@@ -283,10 +352,11 @@ def get_income_statement(
     if df is None:
         return "조회된 손익계산서가 없습니다."
     header = f"**{year}년 {_REPRT_LABELS.get(code, code)}** 손익계산서\n\n"
-    # 포괄손익(CIS)이 있으면 우선 사용, 없으면 손익계산서(IS)
-    out = _format_statement(df, "CIS")
+    # 손익계산서(IS)를 우선 사용한다. 두산에너빌리티처럼 IS 와 CIS 가 따로 있는 회사의 CIS 는
+    # 기타포괄손익 항목뿐이라 매출·영업이익이 없다. IS 가 없는 회사(금호전기)만 CIS 로 대체.
+    out = _format_statement(df, "IS", code)
     if "데이터가 없습니다" in out or "포함되지 않았습니다" in out:
-        out = _format_statement(df, "IS")
+        out = _format_statement(df, "CIS", code)
     return header + out
 
 

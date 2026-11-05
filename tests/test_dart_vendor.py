@@ -397,3 +397,123 @@ def test_live_key_accounts_are_identified_by_standard_account_id(ticker, dart_ap
     # 현금 브리지가 맞아떨어지는지 (환율·기타 차이는 기말 현금의 몇 % 이내)
     other = accounts["cash_end"]["value"] - sum(accounts[k]["value"] for k in ("cash_begin", "cfo", "cfi", "cff"))
     assert abs(other) <= abs(accounts["cash_end"]["value"]) * 0.2
+
+
+# ---- #154: 프롬프트용 표 — 손익은 누적 열을 보이고 기간을 명시한다 ----
+
+def _statement(*rows, extra=None):
+    """(sj_div, account_id, account_nm, 당기, 누적, 전년동기누적) → ``finstate_all`` 형태."""
+    df = pd.DataFrame([
+        {"sj_div": sj, "account_id": aid, "account_nm": nm, "thstrm_amount": cur,
+         "thstrm_add_amount": add, "frmtrm_add_amount": prev,
+         "frmtrm_amount": NAN, "bfefrmtrm_amount": NAN}
+        for sj, aid, nm, cur, add, prev in rows
+    ])
+    return df
+
+
+def _table_row(text, name):
+    return next(line for line in text.splitlines() if line.startswith(f"| {name}"))
+
+
+@pytest.mark.unit
+def test_half_year_income_table_shows_quarter_cumulative_and_prior_year_columns():
+    df = _statement(
+        ("IS", "ifrs-full_Revenue", "매출액", "4,724,808", "8,985,938", "8,317,595"),
+        ("CF", "ifrs-full_CashFlowsFromUsedInOperatingActivities", "영업활동현금흐름", "-886,652", NAN, NAN),
+    )
+    out = dart._format_statement(df, "IS", "11012")
+    assert "당기(분기 3개월)" in out and "누적" in out and "전년 동기 누적" in out
+    row = _table_row(out, "매출액")
+    assert "4,724,808" in row and "8,985,938" in row and "8,317,595" in row
+    assert "반기보고서" in out and "현금흐름표" in out   # 어떤 열을 현금흐름표와 비교할지 안내
+
+
+@pytest.mark.unit
+def test_annual_income_table_keeps_current_prior_columns_and_says_it_is_cumulative():
+    df = pd.DataFrame([{
+        "sj_div": "IS", "account_id": "ifrs-full_Revenue", "account_nm": "매출액",
+        "thstrm_amount": "300", "frmtrm_amount": "280", "bfefrmtrm_amount": "250",
+        "thstrm_add_amount": NAN,
+    }])
+    out = dart._format_statement(df, "IS", "11011")
+    assert "전전기" in out and "누적" not in out.split("\n\n")[1]   # 표에는 누적 열 없음
+    assert "사업보고서" in out and "연초부터" in out
+
+
+@pytest.mark.unit
+def test_cash_flow_table_note_says_current_is_cumulative():
+    df = _statement(("CF", "ifrs-full_CashFlowsFromUsedInOperatingActivities", "영업활동", "-5", NAN, NAN))
+    assert "누적" in dart._format_statement(df, "CF", "11012").split("\n\n")[0]
+
+
+@pytest.mark.unit
+def test_key_accounts_come_first_even_when_the_response_lists_them_last():
+    filler = [("IS", f"x_{i}", f"기타{i}", "1", "1", "1") for i in range(40)]
+    key = [
+        ("IS", "ifrs-full_Revenue", "매출액", "5", "9", "8"),
+        ("IS", "dart_OperatingIncomeLoss", "영업이익", "3", "5", "4"),
+        ("IS", "ifrs-full_ProfitLoss", "반기순이익", "2", "2", "1"),
+    ]
+    out = dart._format_statement(_statement(*filler, *key), "IS", "11012")
+    body = [ln for ln in out.splitlines() if ln.startswith("|")][2:]   # 머리글·구분선 제외
+    assert len(body) == dart._STATEMENT_ROWS
+    assert [ln.split("|")[1].strip() for ln in body[:3]] == ["매출액", "영업이익", "반기순이익"]
+
+
+@pytest.mark.unit
+def test_cash_flow_key_accounts_are_also_ordered_first():
+    filler = [("CF", f"x_{i}", f"기타{i}", "1", NAN, NAN) for i in range(40)]
+    key = [("CF", "ifrs-full_CashFlowsFromUsedInOperatingActivities", "영업활동", "-5", NAN, NAN)]
+    out = dart._format_statement(_statement(*filler, *key), "CF", "11012")
+    assert [ln for ln in out.splitlines() if ln.startswith("|")][2].split("|")[1].strip() == "영업활동"
+
+
+@pytest.mark.unit
+def test_amounts_have_thousand_separators_and_missing_values_are_dashes_not_nan():
+    df = _statement(("IS", "ifrs-full_Revenue", "매출액", "51349000000", "8985938000000", NAN))
+    out = dart._format_statement(df, "IS", "11012")
+    assert "51,349,000,000" in out and "8,985,938,000,000" in out
+    assert "nan" not in out and "e+" not in out
+    assert _table_row(out, "매출액").split("|")[-2].strip() == "-"   # 전년 동기 누적 없음
+
+
+@pytest.mark.unit
+def test_income_statement_prefers_is_over_cis_when_both_exist():
+    """IS·CIS 가 따로 있는 회사의 CIS 는 기타포괄손익뿐이라 매출·영업이익이 없다."""
+    df = pd.concat([
+        _statement(("IS", "ifrs-full_Revenue", "매출액", "4", "9", "8")),
+        _statement(("CIS", "ifrs-full_OtherComprehensiveIncome", "기타포괄손익", "1", "1", "1")),
+    ], ignore_index=True)
+    fake = MagicMock()
+    fake.finstate_all.return_value = df
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
+        out = dart.get_income_statement("034020", freq="quarterly", curr_date="2026-11-03")
+    assert "매출액" in out and "기타포괄손익" not in out
+
+
+@pytest.mark.unit
+def test_income_statement_uses_cis_when_company_has_no_is():
+    df = _statement(("CIS", "ifrs-full_Revenue", "수익", "4", "9", "8"))
+    fake = MagicMock()
+    fake.finstate_all.return_value = df
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
+        out = dart.get_income_statement("001210", freq="quarterly", curr_date="2026-11-03")
+    assert "수익" in out and "누적" in out
+
+
+@pytest.mark.unit
+def test_prompt_table_and_chart_data_agree_on_the_cumulative_revenue():
+    """프롬프트 표의 '누적' 값 = 차트가 쓰는 값 — 같은 기준."""
+    df = _statement(("IS", "ifrs-full_Revenue", "매출액", "4,724,808", "8,985,938", "8,317,595"))
+    assert "8,985,938" in _table_row(dart._format_statement(df, "IS", "11012"), "매출액")
+    assert dart.extract_key_accounts(df, 2026, "11012")["accounts"]["revenue"]["value"] == 8_985_938.0
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("ticker", ["034020", "001210"])   # 두산에너빌리티·금호전기
+def test_live_income_table_shows_cumulative_and_key_accounts_first(ticker, dart_api_key):
+    out = dart.get_income_statement(ticker, "quarterly", datetime.now().strftime("%Y-%m-%d"))
+    assert "누적" in out and "전년 동기 누적" in out
+    first_rows = [ln.split("|")[1].strip() for ln in out.splitlines() if ln.startswith("|")][2:5]
+    assert any(name.startswith(("매출", "수익")) for name in first_rows), first_rows
