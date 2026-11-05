@@ -1,7 +1,7 @@
 # [#144] 보고서 HTML 차트 — 1단계 (인프라 + 시장 분석가 차트)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/144 (이 PR 로 닫지 않음 — 2·3단계와 ECOS 차트 남음)
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/147
 - 브랜치: feat/144-report-charts
 - 작업 기간: 2026-11-05 ~ 2026-11-05
 
