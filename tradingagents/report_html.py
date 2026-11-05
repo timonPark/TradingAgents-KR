@@ -12,7 +12,7 @@ from importlib.resources import files
 
 from markdown_it import MarkdownIt
 
-from tradingagents.agents.rating import run_rating
+from tradingagents.agents.rating import display_rating, run_rating
 from tradingagents.reporting import analyst_names
 
 # Ratings by direction, so the page can show which way the call leans.
@@ -260,7 +260,7 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
 
     title = f'<span class="ticker">{escape(ticker)}</span>'
     if rating:
-        title += f' <span class="rating {tone}">{escape(rating)}</span>'
+        title += f' <span class="rating {tone}">{escape(display_rating(rating))}</span>'
     details = "".join(
         f'<div class="{"note" if label == "메모리 로그" else "detail"}">'
         f"<dt>{escape(label)}</dt><dd>{value}</dd></div>"
@@ -281,7 +281,7 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
             body.append(f'<h3 id="s{n}-{m}">{escape(agent)}</h3>\n{_render_agent_text(md, text)}')
         body.append("</section>")
 
-    page_title = " ".join(x for x in (ticker, date, rating) if x)
+    page_title = " ".join(x for x in (ticker, date, display_rating(rating) if rating else "") if x)
     return f"""<!doctype html>
 <html lang="ko">
 <head>

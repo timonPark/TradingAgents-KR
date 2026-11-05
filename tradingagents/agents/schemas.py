@@ -23,6 +23,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from tradingagents.agents.rating import display_rating
+
 # LLMs sometimes write a placeholder string ("None", "N/A", ...) into an optional
 # numeric field instead of omitting it. Coerce those to None so the structured
 # call validates instead of erroring (#1058). Pydantic still parses real numeric
@@ -140,7 +142,7 @@ def render_research_plan(plan: ResearchPlan) -> str:
         "strategic_actions": "전략적 조치" if is_korean else "Strategic Actions",
     }
     return "\n".join([
-        f"**{labels['recommendation']}**: {plan.recommendation.value}",
+        f"**{labels['recommendation']}**: {_shown(plan.recommendation.value, is_korean)}",
         "",
         f"**{labels['rationale']}**: {plan.rationale}",
         "",
@@ -207,6 +209,11 @@ def _output_language() -> str:
         return "Korean"
 
 
+def _shown(value: str, is_korean: bool) -> str:
+    """등급·액션 값의 화면 표기 (#145). 한국어 모드면 한국어, 아니면 내부 값 그대로."""
+    return display_rating(value) if is_korean else value
+
+
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
 
@@ -227,7 +234,7 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
     final_label = "최종 거래 제안" if is_korean else "FINAL TRANSACTION PROPOSAL"
 
     parts = [
-        f"**{labels['action']}**: {proposal.action.value}",
+        f"**{labels['action']}**: {_shown(proposal.action.value, is_korean)}",
         "",
         f"**{labels['reasoning']}**: {proposal.reasoning}",
     ]
@@ -240,7 +247,7 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         parts.extend(["", f"**{labels[key]}**: {shown}"])
     parts.extend([
         "",
-        f"{final_label}: **{proposal.action.value.upper()}**",
+        f"{final_label}: **{_shown(proposal.action.value, is_korean) if is_korean else proposal.action.value.upper()}**",
     ])
     return "\n".join(parts)
 
@@ -318,7 +325,7 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     }
 
     parts = [
-        f"**{labels['rating']}**: {decision.rating.value}",
+        f"**{labels['rating']}**: {_shown(decision.rating.value, is_korean)}",
         "",
         f"**{labels['executive_summary']}**: {decision.executive_summary}",
         "",
@@ -350,6 +357,14 @@ class SentimentBand(StrEnum):
     MIXED = "Mixed"
     MILDLY_BEARISH = "Mildly Bearish"
     BEARISH = "Bearish"
+
+
+# #145: 센티먼트 값의 한국어 표기 (내부 값은 영어 유지 — 구조화 출력 스키마).
+SENTIMENT_BAND_KO = {
+    "Bullish": "강세", "Mildly Bullish": "약한 강세", "Neutral": "중립",
+    "Mixed": "혼조", "Mildly Bearish": "약한 약세", "Bearish": "약세",
+}
+CONFIDENCE_KO = {"low": "낮음", "medium": "중간", "high": "높음"}
 
 
 class SentimentReport(BaseModel):
@@ -414,10 +429,18 @@ def render_sentiment_report(report: SentimentReport) -> str:
     narrative so the saved report is both human-readable and machine-parseable
     without regex.
     """
+    if _output_language().lower() != "korean":
+        return "\n".join([
+            f"**Overall Sentiment:** **{report.overall_band.value}** "
+            f"(Score: {report.overall_score:.1f}/10)",
+            f"**Confidence:** {report.confidence.capitalize()}",
+            "",
+            report.narrative,
+        ])
     return "\n".join([
-        f"**Overall Sentiment:** **{report.overall_band.value}** "
-        f"(Score: {report.overall_score:.1f}/10)",
-        f"**Confidence:** {report.confidence.capitalize()}",
+        f"**전체 센티먼트:** **{SENTIMENT_BAND_KO[report.overall_band.value]}** "
+        f"(점수: {report.overall_score:.1f}/10)",
+        f"**신뢰도:** {CONFIDENCE_KO[report.confidence]}",
         "",
         report.narrative,
     ])

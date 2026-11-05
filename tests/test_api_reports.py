@@ -232,3 +232,16 @@ def test_download_md_404_when_complete_missing(results_root: Path) -> None:
     assert client.get(
         "/api/reports/005930_20261104_083000/download?format=md"
     ).status_code == 404
+
+
+@pytest.mark.unit
+def test_korean_header_rating_is_reported_as_internal_value(results_root: Path) -> None:
+    """#145: 헤더는 한국어 표기로 쓰지만 API 의 decision 은 내부 값(영어)이다.
+    이전에 저장된 영어 헤더도 그대로 읽는다."""
+    _seed(results_root, "005930_20261104_083000", "비중 축소")
+    _seed(results_root, "000660_20261104_090000", "Overweight")
+    client = TestClient(create_app())
+    by_id = {i["report_id"]: i["decision"] for i in client.get("/api/reports").json()}
+    assert by_id["005930_20261104_083000"] == "Underweight"
+    assert by_id["000660_20261104_090000"] == "Overweight"
+    assert client.get("/api/reports/005930_20261104_083000").json()["decision"] == "Underweight"

@@ -306,3 +306,49 @@ def test_ratings_that_disagree_with_no_line_of_the_decisions_own_need_review(tex
     """When the text never states its own rating in the decision's shape and the
     ratings it names disagree, nobody can tell which is the call (#1170)."""
     assert extract_rating(text) is None
+
+
+# ---- #145: 한국어 표기도 같은 등급으로 읽는다 (내부 값은 영어) ----
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("shown", "internal"), [
+    ("매수", "Buy"), ("비중 확대", "Overweight"), ("보유", "Hold"),
+    ("비중 축소", "Underweight"), ("매도", "Sell"), ("비중축소", "Underweight"),
+])
+def test_korean_display_rating_is_read_as_the_internal_rating(shown, internal):
+    assert extract_rating(f"**등급**: {shown}\n\n**요약 전략**: 근거") == internal
+    assert parse_rating(f"- **최종 거래 제안**: **{shown}**") == internal
+
+
+@pytest.mark.unit
+def test_korean_rating_does_not_swallow_following_prose():
+    assert extract_rating("**등급**: 비중 축소 — 반등 시 단계적으로 줄입니다") == "Underweight"
+
+
+@pytest.mark.unit
+def test_display_rating_is_korean_and_passes_unknown_through():
+    from tradingagents.agents.rating import RATING_KO, RATINGS_5_TIER, display_rating
+
+    assert [display_rating(r) for r in RATINGS_5_TIER] == ["매수", "비중 확대", "보유", "비중 축소", "매도"]
+    assert set(RATING_KO) == set(RATINGS_5_TIER)
+    assert display_rating(RATING_REVIEW) == RATING_REVIEW
+
+
+@pytest.mark.unit
+def test_english_values_still_parse():
+    assert extract_rating("**등급**: Underweight") == "Underweight"
+    assert extract_rating("Rating: BUY") == "Buy"
+
+
+@pytest.mark.unit
+def test_korean_language_instruction_asks_for_korean_rating_values():
+    """#145: 한국어 모드의 프롬프트는 라벨 라인 값도 한국어로 쓰게 하고 영어 등급명을 막는다."""
+    from unittest.mock import patch
+
+    from tradingagents.agents.context import get_language_instruction
+
+    with patch("tradingagents.dataflows.config.get_config", return_value={"output_language": "Korean"}):
+        text = get_language_instruction()
+    for word in ("매수", "비중 확대", "보유", "비중 축소", "매도"):
+        assert word in text
+    assert "영어 값만" not in text

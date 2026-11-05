@@ -13,6 +13,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import SymbolSearch, { type SymbolHit } from "./SymbolSearch";
 import "./RunPanel.css";
+import { ratingLabel } from "../utils/rating";
 
 const API_BASE =
 	(import.meta.env.PUBLIC_API_BASE as string | undefined) ??
@@ -381,7 +382,7 @@ export default function RunPanel() {
 
 					{doneEvent && (
 						<p className="live-decision">
-							결정: <strong>{doneEvent.decision}</strong>
+							결정: <strong>{ratingLabel(doneEvent.decision)}</strong>
 						</p>
 					)}
 

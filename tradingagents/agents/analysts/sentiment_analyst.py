@@ -142,9 +142,9 @@ def _build_system_message(
 
 다음 필드를 채우세요:
 
-- **overall_band**: Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish 중 **정확히 하나** (영어 유지 — 파서 호환). 헤드라인이 명확히 양분되면 Mixed, 피드가 진정으로 침묵하는 경우에만 Neutral.
+- **overall_band**: Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish 중 **정확히 하나** (구조화 필드 값은 영어 유지). 헤드라인이 명확히 양분되면 Mixed, 피드가 진정으로 침묵하는 경우에만 Neutral. narrative 본문에서는 영어 대신 강세·약한 강세·중립·혼조·약한 약세·약세 같은 한국어 표기를 쓰세요.
 - **overall_score**: 0 (가장 약세) ~ 10 (가장 강세) 사이의 수치; 5는 중립. overall_band 와 일관성 유지.
-- **confidence**: low / medium / high (영어 유지 — 파서 호환), 데이터 품질과 샘플 크기에 기반.
+- **confidence**: low / medium / high (구조화 필드 값은 영어 유지), 데이터 품질과 샘플 크기에 기반.
 - **narrative**: 섹션별 breakdown (호재/악재/중립 구성), 지배 내러티브, catalyst/리스크, markdown summary table (방향, 소스, 근거).
 
 {get_language_instruction()}"""

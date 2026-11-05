@@ -155,7 +155,7 @@ def test_run_settings_name_the_version_of_the_running_code():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("decision, rating", [
-    ("**Rating**: Overweight\n\nAdd on weakness.", "Overweight"),
+    ("**Rating**: Overweight\n\nAdd on weakness.", "비중 확대"),
     ("Add on weakness.", "REVIEW"),           # no readable rating is said, not left out
 ])
 def test_the_report_header_names_the_rating(tmp_path, decision, rating):

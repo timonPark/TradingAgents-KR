@@ -16,7 +16,9 @@ from pydantic import ValidationError
 from tradingagents.agents.analysts.sentiment_analyst import create_sentiment_analyst
 from tradingagents.agents.managers.portfolio_manager import create_portfolio_manager
 from tradingagents.agents.managers.research_manager import create_research_manager
+from tradingagents.agents.rating import display_rating
 from tradingagents.agents.schemas import (
+    SENTIMENT_BAND_KO,
     PortfolioDecision,
     PortfolioRating,
     ResearchPlan,
@@ -46,10 +48,10 @@ class TestRenderTraderProposal:
     def test_minimal_required_fields(self):
         p = TraderProposal(action=TraderAction.HOLD, reasoning="Balanced setup; no edge.")
         md = render_trader_proposal(p)
-        assert "**액션**: Hold" in md
+        assert "**액션**: 보유" in md
         assert "**근거**: Balanced setup; no edge." in md
         # 영어 가치/트레일링 라인은 파서/외부 grep 호환성 유지, 라벨만 한국어.
-        assert "최종 거래 제안: **HOLD**" in md
+        assert "최종 거래 제안: **보유**" in md
 
     def test_optional_fields_included_when_present(self):
         p = TraderProposal(
@@ -60,11 +62,11 @@ class TestRenderTraderProposal:
             position_sizing="6% of portfolio",
         )
         md = render_trader_proposal(p)
-        assert "**액션**: Buy" in md
+        assert "**액션**: 매수" in md
         assert "**진입가**: 189.5" in md
         assert "**손절가**: 178.0" in md
         assert "**포지션 사이징**: 6% of portfolio" in md
-        assert "최종 거래 제안: **BUY**" in md
+        assert "최종 거래 제안: **매수**" in md
 
     def test_optional_fields_are_named_as_not_provided(self):
         """An omitted line reads as a field nobody asked for; the reader cannot
@@ -73,7 +75,7 @@ class TestRenderTraderProposal:
         md = render_trader_proposal(p)
         for field in ("진입가", "손절가", "포지션 사이징"):
             assert f"**{field}**: 제공되지 않음" in md
-        assert "최종 거래 제안: **SELL**" in md
+        assert "최종 거래 제안: **매도**" in md
 
     def test_english_output_language_uses_english_labels(self):
         """``output_language="English"`` 로 바꾸면 영어 라벨 fallback."""
@@ -171,7 +173,7 @@ class TestRenderResearchPlan:
             strategic_actions="Build position over two weeks; cap at 5%.",
         )
         md = render_research_plan(p)
-        assert "**추천**: Overweight" in md
+        assert "**추천**: 비중 확대" in md
         assert "**근거**: Bull case carried" in md
         assert "**전략적 조치**: Build position" in md
 
@@ -183,7 +185,7 @@ class TestRenderResearchPlan:
                 strategic_actions="s",
             )
             md = render_research_plan(p)
-            assert f"**추천**: {rating.value}" in md
+            assert f"**추천**: {display_rating(rating.value)}" in md
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +253,9 @@ class TestTraderAgent:
         result = trader(_make_trader_state())
         plan = result["trader_investment_plan"]
         # Task 9b (#81): Korean 디폴트 라벨.
-        assert "**액션**: Buy" in plan
+        assert "**액션**: 매수" in plan
         assert "**진입가**: 189.5" in plan
-        assert "최종 거래 제안: **BUY**" in plan
+        assert "최종 거래 제안: **매수**" in plan
         # The same rendered markdown is also added to messages for downstream agents.
         assert plan in result["messages"][0].content
 
@@ -353,7 +355,7 @@ class TestResearchManagerAgent:
         result = rm(_make_rm_state())
         ip = result["investment_plan"]
         # Task 9b/9d: Korean 라벨, 값 영어 유지.
-        assert "**추천**: Overweight" in ip
+        assert "**추천**: 비중 확대" in ip
         assert "**근거**: Bull case" in ip
         assert "**전략적 조치**: Build position" in ip
 
@@ -392,8 +394,8 @@ class TestRenderSentimentReport:
             narrative="Source breakdown here.",
         )
         md = render_sentiment_report(report)
-        assert "**Overall Sentiment:** **Bullish**" in md
-        assert "(Score: 7.2/10)" in md
+        assert "**전체 센티먼트:** **강세**" in md
+        assert "(점수: 7.2/10)" in md
 
     def test_header_contains_confidence(self):
         report = SentimentReport(
@@ -402,7 +404,7 @@ class TestRenderSentimentReport:
             confidence="low",
             narrative="Limited data.",
         )
-        assert "**Confidence:** Low" in render_sentiment_report(report)
+        assert "**신뢰도:** 낮음" in render_sentiment_report(report)
 
     def test_narrative_preserved_in_output(self):
         narrative = "## Breakdown\n\nStockTwits: 70% bullish.\n\n| Signal | Direction |\n|---|---|\n| News | Neutral |"
@@ -420,7 +422,7 @@ class TestRenderSentimentReport:
                 overall_band=band, overall_score=5.0,
                 confidence="medium", narrative="n",
             )
-            assert band.value in render_sentiment_report(report)
+            assert SENTIMENT_BAND_KO[band.value] in render_sentiment_report(report)
 
     def test_score_out_of_range_rejected(self):
         with pytest.raises(ValidationError):
@@ -478,8 +480,8 @@ class TestSentimentAnalystAgent:
         )
         analyst = create_sentiment_analyst(_structured_sentiment_llm(captured, report))
         sr = analyst(_make_sentiment_state())["sentiment_report"]
-        assert "**Overall Sentiment:** **Mildly Bearish**" in sr
-        assert "(Score: 4.0/10)" in sr
+        assert "**전체 센티먼트:** **약한 약세**" in sr
+        assert "(점수: 4.0/10)" in sr
         assert "Mixed signals across sources." in sr
 
     def test_sentiment_report_also_in_messages(self):
@@ -575,3 +577,39 @@ def test_the_trader_names_the_levels_it_did_not_give():
     for field in ("진입가", "손절가", "포지션 사이징"):
         assert field in rendered
     assert rendered.count("제공되지 않음") == 3
+
+
+# ---- #145: 한국어 모드는 한국어 값, 영어 모드는 내부 값 그대로 ----
+
+@pytest.fixture
+def english_output(monkeypatch):
+    from tradingagents.agents import schemas
+
+    monkeypatch.setattr(schemas, "_output_language", lambda: "English")
+
+
+@pytest.mark.unit
+def test_english_mode_keeps_internal_values(english_output):
+    plan = ResearchPlan(recommendation=PortfolioRating.UNDERWEIGHT, rationale="r", strategic_actions="a")
+    assert "**Recommendation**: Underweight" in render_research_plan(plan)
+    proposal = TraderProposal(action=TraderAction.SELL, reasoning="r")
+    out = render_trader_proposal(proposal)
+    assert "**Action**: Sell" in out
+    assert "FINAL TRANSACTION PROPOSAL: **SELL**" in out
+    report = SentimentReport(overall_band=SentimentBand.MIXED, overall_score=5.0,
+                             confidence="medium", narrative="n")
+    sr = render_sentiment_report(report)
+    assert "**Overall Sentiment:** **Mixed**" in sr
+    assert "**Confidence:** Medium" in sr
+
+
+@pytest.mark.unit
+def test_korean_rendered_lines_parse_back_to_internal_rating():
+    from tradingagents.agents.rating import parse_rating
+    from tradingagents.agents.schemas import render_pm_decision
+
+    for rating in PortfolioRating:
+        decision = PortfolioDecision(rating=rating, executive_summary="s", investment_thesis="t")
+        assert parse_rating(render_pm_decision(decision)) == rating.value
+    proposal = TraderProposal(action=TraderAction.BUY, reasoning="r")
+    assert parse_rating(render_trader_proposal(proposal)) == "Buy"

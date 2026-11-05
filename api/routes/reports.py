@@ -88,12 +88,11 @@ def get_single(report_id: str) -> ReportTreeOut:
     decision: str | None = None
     for f in files:
         if f.path == "complete_report.md":
-            from api.reports_store import _RATING_PATTERN
+            from api.reports_store import rating_from_header_line
 
             for line in f.content.splitlines()[:20]:
-                match = _RATING_PATTERN.match(line.strip())
-                if match:
-                    decision = match.group(1)
+                decision = rating_from_header_line(line)
+                if decision:
                     break
             break
 
