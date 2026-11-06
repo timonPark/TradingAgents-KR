@@ -10,8 +10,10 @@ import json
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from tradingagents.agents.analysts.company_themes import ThemeList, extract_themes
 from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
+from tradingagents.agents.structured import bind_structured
 from tradingagents.agents.tools import (
     get_balance_sheet,
     get_business_overview,
@@ -129,6 +131,8 @@ def _render_prefetched(data: dict[str, str]) -> str:
 
 
 def create_fundamentals_analyst(llm):
+    themes_llm = bind_structured(llm, ThemeList, "Company Themes")
+
     def fundamentals_analyst_node(state):
         current_date = state["trade_date"]
         instrument_context = get_instrument_context_from_state(state)
@@ -176,12 +180,16 @@ def create_fundamentals_analyst(llm):
 
         result, report = invoke_once(prompt, llm, state["messages"])
 
+        # 소속 테마 (#165) — 공시 발췌에서 근거 문장이 확인되는 것만 보고서에 올린다.
+        themes = extract_themes(themes_llm, prefetched["business_overview"])
+
         return {
             "messages": [result],
             "fundamentals_report": report,
             "fundamentals_data": {
                 "accounts": prefetched["financial_accounts"],
                 "business": prefetched["business_overview"],
+                "themes": themes,
             },
         }
 

@@ -50,11 +50,16 @@ def test_node_keeps_the_overview_in_state_and_forbids_filling_gaps_from_memory()
         captured["system"] = prompt.format_messages(messages=[])[0].content
         return MagicMock(), "리포트"
 
+    themes = {"status": "ok", "themes": [{"name": "바이오 플랫폼", "evidence": "당사는 바이오기업입니다."}], "reason": ""}
     with patch.object(fa, "_prefetch_fundamentals_data", return_value=_data(_BUSINESS)), \
-            patch.object(fa, "invoke_once", side_effect=fake_invoke):
+            patch.object(fa, "invoke_once", side_effect=fake_invoke), \
+            patch.object(fa, "extract_themes", return_value=themes) as extract:
         out = fa.create_fundamentals_analyst(MagicMock())(
             {"trade_date": "2026-11-05", "company_of_interest": "196170", "messages": []})
 
-    assert out["fundamentals_data"] == {"accounts": "{}", "business": _BUSINESS}
+    data = out["fundamentals_data"]
+    assert (data["accounts"], data["business"]) == ("{}", _BUSINESS)
+    assert data["themes"] == themes                    # 소속 테마도 상태에 보존 (#165)
+    assert extract.call_args.args[1] == _BUSINESS      # 같은 공시 발췌로 추출
     assert "공시 발췌에 근거해" in captured["system"] and "학습 지식으로 채우지 말고" in captured["system"]
     assert "당사는 바이오기업입니다." in captured["system"]
