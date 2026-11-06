@@ -403,3 +403,83 @@ def test_pdf_bars_get_their_up_and_down_colours():
     after = _pdf_fill_colors(prepare_html_for_pdf(html))
     assert b"0.031373 0.478431 0.34902" not in before          # 고치기 전: 검정뿐
     assert b"0.031373 0.478431 0.34902" in after and b"0.705882 0.215686 0.184314" in after   # up / down
+
+
+# ---------- #163: 회사 개요 — 공시 발췌 + 표지 회사명 ----------
+
+import json as _json  # noqa: E402
+
+_BUSINESS = _json.dumps({
+    "company_name": "(주)알테오젠", "market": "KOSDAQ", "ceo": "전태연", "established": "20080513",
+    "homepage": "www.alteogen.com", "report": "사업보고서 (2025.12)", "rcept_no": "20260323001596",
+    "source_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260323001596",
+    "overview": "당사는 바이오기업입니다.\n라이선스 계약으로 마일스톤을 받습니다.",
+}, ensure_ascii=False)
+
+
+def _overview_html(tmp_path, business=_BUSINESS, ticker="196170", **extra):
+    state = {"fundamentals_data": {"accounts": "x", "business": business}, **extra}
+    write_report_tree(_state(**state), ticker, tmp_path, settings=SETTINGS, html=True)
+    return (tmp_path / "complete_report.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_cover_shows_the_company_name_with_the_ticker(tmp_path):
+    html = _overview_html(tmp_path)
+    assert '<span class="ticker">알테오젠 <span class="code">196170</span></span>' in html
+    assert "<title>알테오젠 2026-09-26" in html            # (주) 접미어는 표지에서 뗀다
+
+
+@pytest.mark.unit
+def test_cover_name_falls_back_to_the_resolved_instrument_context(tmp_path):
+    ctx = "The instrument to analyze is `196170`. Resolved identity: Company: 에코프로비엠; Exchange: KOSDAQ."
+    html = _overview_html(tmp_path, business="[DART 조회 실패: x]", instrument_context=ctx)
+    assert '<span class="ticker">에코프로비엠 <span class="code">196170</span></span>' in html
+
+
+@pytest.mark.unit
+def test_cover_has_only_the_ticker_when_no_name_is_known(tmp_path):
+    html = _html(tmp_path)
+    assert '<span class="ticker">NVDA</span>' in html and 'class="code"' not in html.split("</h1>")[0]
+
+
+@pytest.mark.unit
+def test_overview_section_shows_the_filing_excerpt_facts_and_source(tmp_path):
+    html = _overview_html(tmp_path)
+    section = re.search(r'<section id="s-overview".*?</section>', html, re.S).group(0)
+    for expected in ("<h2>회사 개요</h2>", "<dd>알테오젠 (196170)</dd>", "<dd>KOSDAQ</dd>",
+                     "<dd>전태연</dd>", "<dd>2008-05-13</dd>"):
+        assert expected in section
+    assert section.count('<p class="text">') == 2 and "마일스톤을 받습니다" in section
+    assert 'href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260323001596"' in section
+    assert "DART 사업보고서 (2025.12)" in section and "모델이 작성한 글이 아님" in section
+
+
+@pytest.mark.unit
+def test_overview_comes_first_with_a_contents_entry_before_the_glance_section(tmp_path):
+    html = _overview_html(tmp_path, **_decision_state())
+    assert html.index('id="s-overview"') < html.index('id="s0"') < html.index('id="s1"')
+    nav = re.search(r'<nav class="contents".*?</nav>', html, re.S).group(0)
+    assert nav.index("회사 개요") < nav.index("한눈에 보기")
+
+
+@pytest.mark.unit
+def test_overview_escapes_markup_from_the_filing(tmp_path):
+    bad = _json.loads(_BUSINESS)
+    bad["overview"] = "<script>alert(1)</script> 정상 문장"
+    bad["company_name"] = "<b>회사</b>"
+    html = _overview_html(tmp_path, business=_json.dumps(bad, ensure_ascii=False))
+    assert "<script>alert" not in html and "&lt;script&gt;alert(1)" in html
+    assert "<b>회사</b>" not in html
+
+
+@pytest.mark.unit
+def test_overview_states_the_reason_when_the_filing_could_not_be_read(tmp_path):
+    html = _overview_html(tmp_path, business="조회된 정기보고서가 없습니다.")
+    section = re.search(r'<section id="s-overview".*?</section>', html, re.S).group(0)
+    assert "회사 개요 없음 — 조회된 정기보고서가 없습니다." in section and "<dl" not in section
+
+
+@pytest.mark.unit
+def test_no_overview_section_when_the_fundamentals_analyst_did_not_run(tmp_path):
+    assert "s-overview" not in _html(tmp_path).split("</style>")[1]

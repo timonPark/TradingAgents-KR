@@ -6,6 +6,7 @@ forbids any fetch. Report text is rendered as CommonMark with raw HTML and image
 off, so nothing a model wrote can inject markup or load a remote asset.
 """
 
+import json
 import re
 from datetime import datetime
 from html import escape
@@ -219,6 +220,12 @@ tbody tr:last-child td { border-bottom: 0; }
 .viz .link { stroke: var(--mark); stroke-width: 1; stroke-dasharray: 2 2; }
 .viz text.val { fill: var(--ink); }
 .viz figcaption { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.2rem; }
+.overview .facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1.25rem; margin: 0 0 1rem;
+  font: 0.92rem/1.5 var(--sans); }
+.overview .facts dt { color: var(--muted); } .overview .facts dd { margin: 0; }
+.overview p.text { margin: 0 0 0.7rem; }
+.overview p.source { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.9rem; }
+.masthead .code { font-weight: 400; color: var(--muted); font-size: 0.55em; letter-spacing: 0; }
 .viz-gap p { margin: 0; padding: 0.7rem 0.9rem; background: var(--wash); border: 1px dashed var(--edge);
   color: var(--muted); font: 0.85rem/1.5 var(--sans); }
 @media print {
@@ -297,6 +304,70 @@ def prepare_html_for_pdf(html: str) -> str:
     return html.replace("</head>", f"<style>{_PDF_EXTRA_CSS}</style></head>", 1)
 
 
+# ---------------------------------------------------------------------------
+# 회사 개요 (#163) — 조회한 공시(DART 사업보고서 "사업의 개요")를 그대로 보여준다. 모델이 쓴 글이
+# 아니라 1차 자료 발췌이므로 지어낸 내용이 들어갈 수 없고, 출처를 함께 표기한다.
+# ---------------------------------------------------------------------------
+
+_COMPANY_SUFFIX = re.compile(r"\(주\)|㈜|주식회사")
+_CONTEXT_NAME = re.compile(r"Company: (.+?)(?: \(its current|;|\. |$)")
+
+
+def _business(final_state: dict) -> tuple[dict | None, str]:
+    """(조회 결과 dict, 실패 사유). ``fundamentals_data`` 가 없으면 (None, "")."""
+    data = final_state.get("fundamentals_data")
+    if not isinstance(data, dict) or "business" not in data:
+        return None, ""
+    text = data.get("business") or ""
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("overview"):
+        return parsed, ""
+    first = text.strip().splitlines()[0][:160] if text.strip() else ""
+    return None, first or "회사 개요를 가져오지 못했습니다."
+
+
+def _company_name(final_state: dict) -> str:
+    """표지에 쓸 회사명. 조회한 개황 → 실행 시작 때 확정한 종목 정보 순. 없으면 빈 문자열."""
+    business, _ = _business(final_state)
+    name = (business or {}).get("company_name", "")
+    if not name:
+        found = _CONTEXT_NAME.search(final_state.get("instrument_context") or "")
+        name = found.group(1) if found else ""
+    return _COMPANY_SUFFIX.sub("", name).strip()
+
+
+def _overview_date(raw: str) -> str:
+    return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if re.fullmatch(r"\d{8}", raw or "") else (raw or "")
+
+
+def company_overview_html(ticker: str, final_state: dict) -> str:
+    """"회사 개요" 섹션. 재무 분석가가 돌지 않았으면 빈 문자열, 못 구했으면 사유를 보인다."""
+    business, reason = _business(final_state)
+    if business is None:
+        if not reason:
+            return ""
+        return ('<section id="s-overview" class="overview"><h2>회사 개요</h2>'
+                f'<div class="viz-gap"><p>회사 개요 없음 — {escape(reason)}</p></div></section>')
+    name = _company_name(final_state) or ticker
+    facts = [("회사", f"{name} ({ticker})")]
+    for label, key in (("시장", "market"), ("대표이사", "ceo")):
+        if business.get(key):
+            facts.append((label, business[key]))
+    if business.get("established"):
+        facts.append(("설립일", _overview_date(business["established"])))
+    facts_html = "".join(f"<dt>{escape(k)}</dt><dd>{escape(v)}</dd>" for k, v in facts)
+    paragraphs = "".join(f'<p class="text">{escape(line)}</p>' for line in business["overview"].split("\n") if line.strip())
+    source = escape(f"DART {business.get('report', '')}")
+    if business.get("source_url", "").startswith("https://dart.fss.or.kr/"):
+        source = f'<a href="{escape(business["source_url"])}" rel="noopener">{source}</a>'
+    return ('<section id="s-overview" class="overview"><h2>회사 개요</h2>'
+            f"<dl class=\"facts\">{facts_html}</dl>{paragraphs}"
+            f'<p class="source">출처: {source} "사업의 개요" 원문 발췌 (모델이 작성한 글이 아님)</p></section>')
+
+
 def _markdown() -> MarkdownIt:
     md = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
     md.add_render_rule("table_open", lambda *a: '<div class="table"><table>\n')
@@ -371,7 +442,9 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
     tone = _TONE.get(rating, "review")
     date = final_state.get("trade_date", "")
 
-    title = f'<span class="ticker">{escape(ticker)}</span>'
+    company = _company_name(final_state)
+    title = (f'<span class="ticker">{escape(company)} <span class="code">{escape(ticker)}</span></span>' if company
+             else f'<span class="ticker">{escape(ticker)}</span>')
     if rating:
         title += f' <span class="rating {tone}">{escape(display_rating(rating))}</span>'
     details = "".join(
@@ -407,7 +480,12 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
         body.insert(0, '<section id="s0"><h2>한눈에 보기</h2>'
                        + render_charts_html(glance, None) + "</section>")
 
-    page_title = " ".join(x for x in (ticker, date, display_rating(rating) if rating else "") if x)
+    overview = company_overview_html(ticker, final_state)
+    if overview:
+        contents.insert(0, '<li><a href="#s-overview"><span class="num">·</span> <span class="label">회사 개요</span></a></li>')
+        body.insert(0, overview)
+
+    page_title = " ".join(x for x in (company or ticker, date, display_rating(rating) if rating else "") if x)
     return f"""<!doctype html>
 <html lang="ko">
 <head>

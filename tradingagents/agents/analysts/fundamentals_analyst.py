@@ -6,12 +6,15 @@ cashflow/income statement/insider transactions) 를 미리 조회해 프롬프�
 없음, 분석가당 Claude Code 호출 1회.
 """
 
+import json
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.tools import (
     get_balance_sheet,
+    get_business_overview,
     get_cashflow,
     get_convertible_bonds,
     get_financial_accounts,
@@ -74,7 +77,15 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
         "curr_date": trade_date,
         "trade_date": trade_date,
     })
+    # 회사 개요 (#163) — 사업보고서 "사업의 개요" 발췌. 프롬프트에 근거 자료로 주입하고
+    # 보고서의 "회사 개요" 섹션에도 그대로 쓴다.
+    business_overview = _safe(get_business_overview, {
+        "ticker": ticker,
+        "curr_date": trade_date,
+        "trade_date": trade_date,
+    })
     return {
+        "business_overview": business_overview,
         "financial_accounts": financial_accounts,
         "fundamentals": fundamentals,
         "balance_sheet": balance_sheet,
@@ -85,10 +96,23 @@ def _prefetch_fundamentals_data(ticker: str, trade_date: str) -> dict[str, str]:
     }
 
 
+def _render_business_overview(text: str) -> str:
+    """``get_business_overview`` 결과(JSON 또는 실패 문구)를 프롬프트용 문단으로."""
+    try:
+        data = json.loads(text)
+        overview = data["overview"]
+    except (ValueError, TypeError, KeyError):
+        return f"(회사 개요를 가져오지 못했습니다: {text.strip().splitlines()[0][:160] if text.strip() else '응답 없음'})"
+    source = f"출처: DART {data.get('report', '')} (접수번호 {data.get('rcept_no', '')})"
+    return f"{overview}\n\n({source})"
+
+
 def _render_prefetched(data: dict[str, str]) -> str:
     """선조회된 데이터를 프롬프트에 주입할 Markdown 블록으로 포맷."""
     return (
         "## 사전 조회된 재무 데이터\n\n"
+        "### 회사 개요 (DART 사업보고서 \"사업의 개요\" 발췌)\n"
+        f"{_render_business_overview(data['business_overview'])}\n\n"
         "### 기업 개황\n"
         f"{data['fundamentals']}\n\n"
         "### 재무상태표 (분기)\n"
@@ -123,6 +147,10 @@ def create_fundamentals_analyst(llm):
             "핵심 재무지표, 시계열 트렌드를 포함해 트레이더가 판단할 수 있는 구체적이고 "
             "실행 가능한 인사이트를 근거와 함께 제시하세요."
             " 보고서 말미에 핵심 포인트를 정리한 Markdown 표를 반드시 첨부해 가독성을 높이세요."
+            " 보고서 첫머리에는 '회사 개요' 에 주입된 **공시 발췌에 근거해** 이 회사가 무엇을 하는 회사이고"
+            " 무엇으로 돈을 버는지 2~3문장으로 쓰세요. 발췌에 없는 사업 내용·제품·고객·소송·테마는"
+            " 학습 지식으로 채우지 말고, 모르면 '공시에서 확인되지 않음' 이라고 쓰세요."
+            " 마일스톤·로열티처럼 독자가 모를 수 있는 용어는 처음 나올 때 한 줄로 풀어 쓰세요."
             + get_language_instruction()
         )
 
@@ -151,7 +179,10 @@ def create_fundamentals_analyst(llm):
         return {
             "messages": [result],
             "fundamentals_report": report,
-            "fundamentals_data": {"accounts": prefetched["financial_accounts"]},
+            "fundamentals_data": {
+                "accounts": prefetched["financial_accounts"],
+                "business": prefetched["business_overview"],
+            },
         }
 
     return fundamentals_analyst_node

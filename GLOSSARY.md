@@ -72,3 +72,10 @@ i18n 경계를 정의하는 이원 구분.
 ## 하드 포크 (Hard fork)
 
 `TauricResearch/TradingAgents` 상류 추적을 포기하는 포크 전략. provider 추상화·미사용 vendor 코드·관련 pyproject 의존성을 전면 삭제합니다. 상류의 신규 기능/버그 수정은 자동으로 받지 않습니다.
+
+## 회사 개요 (Company overview)
+
+보고서 맨 앞 섹션. 회사명·시장·대표이사·설립일과 DART 사업보고서 "사업의 개요" **원문 발췌**를 출처와 함께 보여줍니다. 모델이 쓴 글이 아니라 조회한 공시를 그대로 옮긴 것이라 지어낸 내용이 들어갈 수 없습니다 (`dart.get_business_overview` → `fundamentals_data["business"]` → `report_html.company_overview_html`).
+
+- 재무 분석가에게도 같은 발췌를 근거 자료로 주입하고, 발췌에 없는 사업 내용은 학습 지식으로 채우지 못하게 지시합니다.
+- 공시를 못 구하면 "회사 개요 없음 — 사유"로 표시합니다 (추정하지 않음).

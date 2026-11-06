@@ -170,6 +170,24 @@ def get_financial_accounts(
 
 
 @tool
+def get_business_overview(
+    ticker: Annotated[str, InjectedState("company_of_interest")],
+    curr_date: Annotated[str, "current date you are trading at, yyyy-mm-dd"] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve the company overview (name, market, and the "business overview" excerpt of the
+    latest DART periodic report with its source) as JSON. Used for the report's company
+    overview section and to ground the analysts' explanation of what the company does.
+    Args:
+        curr_date (str): Current date you are trading at, yyyy-mm-dd
+    Returns:
+        str: JSON of the overview and its source, or a readable failure message
+    """
+    return route_to_vendor("get_business_overview", ticker, as_of(curr_date, trade_date))
+
+
+@tool
 def get_income_statement(
     ticker: Annotated[str, InjectedState("company_of_interest")],
     freq: Annotated[Literal["annual", "quarterly"], "reporting frequency"] = "quarterly",
