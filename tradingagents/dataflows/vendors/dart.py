@@ -26,7 +26,7 @@ import importlib
 import json
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 _DART_INSTANCE: Any = None
@@ -441,6 +441,44 @@ def get_convertible_bonds(ticker: str, trade_date: str = "") -> str:
         return pretty.to_markdown(index=False)
     except Exception as exc:  # noqa: BLE001
         return f"[CB 공시 포맷 실패: {exc}]"
+
+
+_DISCLOSURE_WINDOW_DAYS = 30
+_DISCLOSURE_MAX_ITEMS = 20
+
+
+def get_recent_disclosures(ticker: str, trade_date: str = "") -> str:
+    """분석 기준일 이전 최근 30일 공시 목록(JSON) (#166).
+
+    ``{"items": [{"date", "title", "filer", "url"}, ...]}`` (최신순, 최대 20건). 회사 핵심 이슈의
+    근거 자료이자 뉴스 분석가의 사전조회 데이터. 실패·공시 없음은 사람이 읽는 문구.
+    """
+    try:
+        dart = _dart()
+    except Exception as exc:  # noqa: BLE001
+        return f"[DART 조회 실패: {exc}]"
+    try:
+        end = datetime.strptime(trade_date, "%Y-%m-%d").date()
+    except ValueError:
+        end = datetime.utcnow().date()
+    start = end - timedelta(days=_DISCLOSURE_WINDOW_DAYS)
+    try:
+        df = dart.list(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
+    except Exception as exc:  # noqa: BLE001
+        return f"[공시 목록 조회 실패: {exc}]"
+    if df is None or getattr(df, "empty", True) or "report_nm" not in df.columns:
+        return f"최근 {_DISCLOSURE_WINDOW_DAYS}일간 공시가 없습니다."
+    rows = df.sort_values("rcept_dt", ascending=False).head(_DISCLOSURE_MAX_ITEMS)
+    items = []
+    for _, row in rows.iterrows():
+        raw = str(row.get("rcept_dt", ""))
+        items.append({
+            "date": f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if len(raw) == 8 else raw,
+            "title": str(row["report_nm"]).strip(),
+            "filer": str(row.get("flr_nm", "")).strip(),
+            "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={row.get('rcept_no', '')}",
+        })
+    return json.dumps({"items": items}, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------

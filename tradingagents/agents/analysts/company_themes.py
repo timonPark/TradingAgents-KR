@@ -37,18 +37,18 @@ class ThemeList(BaseModel):
         description="최대 3개. 발췌만으로 근거를 댈 수 있는 테마만. 근거가 없으면 빈 목록.")
 
 
-def _squash(text: str) -> str:
+def squash(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
 def verify_themes(themes: list[Theme], source: str) -> list[dict[str, str]]:
     """발췌에 실제로 있는 근거를 가진 테마만, 최대 ``MAX_THEMES`` 개."""
-    haystack = _squash(source)
+    haystack = squash(source)
     kept: list[dict[str, str]] = []
     seen: set[str] = set()
     for theme in themes:
-        name = _squash(theme.name)
-        evidence = _squash(theme.evidence).strip("\"'“”‘’")
+        name = squash(theme.name)
+        evidence = squash(theme.evidence).strip("\"'“”‘’")
         if not name or len(name) > _MAX_NAME_CHARS or name in seen:
             continue
         if len(evidence) < _MIN_EVIDENCE_CHARS or evidence not in haystack:

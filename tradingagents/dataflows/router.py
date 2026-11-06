@@ -15,6 +15,7 @@ from tradingagents.dataflows.vendors.dart import (
     get_fundamentals as get_dart_fundamentals,
     get_income_statement as get_dart_income_statement,
     get_insider_transactions as get_dart_insider_transactions,
+    get_recent_disclosures as get_dart_recent_disclosures,
 )
 from tradingagents.dataflows.vendors.ecos import get_macro_data as get_ecos_macro_data
 from tradingagents.dataflows.vendors.naver_api_hub import get_news as get_naver_api_hub_news
@@ -57,6 +58,7 @@ TOOLS_CATEGORIES = {
             "get_convertible_bonds",
             "get_financial_accounts",   # #149: 보고서 재무 차트용 핵심 계정 (JSON)
             "get_business_overview",    # #163: 회사 개요 (사업보고서 "사업의 개요" 발췌, JSON)
+            "get_recent_disclosures",   # #166: 최근 30일 공시 목록 (JSON) — 핵심 이슈의 근거
             # Task 5b (#48): DART 주요주주/임원 지분변동은 공시 데이터 ― news 가 아닌
             # 재무/공시 범주. 상류는 Yahoo 뉴스 피드를 통해 insider 를 가져왔기 때문에
             # news_data 에 있었음.
@@ -121,6 +123,9 @@ VENDOR_METHODS = {
     },
     "get_business_overview": {
         "dart": get_dart_business_overview,
+    },
+    "get_recent_disclosures": {
+        "dart": get_dart_recent_disclosures,
     },
     # news_data — Task 7c (#64): KRX 전용 네이버 금융 뉴스 단일 vendor
     "get_news": {

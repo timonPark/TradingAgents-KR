@@ -52,6 +52,8 @@ def _analyst_graph(spec, agent):
     fields: dict[str, type] = {spec.report_key: str}
     if spec.data_key:   # 보고서 차트의 원본 (#144) — 서브그래프 밖으로 내보낸다
         fields[spec.data_key] = dict
+    for key in spec.extra_data_keys:
+        fields[key] = dict
     output = TypedDict(f"{spec.key.capitalize()}Report", fields)
     graph = StateGraph(AgentState, output_schema=output)
     graph.add_node("agent", agent)

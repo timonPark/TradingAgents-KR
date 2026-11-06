@@ -188,6 +188,20 @@ def get_business_overview(
 
 
 @tool
+def get_recent_disclosures(
+    ticker: Annotated[str, InjectedState("company_of_interest")],
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve the instrument's DART disclosures of the last 30 days (newest first) as JSON.
+    Used as evidence for the report's key issues and shown to the news analyst.
+    Returns:
+        str: JSON ``{"items": [{date, title, filer, url}]}``, or a readable failure message
+    """
+    return route_to_vendor("get_recent_disclosures", ticker, trade_date)
+
+
+@tool
 def get_income_statement(
     ticker: Annotated[str, InjectedState("company_of_interest")],
     freq: Annotated[Literal["annual", "quarterly"], "reporting frequency"] = "quarterly",

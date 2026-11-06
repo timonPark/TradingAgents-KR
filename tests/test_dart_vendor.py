@@ -715,3 +715,64 @@ def test_live_business_overview_comes_from_the_filing(ticker, dart_api_key):
     data = json.loads(dart.get_business_overview(ticker, datetime.now().strftime("%Y-%m-%d")))
     assert data["company_name"] and data["market"] in {"KOSPI", "KOSDAQ"}
     assert len(data["overview"]) > 100 and data["rcept_no"] in data["source_url"]
+
+
+# ---------------------------------------------------------------------------
+# 최근 공시 목록 (#166)
+# ---------------------------------------------------------------------------
+
+
+def _disclosures_dart(rows):
+    fake = MagicMock()
+    fake.list.return_value = pd.DataFrame(rows, columns=["rcept_dt", "report_nm", "flr_nm", "rcept_no"])
+    return fake
+
+
+@pytest.mark.unit
+def test_recent_disclosures_are_newest_first_with_dart_links_and_a_30_day_window():
+    import json
+
+    fake = _disclosures_dart([
+        ("20261028", "정정신고서제출요구", "금융감독원", "20261028000001"),
+        ("20261103", "연결재무제표기준영업(잠정)실적(공정공시)", "알테오젠", "20261103900196"),
+    ])
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: fake):
+        items = json.loads(dart.get_recent_disclosures("196170", "2026-11-05"))["items"]
+
+    assert [i["date"] for i in items] == ["2026-11-03", "2026-10-28"]
+    assert items[0] == {"date": "2026-11-03", "title": "연결재무제표기준영업(잠정)실적(공정공시)", "filer": "알테오젠",
+                        "url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261103900196"}
+    kwargs = fake.list.call_args.kwargs
+    assert (kwargs["start"], kwargs["end"]) == ("2026-10-06", "2026-11-05")   # 분석 기준일까지, 미래 공시 제외
+
+
+@pytest.mark.unit
+def test_recent_disclosures_are_capped():
+    import json
+
+    rows = [(f"202610{d:02d}", f"공시{d}", "회사", f"2026100000{d:02d}") for d in range(1, 29)] * 2
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: _disclosures_dart(rows)):
+        assert len(json.loads(dart.get_recent_disclosures("196170", "2026-11-05"))["items"]) == 20
+
+
+@pytest.mark.unit
+def test_recent_disclosures_failures_are_readable(monkeypatch):
+    empty = _disclosures_dart([])
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: empty):
+        assert "공시가 없습니다" in dart.get_recent_disclosures("196170", "2026-11-05")
+    dart._reset_for_tests()   # _dart() 는 싱글턴 — 위의 대역이 남아 있으면 안 된다
+    broken = MagicMock()
+    broken.list.side_effect = OSError("boom")
+    with patch.object(dart, "_resolve_opendartreader_class", return_value=lambda _k: broken):
+        assert dart.get_recent_disclosures("196170", "2026-11-05").startswith("[공시 목록 조회 실패")
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+    dart._reset_for_tests()
+    assert dart.get_recent_disclosures("196170", "2026-11-05").startswith("[DART 조회 실패")
+
+
+@pytest.mark.integration
+def test_live_recent_disclosures_for_samsung(dart_api_key):
+    import json
+
+    items = json.loads(dart.get_recent_disclosures("005930", datetime.now().strftime("%Y-%m-%d")))["items"]
+    assert items and all(i["url"].startswith("https://dart.fss.or.kr/") for i in items)
