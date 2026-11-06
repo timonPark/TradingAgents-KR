@@ -223,6 +223,12 @@ tbody tr:last-child td { border-bottom: 0; }
 .overview .facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1.25rem; margin: 0 0 1rem;
   font: 0.92rem/1.5 var(--sans); }
 .overview .facts dt { color: var(--muted); } .overview .facts dd { margin: 0; }
+.overview .themes { margin: 0 0 1rem; font: 0.92rem/1.5 var(--sans); }
+.overview .themes h3 { font: 600 0.92rem/1.5 var(--sans); margin: 0 0 0.3rem; }
+.overview .themes ul { list-style: none; margin: 0; padding: 0; }
+.overview .themes li { margin: 0 0 0.45rem; padding-left: 0.7rem; border-left: 3px solid var(--edge); }
+.overview .themes q { display: block; color: var(--muted); font-size: 0.85rem; quotes: "“" "”"; }
+.overview .themes p { margin: 0; color: var(--muted); }
 .overview p.text { margin: 0 0 0.7rem; }
 .overview p.source { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.9rem; }
 .masthead .code { font-weight: 400; color: var(--muted); font-size: 0.55em; letter-spacing: 0; }
@@ -343,6 +349,20 @@ def _overview_date(raw: str) -> str:
     return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if re.fullmatch(r"\d{8}", raw or "") else (raw or "")
 
 
+def _themes_html(final_state: dict) -> str:
+    """"소속 테마" 블록 (#165). 테마마다 공시 원문 근거를 붙인다. 추출 기록이 없으면 빈 문자열."""
+    themes = (final_state.get("fundamentals_data") or {}).get("themes")
+    if not isinstance(themes, dict):
+        return ""
+    items = themes.get("themes") or []
+    if themes.get("status") == "ok" and items:
+        body = "".join(
+            f"<li><strong>{escape(t['name'])}</strong><q>{escape(t['evidence'])}</q></li>" for t in items)
+        return f'<div class="themes"><h3>소속 테마</h3><ul>{body}</ul></div>'
+    reason = themes.get("reason") or "근거를 확인할 수 있는 테마가 없습니다."
+    return f'<div class="themes"><h3>소속 테마</h3><p>확인되지 않음 — {escape(reason)}</p></div>'
+
+
 def company_overview_html(ticker: str, final_state: dict) -> str:
     """"회사 개요" 섹션. 재무 분석가가 돌지 않았으면 빈 문자열, 못 구했으면 사유를 보인다."""
     business, reason = _business(final_state)
@@ -364,8 +384,9 @@ def company_overview_html(ticker: str, final_state: dict) -> str:
     if business.get("source_url", "").startswith("https://dart.fss.or.kr/"):
         source = f'<a href="{escape(business["source_url"])}" rel="noopener">{source}</a>'
     return ('<section id="s-overview" class="overview"><h2>회사 개요</h2>'
-            f"<dl class=\"facts\">{facts_html}</dl>{paragraphs}"
-            f'<p class="source">출처: {source} "사업의 개요" 원문 발췌 (모델이 작성한 글이 아님)</p></section>')
+            f"<dl class=\"facts\">{facts_html}</dl>{_themes_html(final_state)}{paragraphs}"
+            f'<p class="source">출처: {source} "사업의 개요" 원문 발췌 (모델이 작성한 글이 아님). '
+            "테마 이름은 모델이 붙였고, 인용한 근거 문장은 이 원문에서 그대로 확인된 것만 싣습니다.</p></section>")
 
 
 def _markdown() -> MarkdownIt:
