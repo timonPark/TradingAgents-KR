@@ -1,7 +1,7 @@
 # [#165] 회사 개요 — 소속 테마 (근거·출처 표기)
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/165 (상위: #163)
-- PR: (작성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/167
 - 브랜치: feat/165-company-themes
 - 작업 기간: 2026-11-06
 
