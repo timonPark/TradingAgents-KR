@@ -229,6 +229,13 @@ tbody tr:last-child td { border-bottom: 0; }
 .overview .themes li { margin: 0 0 0.45rem; padding-left: 0.7rem; border-left: 3px solid var(--edge); }
 .overview .themes q { display: block; color: var(--muted); font-size: 0.85rem; quotes: "“" "”"; }
 .overview .themes p { margin: 0; color: var(--muted); }
+.overview .issues { margin: 0 0 1rem; font: 0.92rem/1.5 var(--sans); }
+.overview .issues h3 { font: 600 0.92rem/1.5 var(--sans); margin: 0 0 0.3rem; }
+.overview .issues ol { margin: 0; padding-left: 1.2rem; }
+.overview .issues li { margin: 0 0 0.6rem; }
+.overview .issues .src { display: block; color: var(--muted); font-size: 0.8rem; }
+.overview .issues .src a { color: inherit; }
+.overview .issues p { margin: 0; color: var(--muted); }
 .overview p.text { margin: 0 0 0.7rem; }
 .overview p.source { font: 0.78rem/1.4 var(--sans); color: var(--muted); margin-top: 0.9rem; }
 .masthead .code { font-weight: 400; color: var(--muted); font-size: 0.55em; letter-spacing: 0; }
@@ -363,6 +370,33 @@ def _themes_html(final_state: dict) -> str:
     return f'<div class="themes"><h3>소속 테마</h3><p>확인되지 않음 — {escape(reason)}</p></div>'
 
 
+def _source_link(source: dict) -> str:
+    """이슈 출처 한 줄: ``[뉴스] 2026-11-05 · 매체 · 제목`` (링크는 조회한 http(s) 주소만)."""
+    kind = "공시" if source.get("kind") == "disclosure" else "뉴스"
+    label = escape(f"[{kind}] {source.get('date', '')} · {source.get('source', '')} · {source.get('title', '')}")
+    url = source.get("url", "")
+    if url.startswith(("https://", "http://")):
+        return f'<a href="{escape(url)}" rel="noopener">{label}</a>'
+    return label
+
+
+def _issues_html(final_state: dict) -> str:
+    """"현재 핵심 이슈" 블록 (#166). 이슈마다 조회한 뉴스·공시 출처를 붙인다. 추출 기록이 없으면 빈 문자열."""
+    issues = final_state.get("company_issues")
+    if not isinstance(issues, dict):
+        return ""
+    items = issues.get("issues") or []
+    if issues.get("status") == "ok" and items:
+        body = "".join(
+            f"<li><strong>{escape(i['title'])}</strong> — {escape(i['summary'])}"
+            + "".join(f'<span class="src">{_source_link(s)}</span>' for s in i.get("sources", []))
+            + "</li>"
+            for i in items)
+        return f'<div class="issues"><h3>현재 핵심 이슈</h3><ol>{body}</ol></div>'
+    reason = issues.get("reason") or "근거를 확인할 수 있는 핵심 이슈가 없습니다."
+    return f'<div class="issues"><h3>현재 핵심 이슈</h3><p>확인되지 않음 — {escape(reason)}</p></div>'
+
+
 def company_overview_html(ticker: str, final_state: dict) -> str:
     """"회사 개요" 섹션. 재무 분석가가 돌지 않았으면 빈 문자열, 못 구했으면 사유를 보인다."""
     business, reason = _business(final_state)
@@ -384,9 +418,9 @@ def company_overview_html(ticker: str, final_state: dict) -> str:
     if business.get("source_url", "").startswith("https://dart.fss.or.kr/"):
         source = f'<a href="{escape(business["source_url"])}" rel="noopener">{source}</a>'
     return ('<section id="s-overview" class="overview"><h2>회사 개요</h2>'
-            f"<dl class=\"facts\">{facts_html}</dl>{_themes_html(final_state)}{paragraphs}"
+            f"<dl class=\"facts\">{facts_html}</dl>{_themes_html(final_state)}{_issues_html(final_state)}{paragraphs}"
             f'<p class="source">출처: {source} "사업의 개요" 원문 발췌 (모델이 작성한 글이 아님). '
-            "테마 이름은 모델이 붙였고, 인용한 근거 문장은 이 원문에서 그대로 확인된 것만 싣습니다.</p></section>")
+            "테마 이름은 모델이 붙였고, 인용한 근거 문장은 이 원문에서 그대로 확인된 것만 싣습니다. 핵심 이슈의 요약은 모델이 썼고, 근거로 든 뉴스·공시는 조회한 원자료의 제목과 링크입니다.</p></section>")
 
 
 def _markdown() -> MarkdownIt:

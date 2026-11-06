@@ -10,6 +10,8 @@ class AnalystNodeSpec:
     # 보고서 차트의 원본 데이터 키 (#144). 분석가 서브그래프는 output_schema 에 있는 키만
     # 부모 상태로 내보내므로, 여기에 이름을 올려야 최종 상태까지 남는다.
     data_key: str | None = None
+    # 같은 이유로 최종 상태까지 내보낼 추가 키 (#166: 뉴스 분석가의 핵심 이슈)
+    extra_data_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         agent_node="News Analyst",
         report_key="news_report",
         data_key="macro_data",
+        extra_data_keys=("company_issues",),
     ),
     "fundamentals": AnalystNodeSpec(
         key="fundamentals",

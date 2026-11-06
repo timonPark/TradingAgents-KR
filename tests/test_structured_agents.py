@@ -639,12 +639,16 @@ def test_news_analyst_keeps_each_macro_section_for_report_charts():
 
     from tradingagents.agents.analysts import news_analyst
 
-    prefetched = {"ticker_news": "t", "global_news": "g", "macro": "m",
+    prefetched = {"ticker_news": "t", "global_news": "g", "disclosures": "d", "macro": "m",
                   "macro_by_indicator": {"treasury_10y": "section"}}
+    issues = {"status": "ok", "issues": [], "reason": ""}
     with patch.object(news_analyst, "_prefetch_news_data", return_value=prefetched), \
+         patch.object(news_analyst, "extract_issues", return_value=issues) as extract, \
          patch.object(news_analyst, "invoke_once", return_value=(MagicMock(), "리포트")):
         out = news_analyst.create_news_analyst(MagicMock())(
             {"company_of_interest": "034020", "trade_date": "2026-11-05", "messages": []}
         )
     assert out["news_report"] == "리포트"
     assert out["macro_data"] == {"treasury_10y": "section"}
+    assert out["company_issues"] == issues                  # 핵심 이슈도 상태에 보존 (#166)
+    assert extract.call_args.args[2:] == ("t", "d")         # 같은 뉴스·공시로 추출

@@ -9,12 +9,19 @@ from datetime import datetime, timedelta
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from tradingagents.agents.analysts.company_issues import (
+    IssueList,
+    extract_issues,
+    parse_disclosures,
+)
 from tradingagents.agents.analysts.invoke import invoke_once
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
+from tradingagents.agents.structured import bind_structured
 from tradingagents.agents.tools import (
     get_global_news,
     get_macro_indicators,
     get_news,
+    get_recent_disclosures,
 )
 
 # 뉴스 선조회 창 — 최근 1주일.
@@ -62,6 +69,11 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict:
         "curr_date": trade_date,
         "trade_date": trade_date,
     })
+    # 최근 30일 DART 공시 (#166) — 프롬프트에 주입하고 보고서 "핵심 이슈"의 근거로도 쓴다.
+    disclosures = _safe(get_recent_disclosures, {
+        "ticker": ticker,
+        "trade_date": trade_date,
+    })
 
     # 거시 지표 — 각 지표를 별도 호출해 결과를 모음.
     macro_sections = []
@@ -79,9 +91,18 @@ def _prefetch_news_data(ticker: str, trade_date: str) -> dict:
     return {
         "ticker_news": ticker_news,
         "global_news": global_news,
+        "disclosures": disclosures,
         "macro": macro,
         "macro_by_indicator": macro_by_indicator,   # 보고서 차트의 원본 (#144)
     }
+
+
+def _render_disclosures(text: str) -> str:
+    """``get_recent_disclosures`` JSON 을 프롬프트용 목록으로. 읽을 수 없으면 원문 그대로 (실패 문구)."""
+    items = parse_disclosures(text)
+    if not items:
+        return text
+    return "\n".join(f"- {i['date']} | {i['source']} | {i['title']}" for i in items)
 
 
 def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
@@ -90,6 +111,8 @@ def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
         "## 사전 조회된 뉴스·거시 데이터\n\n"
         f"### 종목 뉴스 ({asset_label}, 최근 1주일)\n"
         f"{data['ticker_news']}\n\n"
+        "### 최근 공시 (DART, 최근 30일)\n"
+        f"{_render_disclosures(data['disclosures'])}\n\n"
         "### 글로벌 / 거시경제 뉴스\n"
         f"{data['global_news']}\n\n"
         "### 한국 거시경제 지표 (한국은행 ECOS)\n"
@@ -98,6 +121,8 @@ def _render_prefetched(data: dict[str, str], asset_label: str) -> str:
 
 
 def create_news_analyst(llm):
+    issues_llm = bind_structured(llm, IssueList, "Company Issues")
+
     def news_analyst_node(state):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "stock")
@@ -149,10 +174,15 @@ def create_news_analyst(llm):
 
         result, report = invoke_once(prompt, llm, state["messages"])
 
+        # 현재 핵심 이슈 (#166) — 조회한 뉴스·공시에서 근거가 확인되는 것만 보고서에 올린다.
+        issues = extract_issues(
+            issues_llm, instrument_context, prefetched["ticker_news"], prefetched["disclosures"])
+
         return {
             "messages": [result],
             "news_report": report,
             "macro_data": prefetched["macro_by_indicator"],
+            "company_issues": issues,
         }
 
     return news_analyst_node
