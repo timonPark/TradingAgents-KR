@@ -15,10 +15,10 @@ router = APIRouter()
 
 @router.get("/search", response_model=SymbolSearchResponse)
 def search_symbols(
-    q: str = Query("", description="종목명 (한글/영문) 또는 6자리 종목코드"),
+    q: str = Query("", description="종목명 (한글/영문) 또는 종목코드 (영숫자 6자)"),
     limit: int = Query(20, ge=0, le=50),
 ) -> SymbolSearchResponse:
-    """`q` 로 KRX 종목 검색. 6자리 숫자는 정확 매칭, 그 외는 부분 매칭."""
+    """`q` 로 KRX 종목 검색. 종목코드는 정확 매칭, 그 외는 부분 매칭."""
     hits = kss.search(q, limit=limit)
     return SymbolSearchResponse(
         hits=[

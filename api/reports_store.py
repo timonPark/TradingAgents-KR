@@ -17,8 +17,9 @@ from tradingagents.agents.rating import canonical_rating
 
 logger = logging.getLogger(__name__)
 
-# `ticker_YYYYMMDD_HHMMSS` 디렉터리명 (6자리 한국 종목코드 + stamp).
-_REPORT_ID_PATTERN = re.compile(r"^(\d{6})_(\d{8})_(\d{6})$")
+# `ticker_YYYYMMDD_HHMMSS` 디렉터리명 (영숫자 6자 한국 종목코드 + stamp).
+# 종목코드 부분은 symbols.KRX_TICKER_PATTERN 과 같은 문자 집합 (#181).
+_REPORT_ID_PATTERN = re.compile(r"^([0-9A-Z]{6})_(\d{8})_(\d{6})$")
 
 # 리포트 파일명은 섹션(폴더) 또는 complete_report 중 하나만. 임의 파일 접근 차단.
 _ALLOWED_FOLDERS = frozenset({"analysts", "research", "trading", "risk", "portfolio"})

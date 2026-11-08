@@ -46,8 +46,8 @@ class PortfolioContext(BaseModel):
     def positions_in(self, ticker: str) -> list[Position]:
         """The holdings of the instrument the run prices for ``ticker``.
 
-        Task 4a (#42): KRX 종목코드 체계는 보통주/우선주/ETF/ETN 모두 6자리 숫자
-        로 통일되어 있어 상류의 broker-spelling 정규화가 불필요. 단순 strip 비교.
+        Task 4a (#42): KRX 종목코드 체계는 보통주/우선주/ETF/ETN 모두 6자 코드
+        (영숫자 포함, #181)로 통일되어 있어 상류의 broker-spelling 정규화가 불필요. 단순 strip 비교.
         """
         symbol = _canonical(ticker)
         return [p for p in self.positions if _canonical(p.ticker) == symbol]

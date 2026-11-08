@@ -113,7 +113,7 @@ def _prompt_selections(prefs, flags):
         console.print(
             create_question_box(
                 "1단계: 종목코드",
-                "KRX 종목코드를 입력하세요 (6자리 숫자, 예: 005930 삼성전자)",
+                "KRX 종목코드를 입력하세요 (영숫자 6자, 예: 005930 삼성전자, 0126Z0 삼성에피스홀딩스)",
                 "005930",
             )
         )

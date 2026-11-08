@@ -97,7 +97,7 @@ def test_post_run_rejects_invalid_ticker() -> None:
     client = TestClient(create_app())
     response = client.post(
         "/api/runs",
-        json={"ticker": "ABCDEF", "trade_date": "2024-01-05"},
+        json={"ticker": "abcdef", "trade_date": "2024-01-05"},
     )
     assert response.status_code == 422
 

@@ -13,9 +13,10 @@ import questionary
 
 from cli.display import console
 from cli.models import AnalystType, AssetType
-from tradingagents.dataflows.symbols import safe_ticker_component
+from tradingagents.dataflows.symbols import KRX_TICKER_PATTERN, safe_ticker_component
 
-_SIX_DIGIT_PATTERN = re.compile(r"^\d{6}$")
+_TICKER_CODE_PATTERN = re.compile(KRX_TICKER_PATTERN)
+
 
 TICKER_INPUT_EXAMPLES = (
     "005930 (삼성전자), 000660 (SK하이닉스), 035720 (카카오), 069500 (KODEX 200 ETF)"
@@ -63,7 +64,7 @@ _MENU_STYLE = questionary.Style([
 
 
 def is_valid_ticker_input(value: str) -> bool:
-    """`--ticker` 플래그 레벨 검증: 6자리 숫자만 허용.
+    """`--ticker` 플래그 레벨 검증: KRX 종목코드(대문자 영숫자 6자)만 허용.
 
     Task 14g (#112): 대화형 `get_ticker()` 는 종목명 검색을 추가로 받지만,
     이 함수는 ``parse_ticker`` 가 호출하는 **플래그 검증**용이므로 종전처럼
@@ -79,7 +80,7 @@ def is_valid_ticker_input(value: str) -> bool:
 
 
 def _is_valid_search_or_ticker(value: str) -> bool:
-    """대화형 `get_ticker()` 입력 검증 — 빈 문자열, 6자리 숫자, 또는 자유 검색어 허용.
+    """대화형 `get_ticker()` 입력 검증 — 빈 문자열, 종목코드, 또는 자유 검색어 허용.
 
     숫자 입력이 6자리가 아니면 거부 (오입력 가드). 비-숫자는 그대로 통과.
     """
@@ -91,10 +92,19 @@ def _is_valid_search_or_ticker(value: str) -> bool:
     return True
 
 
+def _is_ticker_code(text: str) -> bool:
+    """종목코드 모양인가. 영숫자 코드는 종목명과 구분하기 위해 숫자가 하나 이상 있어야 한다.
+
+    DOOSAN 처럼 6자 대문자 영문 종목명은 코드가 아니라 이름 검색으로 보낸다. KRX 상장 종목
+    코드 2,876개(영숫자 98개 포함)는 전부 숫자를 포함한다 (2026-11-08 FDR 목록 기준).
+    """
+    return bool(_TICKER_CODE_PATTERN.match(text)) and any(c.isdigit() for c in text)
+
+
 def get_ticker() -> str:
     """사용자가 입력한 티커/종목명을 받아 정규화된 심볼로 반환.
 
-    Task 14g (#112): 6자리 숫자 입력은 기존대로 바로 티커로 통과, 그 외 문자열은
+    Task 14g (#112): 종목코드 입력은 기존대로 바로 티커로 통과, 그 외 문자열은
     `tradingagents.dataflows.krx_symbol_search.search` 로 부분 매칭 → 결과에
     따라 다음과 같이 처리한다:
 
@@ -128,8 +138,8 @@ def get_ticker() -> str:
         if not text:
             return "005930"
 
-        # 6자리 숫자 코드 → 종전 흐름 유지 (zero-regression).
-        if _SIX_DIGIT_PATTERN.match(text):
+        # 종목코드 → 종전 흐름 유지 (zero-regression).
+        if _is_ticker_code(text):
             return normalize_ticker_symbol(text)
 
         # 종목명 검색.
@@ -230,7 +240,7 @@ def parse_analysts(value: str, asset_type: AssetType) -> list[AnalystType]:
 def normalize_ticker_symbol(ticker: str) -> str:
     """사용자 입력을 KRX 종목코드로 정규화.
 
-    Task 4a (#42): KRX 6자리 숫자 패턴 외의 입력은 ``ValueError`` 로 거부합니다.
+    Task 4a (#42): KRX 종목코드 패턴(영숫자 6자, #181) 외의 입력은 ``ValueError`` 로 거부합니다.
     상류의 fallback (Exception 삼키고 upper-case 반환) 은 미국/홍콩 심볼을
     통과시켜 데이터 레이어에서 "ticker not found" 로 이어지는 문제가 있어 삭제.
     ``is_valid_ticker_input`` 가 이 예외를 바로 받아 False 로 변환합니다.

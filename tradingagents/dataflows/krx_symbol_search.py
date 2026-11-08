@@ -37,11 +37,13 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
+from tradingagents.dataflows.symbols import KRX_TICKER_PATTERN
+
 logger = logging.getLogger(__name__)
 
 Market = Literal["KOSPI", "KOSDAQ"]
 
-_TICKER_PATTERN = re.compile(r"^\d{6}$")
+_TICKER_PATTERN = re.compile(KRX_TICKER_PATTERN)
 _MARKETS: tuple[Market, ...] = ("KOSPI", "KOSDAQ")
 # FDR 의 ``Market`` 은 코스닥 우량기업부를 ``KOSDAQ GLOBAL`` 로 따로 내려준다 (알테오젠·에코프로 등
 # 50종목). 같은 코스닥 시장이므로 ``KOSDAQ`` 으로 합친다. KONEX 는 의도적으로 제외.
@@ -188,7 +190,8 @@ def search(
     """종목명/종목코드로 KRX 상장 종목 검색.
 
     Args:
-        query: 검색 문자열. 6자리 숫자면 정확 매칭, 그 외는 종목명 부분 매칭.
+        query: 검색 문자열. 종목코드(영숫자 6자)와 정확히 같은 종목이 있으면 그 종목,
+            없으면 종목명 부분 매칭.
         limit: 반환 상한.
         as_of: 데이터 기준일 (기본: 최근 영업일).
 
@@ -202,7 +205,10 @@ def search(
     hits = _load_all(as_of)
 
     if _TICKER_PATTERN.match(q):
-        return [h for h in hits if h.ticker == q][:1]
+        exact = [h for h in hits if h.ticker == q][:1]
+        # 코드 모양이어도 일치하는 코드가 없으면 종목명으로 찾는다 (DOOSAN 같은 6자 영문명).
+        if exact or q.isdigit():
+            return exact
 
     q_lower = q.lower()
     starts: list[SymbolHit] = []

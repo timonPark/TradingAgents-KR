@@ -80,6 +80,22 @@ def _dart() -> Any:
     return _DART_INSTANCE
 
 
+def _dart_company(ticker: str) -> str:
+    """OpenDartReader 에 넘길 회사 식별자.
+
+    OpenDartReader 는 숫자가 아닌 문자열을 종목코드가 아니라 **회사명**으로 보고 찾아서,
+    영숫자 종목코드(0126Z0 삼성에피스홀딩스 등, #181)는 코드표에 있어도 ``could not find`` 로
+    실패한다. 영숫자 코드는 DART 코드표(``corp_codes``)에서 8자리 ``corp_code`` 로 바꿔
+    넘긴다. 숫자 코드와 코드표에 없는 코드는 그대로 둔다 — 없는 회사를 지어내지 않고
+    라이브러리가 종전처럼 실패하게 한다 (우선주 00680K 는 DART 에 별도 회사가 없다).
+    """
+    if ticker.isdigit():
+        return ticker
+    table = _dart().corp_codes
+    rows = table[table["stock_code"] == ticker]
+    return str(rows.iloc[0]["corp_code"]) if not rows.empty else ticker
+
+
 def _reset_for_tests() -> None:
     """테스트에서 lazy singleton 을 재초기화하기 위한 helper."""
     global _DART_INSTANCE, _DART_INIT_ERROR
@@ -108,7 +124,7 @@ def _target_year(curr_date: str) -> int:
 def _fetch_finstate(ticker: str, year: int, reprt_code: str) -> Any:
     """``finstate_all`` 호출 + 에러 흡수. 성공 시 DataFrame, 실패 시 None."""
     try:
-        df = _dart().finstate_all(ticker, year, reprt_code)
+        df = _dart().finstate_all(_dart_company(ticker), year, reprt_code)
     except Exception:  # noqa: BLE001 — vendor 에러는 상위에서 "no data" 로 처리
         return None
     if df is None or (hasattr(df, "empty") and df.empty):
@@ -251,7 +267,7 @@ def get_fundamentals(ticker: str, curr_date: str, trade_date: str = "") -> str:
     sections: list[str] = []
     # 1. 기업 개황
     try:
-        company = dart.company(ticker)
+        company = dart.company(_dart_company(ticker))
     except Exception as exc:  # noqa: BLE001
         company = None
         sections.append(f"**기업 개황**: 조회 실패 ({exc})")
@@ -367,7 +383,7 @@ def get_insider_transactions(ticker: str, trade_date: str = "") -> str:
     except Exception as exc:  # noqa: BLE001
         return f"[DART 조회 실패: {exc}]"
     try:
-        df = dart.major_shareholders_exec(ticker)
+        df = dart.major_shareholders_exec(_dart_company(ticker))
     except Exception as exc:  # noqa: BLE001
         return f"[지분변동 조회 실패: {exc}]"
     if df is None or (hasattr(df, "empty") and df.empty):
@@ -389,7 +405,7 @@ def get_company_profile(ticker: str) -> dict:
     ``resolve_instrument_identity`` 가 안전하게 폴백.
     """
     try:
-        company = _dart().company(ticker)
+        company = _dart().company(_dart_company(ticker))
     except Exception:  # noqa: BLE001 — identity 해석 실패는 항상 fail-open
         return {}
     if not isinstance(company, dict):
@@ -420,7 +436,7 @@ def get_convertible_bonds(ticker: str, trade_date: str = "") -> str:
     try:
         today = datetime.utcnow().date()
         start = today.replace(year=today.year - 1)
-        df = dart.list(ticker, start=start.strftime("%Y-%m-%d"), end=today.strftime("%Y-%m-%d"))
+        df = dart.list(_dart_company(ticker), start=start.strftime("%Y-%m-%d"), end=today.strftime("%Y-%m-%d"))
     except Exception as exc:  # noqa: BLE001
         return f"[공시 목록 조회 실패: {exc}]"
     if df is None or (hasattr(df, "empty") and df.empty):
@@ -463,7 +479,7 @@ def get_recent_disclosures(ticker: str, trade_date: str = "") -> str:
         end = datetime.utcnow().date()
     start = end - timedelta(days=_DISCLOSURE_WINDOW_DAYS)
     try:
-        df = dart.list(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
+        df = dart.list(_dart_company(ticker), start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
     except Exception as exc:  # noqa: BLE001
         return f"[공시 목록 조회 실패: {exc}]"
     if df is None or getattr(df, "empty", True) or "report_nm" not in df.columns:
@@ -657,7 +673,9 @@ def _latest_business_report(ticker: str, curr_date: str) -> tuple[Any, str, str]
     except ValueError:
         end = datetime.utcnow().date()
     start = end.replace(year=end.year - 2)
-    listing = _dart().list(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), kind="A")
+    listing = _dart().list(
+        _dart_company(ticker), start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), kind="A"
+    )
     if listing is None or getattr(listing, "empty", True) or "report_nm" not in listing.columns:
         return None
     rows = listing.sort_values("rcept_dt", ascending=False)
@@ -682,7 +700,7 @@ def get_business_overview(ticker: str, curr_date: str, trade_date: str = "") -> 
     except Exception as exc:  # noqa: BLE001
         return f"[DART 조회 실패: {exc}]"
     try:
-        company = _dart().company(ticker) or {}
+        company = _dart().company(_dart_company(ticker)) or {}
     except Exception:  # noqa: BLE001 — 개황이 없어도 사업 개요는 시도한다
         company = {}
     try:
