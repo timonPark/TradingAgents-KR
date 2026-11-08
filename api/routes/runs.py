@@ -25,6 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from api.run_store import RunState, store
 from api.runner import RunRequest, launch_run
+from tradingagents.dataflows.symbols import KRX_TICKER_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ router = APIRouter()
 class RunCreate(BaseModel):
     """새 run 생성 요청 body."""
 
-    ticker: str = Field(pattern=r"^\d{6}$", description="6자리 KRX 종목코드")
+    ticker: str = Field(pattern=KRX_TICKER_PATTERN, description="KRX 종목코드 (대문자 영숫자 6자, 예: 005930, 0126Z0)")
     trade_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     analysts: list[Literal["market", "social", "news", "fundamentals"]] = Field(
         default_factory=lambda: ["market", "social", "news", "fundamentals"],

@@ -2,8 +2,8 @@
 
 TradingAgents-KR 포크는 한국거래소(KRX) 상장 종목만 지원합니다 (code_artifact.md
 Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변환 테이블은
-전부 삭제되었습니다 — KRX 종목코드는 보통주/우선주/ETF/ETN 모두 ``^\\d{6}$`` 로
-통일된 6자리 숫자 체계라 추가 매핑 없이 그대로 쓸 수 있습니다.
+전부 삭제되었습니다 — KRX 종목코드는 보통주/우선주/ETF/ETN 모두 대문자 영숫자 6자(``KRX_TICKER_PATTERN``)
+체계라 추가 매핑 없이 그대로 쓸 수 있습니다.
 
 삭제된 상류 로직:
 - ``_FOREX_CURRENCIES`` / ``_CRYPTO_BASES`` / ``_ALIASES`` 테이블
@@ -18,7 +18,7 @@ Task 4, 이슈 #41/#42). 상류의 미국/홍콩/상해/forex/crypto 심볼 변�
 
 ## 공개 함수
 
-- ``validate_krx_ticker`` — 엄격한 KRX 6자리 숫자 검증. CLI 가 사용자 입력에서
+- ``validate_krx_ticker`` — 엄격한 KRX 종목코드(영숫자 6자) 검증. CLI 가 사용자 입력에서
   이것을 호출해 KRX 외 티커를 사전 차단.
 - ``safe_ticker_component`` — 파일시스템 경로 안전 가드. 티커 외 run_id 등 비-
   티커 입력도 통과시키므로 KRX 검증보다 넓은 집합.
@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import re
 
-# KRX 종목코드: 6자리 숫자. 보통주 (005930 삼성전자), 우선주 (005935 삼성전자우),
-# ETF (069500 KODEX 200), ETN (530001) 모두 동일 패턴.
-_KRX_TICKER_RE = re.compile(r"^\d{6}$")
+# KRX 종목코드: 대문자 영숫자 6자. 보통주 (005930 삼성전자), 우선주 (005935 삼성전자우),
+# ETF (069500 KODEX 200), ETN (530001) 는 숫자 6자리이고, 신규 상장 종목은 영숫자 코드를
+# 받는다 (0126Z0 삼성에피스홀딩스, 0088M0 메쥬, 00680K 우선주). #181.
+# 코드를 검사하는 곳은 전부 이 상수를 쓴다 (API 요청 검증은 /openapi.json 으로 클라이언트에 노출).
+KRX_TICKER_PATTERN = r"^[0-9A-Z]{6}$"
+_KRX_TICKER_RE = re.compile(KRX_TICKER_PATTERN)
 
 # 파일시스템 경로 안전 문자. 티커 외에 run_id, 체크포인트 이름 등 사용자 입력도
 # 통과시키므로 KRX 티커보다 넓은 집합을 허용합니다. 상류와 호환되는 범위를
@@ -40,7 +43,7 @@ _TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^=+]+$")
 
 
 def validate_krx_ticker(raw: str) -> str:
-    """KRX 종목코드로 엄격 검증. 6자리 숫자가 아니면 ``ValueError``.
+    """KRX 종목코드로 엄격 검증. 대문자 영숫자 6자가 아니면 ``ValueError``.
 
     CLI 가 사용자 입력을 받아들일 때 이 함수로 사전 차단합니다. 상류의 미국/
     홍콩/상해/forex/crypto 심볼 (``AAPL``, ``0700.HK``, ``GC=F``, ``BTC-USD``)
@@ -52,8 +55,8 @@ def validate_krx_ticker(raw: str) -> str:
     s = raw.strip()
     if not _KRX_TICKER_RE.fullmatch(s):
         raise ValueError(
-            f"KRX 종목코드는 6자리 숫자입니다 (예: 005930 삼성전자, "
-            f"000660 SK하이닉스, 069500 KODEX 200). got {raw!r}"
+            f"KRX 종목코드는 대문자 영숫자 6자입니다 (예: 005930 삼성전자, "
+            f"000660 SK하이닉스, 069500 KODEX 200, 0126Z0 삼성에피스홀딩스). got {raw!r}"
         )
     return s
 

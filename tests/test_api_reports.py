@@ -112,7 +112,7 @@ def test_get_single_400_for_invalid_pattern(results_root: Path) -> None:
     client = TestClient(create_app())
     assert client.get("/api/reports/nope").status_code == 400
     assert client.get("/api/reports/005930_20261104").status_code == 400
-    assert client.get("/api/reports/ABCDEF_20261104_083000").status_code == 400
+    assert client.get("/api/reports/abcdef_20261104_083000").status_code == 400
 
 
 def test_get_single_rejects_path_traversal(results_root: Path) -> None:
@@ -204,7 +204,7 @@ def test_download_pdf_404_when_html_missing(results_root: Path) -> None:
 def test_download_rejects_invalid_report_id(results_root: Path) -> None:
     client = TestClient(create_app())
     assert client.get("/api/reports/not-a-report/download?format=md").status_code == 400
-    assert client.get("/api/reports/ABCDEF_20261104_083000/download?format=md").status_code == 400
+    assert client.get("/api/reports/abcdef_20261104_083000/download?format=md").status_code == 400
 
 
 def test_download_404_when_report_missing(results_root: Path) -> None:

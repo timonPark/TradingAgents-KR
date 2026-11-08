@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class SymbolHit(BaseModel):
     """종목 검색 결과 단일 항목."""
 
-    ticker: str = Field(description="6자리 KRX 종목코드")
+    ticker: str = Field(description="KRX 종목코드 (대문자 영숫자 6자)")
     name: str = Field(description="종목명")
     market: str = Field(description="시장 구분 (KOSPI/KOSDAQ)")
 
