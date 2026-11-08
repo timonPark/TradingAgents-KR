@@ -320,3 +320,150 @@ def test_runner_publishes_real_report_directory_id(monkeypatch, tmp_path):
         events = store.get(run_id).events
         assert events[-2] == {"type": "report_saved", "report_id": "005930_20240105_120000"}
         assert (tmp_path / events[-2]["report_id"] / "complete_report.md").is_file()
+
+
+# --- #172: 같은 종목·기준일 분석이 돌고 있으면 새로 시작하지 않는다 ---------
+
+
+def _install_blocking_graph(monkeypatch, release, started):
+    """propagate 가 release 될 때까지 멈춰 있는 그래프. 시작 횟수를 ``started`` 에 쌓는다."""
+    import api.runner as runner_module
+
+    class _BlockingGraph:
+        def __init__(self, *, progress_callback, **kwargs) -> None:
+            self._cb = progress_callback
+
+        def propagate(self, ticker: str, trade_date: str):
+            started.append((ticker, trade_date))
+            self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
+            release.wait(timeout=5)
+            self._cb({"type": "done", "decision": "Buy"})
+            return {"final_trade_decision": "Rating: Buy"}, "Buy"
+
+        def save_reports(self, final_state, ticker):
+            return "/tmp/reports/005930_20240105_120000/complete_report.md"
+
+    monkeypatch.setattr(runner_module, "build_config", lambda req: {})
+    monkeypatch.setattr(
+        "tradingagents.graph.trading_graph.TradingAgentsGraph",
+        _BlockingGraph,
+        raising=True,
+    )
+
+
+def test_duplicate_post_returns_existing_run_without_starting_another(monkeypatch) -> None:
+    import threading
+
+    release = threading.Event()
+    started: list[tuple[str, str]] = []
+    _install_blocking_graph(monkeypatch, release, started)
+    body = {"ticker": "005930", "trade_date": "2024-01-05"}
+
+    with TestClient(create_app()) as client:
+        first = client.post("/api/runs", json=body)
+        assert first.status_code == 201, first.text
+        assert first.json()["already_running"] is False
+        run_id = first.json()["run_id"]
+        _wait_for(lambda: store.get(run_id).status == "running")
+
+        second = client.post("/api/runs", json=body)
+        assert second.status_code == 200, second.text
+        assert second.json() == {"run_id": run_id, "already_running": True}
+
+        release.set()
+        _wait_for(lambda: store.get(run_id).status == "done")
+
+    assert started == [("005930", "2024-01-05")]
+    assert len(store.list_recent(limit=10)) == 1
+
+
+def test_duplicate_post_while_pending_returns_existing_run(monkeypatch) -> None:
+    """아직 시작 전(pending)이어도 중복으로 본다 — 태스크가 막 만들어진 직후."""
+    import threading
+
+    release = threading.Event()
+    _install_blocking_graph(monkeypatch, release, [])
+    state = store.create("005930", "2024-01-05")
+    assert state.status == "pending"
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/runs", json={"ticker": "005930", "trade_date": "2024-01-05"}
+        )
+
+    release.set()
+    assert response.status_code == 200
+    assert response.json() == {"run_id": state.run_id, "already_running": True}
+
+
+def test_duplicate_ignores_analysis_settings(monkeypatch) -> None:
+    """분석 설정(effort/analysts)이 달라도 같은 종목·기준일이면 중복이다.
+
+    상태 로그(full_states_log_{기준일}.json)가 종목·기준일 단위 경로라서 설정이
+    달라도 동시에 돌리면 서로 덮어쓴다.
+    """
+    import threading
+
+    release = threading.Event()
+    started: list[tuple[str, str]] = []
+    _install_blocking_graph(monkeypatch, release, started)
+
+    with TestClient(create_app()) as client:
+        first = client.post(
+            "/api/runs",
+            json={"ticker": "005930", "trade_date": "2024-01-05", "effort": "low"},
+        ).json()["run_id"]
+        _wait_for(lambda: store.get(first).status == "running")
+
+        second = client.post(
+            "/api/runs",
+            json={
+                "ticker": "005930",
+                "trade_date": "2024-01-05",
+                "effort": "high",
+                "analysts": ["news"],
+            },
+        )
+        release.set()
+        _wait_for(lambda: store.get(first).status == "done")
+
+    assert second.status_code == 200
+    assert second.json()["run_id"] == first
+    assert len(started) == 1
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        {"ticker": "000660", "trade_date": "2024-01-05"},  # 다른 종목
+        {"ticker": "005930", "trade_date": "2024-01-04"},  # 다른 기준일
+    ],
+)
+def test_different_ticker_or_date_starts_new_run(monkeypatch, other) -> None:
+    import threading
+
+    release = threading.Event()
+    started: list[tuple[str, str]] = []
+    _install_blocking_graph(monkeypatch, release, started)
+
+    with TestClient(create_app()) as client:
+        first = client.post(
+            "/api/runs", json={"ticker": "005930", "trade_date": "2024-01-05"}
+        ).json()["run_id"]
+        _wait_for(lambda: store.get(first).status == "running")
+
+        second = client.post("/api/runs", json=other)
+        assert second.status_code == 201
+        assert second.json()["already_running"] is False
+        assert second.json()["run_id"] != first
+        release.set()
+        _wait_for(lambda: store.get(second.json()["run_id"]).status == "done")
+
+
+@pytest.mark.parametrize("final_status", ["done", "error"])
+def test_finished_run_does_not_block_new_run(final_status) -> None:
+    """끝난(done/error) 분석은 중복이 아니다 — 같은 종목·기준일 재분석을 막지 않는다."""
+    state = store.create("005930", "2024-01-05")
+    state.status = final_status
+
+    assert store.find_active("005930", "2024-01-05") is None
