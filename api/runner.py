@@ -21,6 +21,15 @@ from api.run_store import RunStore
 logger = logging.getLogger(__name__)
 
 
+class RunCancelled(BaseException):  # noqa: N818 — 오류가 아니라 제어 흐름 신호
+    """분석을 멈추라는 신호 (#173).
+
+    진행 콜백에서 던진다. 그래프의 ``_emit_progress`` 는 ``Exception`` 만 삼키므로
+    ``BaseException`` 으로 두어야 ``propagate`` 밖으로 나간다
+    (``test_graph_lets_run_cancelled_through_progress_callback``).
+    """
+
+
 @dataclass
 class RunRequest:
     ticker: str
@@ -59,8 +68,14 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
 
     def graph_progress(event: dict[str, Any]) -> None:
         # The API finishes only after reports are durably available to download.
-        if event.get("type") != "done":
-            emit(event)
+        if event.get("type") == "done":
+            return
+        # #173: 노드 사이에서만 멈출 수 있다 — 이미 도는 노드(모델 호출)는 끝까지 돈다.
+        # 취소를 알아챈 뒤에는 이벤트를 기록하지 않고 곧장 멈춘다.
+        state = store.get(run_id)
+        if state is not None and state.cancel_requested:
+            raise RunCancelled
+        emit(event)
 
     def work() -> None:
         try:
@@ -82,6 +97,9 @@ async def _run_in_background(run_id: str, request: RunRequest, store: RunStore) 
             report_path = graph.save_reports(final_state, request.ticker)
             emit({"type": "report_saved", "report_id": Path(report_path).parent.name})
             emit({"type": "done", "decision": rating})
+        except RunCancelled:
+            logger.info("run %s cancelled", run_id)
+            emit({"type": "cancelled"})
         except Exception as exc:  # noqa: BLE001 — 예외 유형 상관없이 UI 에 알림
             logger.exception("run %s failed", run_id)
             emit({
