@@ -1,7 +1,7 @@
 # [#172] 같은 종목·기준일 분석이 이미 돌고 있으면 새로 시작하지 않기
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/172
-- PR: (PR 생성 후 기재)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/177
 - 브랜치: feat/172-dedupe-active-run
 - 작업 기간: 2026-11-08
 
