@@ -1,7 +1,7 @@
 # [#174] 끝난 분석의 기준일과 에이전트별 등급을 API 로 조회
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/174
-- PR: (PR 생성 후 기재)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/180
 - 브랜치: feat/174-report-agent-ratings
 - 작업 기간: 2026-11-08
 
