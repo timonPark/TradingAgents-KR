@@ -73,6 +73,14 @@ i18n 경계를 정의하는 이원 구분.
 
 `TauricResearch/TradingAgents` 상류 추적을 포기하는 포크 전략. provider 추상화·미사용 vendor 코드·관련 pyproject 의존성을 전면 삭제합니다. 상류의 신규 기능/버그 수정은 자동으로 받지 않습니다.
 
+## 에이전트별 등급 (Agent ratings)
+
+리포트에서 에이전트 **10개**(시장·뉴스·재무 분석가, 강세·약세 리서처, 리서치 매니저, 공격적·보수적·중립 분석가, 포트폴리오 매니저)가 각각 낸 5단계 [[최종 결정 라벨]] (#174). 감성 분석가와 트레이더의 글에는 5단계 등급이 없어 제외합니다. 리포트 트리의 섹션 파일(`1_analysts/market.md` 등)에서 읽고 (`tradingagents/agent_ratings.py`), `GET /api/reports` 와 `GET /api/reports/{id}` 의 `agent_ratings` 로 줍니다 — 에이전트 이름(`market`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`) → 내부 등급 값.
+
+- `**등급**`(리서치 매니저는 `**추천**` 도) 라벨만 읽습니다. `최종 거래 제안` 은 3단계(BUY/HOLD/SELL)로 뭉갠 값이라 읽지 않고, 글 속 "컨센서스 등급" 같은 문장도 읽지 않습니다.
+- 읽지 못하거나 한 글에 서로 다른 값이 나오면 그 에이전트만 **비웁니다** (등급을 지어내지 않음).
+- 같은 응답의 `trade_date` 는 **분석 기준일**(헤더 "분석일")이고, `stamp` 는 분석을 돌려 저장한 시각이라 다릅니다.
+
 ## 회사 개요 (Company overview)
 
 보고서 맨 앞 섹션. 회사명·시장·대표이사·설립일과 DART 사업보고서 "사업의 개요" **원문 발췌**를 출처와 함께 보여줍니다. 모델이 쓴 글이 아니라 조회한 공시를 그대로 옮긴 것이라 지어낸 내용이 들어갈 수 없습니다 (`dart.get_business_overview` → `fundamentals_data["business"]` → `report_html.company_overview_html`).
