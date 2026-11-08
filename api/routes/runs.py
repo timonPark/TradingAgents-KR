@@ -3,7 +3,9 @@
 - ``POST /api/runs``                  — 새 run 시작, ``{run_id, already_running}`` 반환.
                                         같은 종목·기준일 분석이 이미 돌고 있으면 새로
                                         시작하지 않고 그 ``run_id`` 를 200 으로 반환 (#172)
-- ``GET  /api/runs``                  — 최근 run 목록
+- ``GET  /api/runs``                  — 최근 run 목록. ``ticker``/``trade_date``/``status`` 로
+                                        거른 뒤 ``limit`` 적용, ``include_reports=false`` 로
+                                        보고서 본문 제외 (#171)
 - ``GET  /api/runs/{run_id}``         — 상태 스냅샷
 - ``GET  /api/runs/{run_id}/events``  — SSE 스트림 (완료 또는 에러 시 종료)
 """
@@ -16,7 +18,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -66,7 +68,7 @@ class RunSnapshot(BaseModel):
     reports: dict[str, str] = Field(default_factory=dict)
 
 
-def _snapshot(state: RunState) -> RunSnapshot:
+def _snapshot(state: RunState, *, include_reports: bool = True) -> RunSnapshot:
     return RunSnapshot(
         run_id=state.run_id,
         ticker=state.ticker,
@@ -82,7 +84,7 @@ def _snapshot(state: RunState) -> RunSnapshot:
             if state.active_node_started_at is not None
             else None
         ),
-        reports=dict(state.reports),
+        reports=dict(state.reports) if include_reports else {},
     )
 
 
@@ -107,8 +109,20 @@ async def create_run(body: RunCreate, response: Response) -> RunCreated:
 
 
 @router.get("", response_model=list[RunSnapshot])
-def list_runs(limit: int = 20) -> list[RunSnapshot]:
-    return [_snapshot(state) for state in store.list_recent(limit=limit)]
+def list_runs(
+    limit: int = 20,
+    ticker: str | None = None,
+    trade_date: str | None = None,
+    run_status: Literal["pending", "running", "done", "error"] | None = Query(
+        default=None, alias="status"
+    ),
+    include_reports: bool = True,
+) -> list[RunSnapshot]:
+    # #171: 조건을 안 주면 지금과 같다 (하위 호환). reports 는 목록에서만 뺀다.
+    runs = store.list_recent(
+        limit=limit, ticker=ticker, trade_date=trade_date, status=run_status
+    )
+    return [_snapshot(state, include_reports=include_reports) for state in runs]
 
 
 @router.get("/{run_id}", response_model=RunSnapshot)
