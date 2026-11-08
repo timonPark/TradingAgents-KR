@@ -1,7 +1,7 @@
 # [#181] 영숫자 종목코드(0126Z0 등)를 분석할 수 있게 하기
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/181
-- PR: (PR 생성 후 기록)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/182
 - 브랜치: feat/181-alphanumeric-ticker
 - 작업 기간: 2026-11-08
 
