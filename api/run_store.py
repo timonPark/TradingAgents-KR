@@ -70,6 +70,21 @@ class RunStore:
     def get(self, run_id: str) -> RunState | None:
         return self._states.get(run_id)
 
+    def find_active(self, ticker: str, trade_date: str) -> RunState | None:
+        """같은 종목·기준일의 ``pending``/``running`` 분석을 반환 (#172).
+
+        상태 로그 경로가 종목·기준일 단위라서 분석 설정이 달라도 같은 키로 본다.
+        여러 개면 가장 먼저 만들어진 것.
+        """
+        active = [
+            s
+            for s in self._states.values()
+            if s.ticker == ticker
+            and s.trade_date == trade_date
+            and s.status in {"pending", "running"}
+        ]
+        return min(active, key=lambda s: s.created_at, default=None)
+
     def get_queue(self, run_id: str) -> asyncio.Queue[Event] | None:
         return self._queues.get(run_id)
 

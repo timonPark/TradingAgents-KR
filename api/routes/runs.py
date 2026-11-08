@@ -1,6 +1,8 @@
 """Task 14e (#110): 분석 실행 라우트.
 
-- ``POST /api/runs``                  — 새 run 시작, ``{run_id}`` 반환
+- ``POST /api/runs``                  — 새 run 시작, ``{run_id, already_running}`` 반환.
+                                        같은 종목·기준일 분석이 이미 돌고 있으면 새로
+                                        시작하지 않고 그 ``run_id`` 를 200 으로 반환 (#172)
 - ``GET  /api/runs``                  — 최근 run 목록
 - ``GET  /api/runs/{run_id}``         — 상태 스냅샷
 - ``GET  /api/runs/{run_id}/events``  — SSE 스트림 (완료 또는 에러 시 종료)
@@ -14,7 +16,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -42,6 +44,9 @@ class RunCreate(BaseModel):
 
 class RunCreated(BaseModel):
     run_id: str
+    # #172: true 면 같은 종목·기준일 분석이 이미 돌고 있어 새로 시작하지 않고
+    # 그 run_id 를 돌려준 것이다 (HTTP 200). 새로 시작했으면 false (HTTP 201).
+    already_running: bool = False
 
 
 class RunSnapshot(BaseModel):
@@ -82,7 +87,13 @@ def _snapshot(state: RunState) -> RunSnapshot:
 
 
 @router.post("", response_model=RunCreated, status_code=status.HTTP_201_CREATED)
-async def create_run(body: RunCreate) -> RunCreated:
+async def create_run(body: RunCreate, response: Response) -> RunCreated:
+    # 확인과 등록 사이에 await 가 없어 단일 이벤트 루프에서 끼어들 틈이 없다.
+    active = store.find_active(body.ticker, body.trade_date)
+    if active is not None:
+        response.status_code = status.HTTP_200_OK
+        return RunCreated(run_id=active.run_id, already_running=True)
+
     request = RunRequest(
         ticker=body.ticker,
         trade_date=body.trade_date,
