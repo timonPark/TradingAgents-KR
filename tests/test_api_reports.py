@@ -245,3 +245,119 @@ def test_korean_header_rating_is_reported_as_internal_value(results_root: Path) 
     assert by_id["005930_20261104_083000"] == "Underweight"
     assert by_id["000660_20261104_090000"] == "Overweight"
     assert client.get("/api/reports/005930_20261104_083000").json()["decision"] == "Underweight"
+
+
+# ---------------------------------------------------------------------------
+# #174: 기준일(trade_date)과 에이전트별 등급(agent_ratings), 종목·기준일 필터
+# ---------------------------------------------------------------------------
+
+
+def _seed_tree(
+    results_dir: Path,
+    report_id: str,
+    trade_date: str | None,
+    ratings: dict[str, str | None],
+) -> None:
+    """실제 리포트 트리 모양(``1_analysts/…``)으로 만든다. ``None`` 이면 등급 없는 글."""
+    from tradingagents.agent_ratings import AGENT_REPORT_FILES
+    from tradingagents.agents.rating import display_rating
+
+    base = results_dir / "reports" / report_id
+    base.mkdir(parents=True, exist_ok=True)
+    header = [f"# 트레이딩 분석 보고서: {report_id.split('_')[0]}", ""]
+    if trade_date is not None:
+        header.append(f"- 분석일: {trade_date}")
+    header.append("- 등급: 보유")
+    (base / "complete_report.md").write_text("\n".join(header) + "\n", encoding="utf-8")
+    for agent, rating in ratings.items():
+        path = base / AGENT_REPORT_FILES[agent]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "등급 없이 끝나는 글" if rating is None else f"본문\n\n**등급**: {display_rating(rating)}\n"
+        path.write_text(text, encoding="utf-8")
+
+
+_ALL_BUY = {
+    "market": "Buy", "news": "Overweight", "fundamentals": "Hold", "bull": "Overweight",
+    "bear": "Underweight", "research_manager": "Hold", "aggressive": "Buy",
+    "conservative": "Sell", "neutral": "Hold", "portfolio_manager": "Underweight",
+}
+
+
+def test_list_and_single_expose_trade_date_and_agent_ratings(results_root: Path) -> None:
+    _seed_tree(results_root, "005930_20261108_071143", "2026-11-05", _ALL_BUY)
+    client = TestClient(create_app())
+
+    [item] = client.get("/api/reports").json()
+    single = client.get("/api/reports/005930_20261108_071143").json()
+
+    for body in (item, single):
+        # 기준일은 분석을 돌린 시각(stamp)과 다르다.
+        assert body["trade_date"] == "2026-11-05"
+        assert body["stamp"].startswith("2026-11-08")
+        assert body["agent_ratings"] == _ALL_BUY
+        assert body["decision"] == "Hold"  # 기존 필드는 그대로
+
+
+def test_agent_without_a_readable_rating_is_left_out(results_root: Path) -> None:
+    ratings = {**_ALL_BUY, "news": None}  # 글은 있지만 등급이 없다
+    del ratings["bear"]  # 파일 자체가 없다 (분석가를 일부만 돌린 경우 등)
+    _seed_tree(results_root, "005930_20261108_071143", "2026-11-05", ratings)
+    client = TestClient(create_app())
+
+    got = client.get("/api/reports/005930_20261108_071143").json()["agent_ratings"]
+
+    assert "news" not in got and "bear" not in got
+    assert got["market"] == "Buy" and len(got) == 8
+
+
+def test_report_without_header_date_or_sections_still_lists(results_root: Path) -> None:
+    """이 기능 이전에 저장됐거나 분석일 줄이 없는 리포트도 그대로 나온다."""
+    _seed(results_root, "005930_20261101_120000", "Buy")  # 분석일 줄·에이전트 섹션 없음
+    client = TestClient(create_app())
+
+    [item] = client.get("/api/reports").json()
+
+    assert item["trade_date"] is None
+    assert item["agent_ratings"] == {}
+    assert item["decision"] == "Buy"
+
+
+def test_list_filters_by_ticker_and_trade_date(results_root: Path) -> None:
+    _seed_tree(results_root, "005930_20261108_090000", "2026-11-05", {"market": "Buy"})
+    _seed_tree(results_root, "005930_20261108_080000", "2026-11-04", {"market": "Hold"})
+    _seed_tree(results_root, "000660_20261108_070000", "2026-11-05", {"market": "Sell"})
+    client = TestClient(create_app())
+
+    def ids(query: str) -> list[str]:
+        response = client.get(f"/api/reports{query}")
+        assert response.status_code == 200
+        return [i["report_id"] for i in response.json()]
+
+    assert ids("?ticker=005930") == ["005930_20261108_090000", "005930_20261108_080000"]
+    assert ids("?trade_date=2026-11-05") == ["005930_20261108_090000", "000660_20261108_070000"]
+    assert ids("?ticker=005930&trade_date=2026-11-05") == ["005930_20261108_090000"]
+    assert ids("?ticker=999999") == []
+    assert len(ids("")) == 3  # 조건이 없으면 지금과 같다
+
+
+def test_list_applies_limit_after_filtering(results_root: Path) -> None:
+    """기준일이 같은 오래된 리포트도 최근 limit 개 밖이어도 찾을 수 있어야 한다."""
+    _seed_tree(results_root, "005930_20261101_080000", "2026-10-30", {"market": "Buy"})
+    _seed_tree(results_root, "000660_20261108_080000", "2026-11-05", {"market": "Hold"})
+    _seed_tree(results_root, "000660_20261108_090000", "2026-11-05", {"market": "Hold"})
+    client = TestClient(create_app())
+
+    items = client.get("/api/reports?trade_date=2026-10-30&limit=1").json()
+
+    assert [i["report_id"] for i in items] == ["005930_20261101_080000"]
+
+
+def test_same_ticker_and_date_reanalyzed_lists_newest_first(results_root: Path) -> None:
+    """같은 종목·기준일을 다시 분석해도 리포트는 덮어쓰이지 않고 둘 다 남는다."""
+    _seed_tree(results_root, "005930_20261108_080000", "2026-11-05", {"market": "Hold"})
+    _seed_tree(results_root, "005930_20261108_090000", "2026-11-05", {"market": "Buy"})
+    client = TestClient(create_app())
+
+    items = client.get("/api/reports?ticker=005930&trade_date=2026-11-05").json()
+
+    assert [i["agent_ratings"]["market"] for i in items] == ["Buy", "Hold"]

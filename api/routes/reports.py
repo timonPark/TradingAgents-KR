@@ -13,6 +13,7 @@ from api.reports_store import (
     _results_root,
     get_report,
     list_reports,
+    read_report_meta,
 )
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.report_html import prepare_html_for_pdf
@@ -24,8 +25,13 @@ class ReportSummaryOut(BaseModel):
     report_id: str
     ticker: str
     name: str | None = None  # 14a 공통 검색으로 lookup; 실패 시 null
-    stamp: str
+    stamp: str  # 분석을 돌려 저장한 시각
     decision: str | None = None
+    # #174: 분석 기준일 (헤더에 없으면 null), 에이전트 이름 → 5단계 등급(내부 값, 예 "Buy").
+    # 읽지 못한 에이전트는 빠진다. 이름은 market, news, fundamentals, bull, bear,
+    # research_manager, aggressive, conservative, neutral, portfolio_manager.
+    trade_date: str | None = None
+    agent_ratings: dict[str, str] = Field(default_factory=dict)
 
 
 class ReportFileOut(BaseModel):
@@ -39,6 +45,8 @@ class ReportTreeOut(BaseModel):
     name: str | None = None
     stamp: str
     decision: str | None = None
+    trade_date: str | None = None
+    agent_ratings: dict[str, str] = Field(default_factory=dict)
     files: list[ReportFileOut] = Field(default_factory=list)
 
 
@@ -58,8 +66,13 @@ def _lookup_name(ticker: str) -> str | None:
 
 
 @router.get("", response_model=list[ReportSummaryOut])
-def list_all(limit: int = 50) -> list[ReportSummaryOut]:
-    summaries = list_reports(DEFAULT_CONFIG["results_dir"], limit=limit)
+def list_all(
+    limit: int = 50, ticker: str | None = None, trade_date: str | None = None
+) -> list[ReportSummaryOut]:
+    # #174: ticker/trade_date 로 먼저 거른 뒤 limit. 조건을 안 주면 지금과 같다.
+    summaries = list_reports(
+        DEFAULT_CONFIG["results_dir"], limit=limit, ticker=ticker, trade_date=trade_date
+    )
     return [
         ReportSummaryOut(
             report_id=s.report_id,
@@ -67,6 +80,8 @@ def list_all(limit: int = 50) -> list[ReportSummaryOut]:
             name=_lookup_name(s.ticker),
             stamp=s.stamp,
             decision=s.decision,
+            trade_date=s.trade_date,
+            agent_ratings=s.agent_ratings,
         )
         for s in summaries
     ]
@@ -97,12 +112,15 @@ def get_single(report_id: str) -> ReportTreeOut:
                     break
             break
 
+    trade_date, agent_ratings = read_report_meta(DEFAULT_CONFIG["results_dir"], report_id)
     return ReportTreeOut(
         report_id=report_id,
         ticker=ticker,
         name=_lookup_name(ticker),
         stamp=_parse_stamp(stamp_raw),
         decision=decision,
+        trade_date=trade_date,
+        agent_ratings=agent_ratings,
         files=[ReportFileOut(path=f.path, content=f.content) for f in files],
     )
 

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
+from tradingagents.agent_ratings import AGENT_REPORT_FILES, parse_agent_rating
 from tradingagents.agents.rating import canonical_rating
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,10 @@ _SECTION_FILE_PATTERN = re.compile(r"^[a-z_]+\.md$")
 _RATING_PATTERN = re.compile(r"^-\s*등급\s*:\s*(\S.*)$")
 
 
+# 헤더의 "- 분석일: 2026-11-05" 라인. 분석을 돌린 시각(report_id 의 stamp)과 다르다 (#174).
+_TRADE_DATE_PATTERN = re.compile(r"^-\s*분석일\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")
+
+
 def rating_from_header_line(line: str) -> str | None:
     """헤더 라인에서 내부 등급 값(``Underweight`` 등)을 읽는다. 없으면 None."""
     match = _RATING_PATTERN.match(line.strip())
@@ -40,8 +45,10 @@ class ReportSummary:
 
     report_id: str
     ticker: str
-    stamp: str  # ISO datetime
+    stamp: str  # ISO datetime (분석을 돌려 저장한 시각)
     decision: str | None
+    trade_date: str | None = None  # 분석 기준일. 헤더에 없으면 None (#174)
+    agent_ratings: dict[str, str] = field(default_factory=dict)  # 에이전트 → 내부 등급 값 (#174)
 
 
 @dataclass(frozen=True)
@@ -65,20 +72,57 @@ def _parse_stamp(raw: str) -> str:
     return dt.isoformat()
 
 
-def _extract_decision(complete_report_path: Path) -> str | None:
+def _read_header(complete_report_path: Path) -> tuple[str | None, str | None]:
+    """``complete_report.md`` 헤더에서 (최종 등급, 분석 기준일). 못 읽은 쪽은 None."""
     try:
         text = complete_report_path.read_text(encoding="utf-8")
     except OSError:
-        return None
+        return None, None
+    decision: str | None = None
+    trade_date: str | None = None
     for line in text.splitlines()[:20]:
-        rating = rating_from_header_line(line)
-        if rating:
-            return rating
-    return None
+        decision = decision or rating_from_header_line(line)
+        if trade_date is None and (m := _TRADE_DATE_PATTERN.match(line.strip())):
+            trade_date = m.group(1)
+    return decision, trade_date
 
 
-def list_reports(results_dir: str | Path, limit: int = 50) -> list[ReportSummary]:
-    """``results_dir/reports/`` 아래 리포트 디렉터리를 최근 순으로 반환."""
+def _read_agent_ratings(report_dir: Path) -> dict[str, str]:
+    """에이전트별 섹션 파일에서 등급을 읽는다 (#174). 읽지 못한 에이전트는 빠진다.
+
+    리포트 트리가 소스 오브 트루스라서 서버를 다시 켜도 같고, 이 기능 이전에 저장된
+    리포트도 읽힌다. 파일이 없거나 등급이 없거나 엇갈리면 그 에이전트만 비운다.
+    """
+    ratings: dict[str, str] = {}
+    for agent, relative in AGENT_REPORT_FILES.items():
+        try:
+            text = (report_dir / relative).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rating = parse_agent_rating(text, agent)
+        if rating is not None:
+            ratings[agent] = rating
+    return ratings
+
+
+def read_report_meta(results_dir: str | Path, report_id: str) -> tuple[str | None, dict[str, str]]:
+    """한 리포트의 (분석 기준일, 에이전트별 등급). ``report_id`` 는 이미 검증된 값이어야 한다."""
+    report_dir = _results_root(results_dir) / report_id
+    return _read_header(report_dir / "complete_report.md")[1], _read_agent_ratings(report_dir)
+
+
+def list_reports(
+    results_dir: str | Path,
+    limit: int = 50,
+    *,
+    ticker: str | None = None,
+    trade_date: str | None = None,
+) -> list[ReportSummary]:
+    """``results_dir/reports/`` 아래 리포트 디렉터리를 최근 순으로 반환.
+
+    ``ticker``/``trade_date`` 를 주면 **먼저 거른 뒤** ``limit`` 을 적용한다 (#174).
+    에이전트별 등급은 남은 ``limit`` 개만 읽는다.
+    """
     root = _results_root(results_dir)
     if not root.exists():
         return []
@@ -90,20 +134,28 @@ def list_reports(results_dir: str | Path, limit: int = 50) -> list[ReportSummary
         match = _REPORT_ID_PATTERN.match(child.name)
         if not match:
             continue
-        ticker = match.group(1)
+        report_ticker = match.group(1)
+        if ticker is not None and report_ticker != ticker:
+            continue
         stamp_raw = f"{match.group(2)}_{match.group(3)}"
-        decision = _extract_decision(child / "complete_report.md")
+        decision, report_date = _read_header(child / "complete_report.md")
+        if trade_date is not None and report_date != trade_date:
+            continue
         summaries.append(
             ReportSummary(
                 report_id=child.name,
-                ticker=ticker,
+                ticker=report_ticker,
                 stamp=_parse_stamp(stamp_raw),
                 decision=decision,
+                trade_date=report_date,
             )
         )
 
     summaries.sort(key=lambda s: s.stamp, reverse=True)
-    return summaries[:limit]
+    return [
+        replace(s, agent_ratings=_read_agent_ratings(root / s.report_id))
+        for s in summaries[:limit]
+    ]
 
 
 def get_report(results_dir: str | Path, report_id: str) -> list[ReportFile]:
