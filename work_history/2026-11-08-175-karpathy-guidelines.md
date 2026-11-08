@@ -1,7 +1,7 @@
 # [#175] CLAUDE.md 에 작업 태도 원칙(Karpathy 지침) 추가
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/175
-- PR: (PR 생성 후 기재)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/176
 - 브랜치: docs/175-karpathy-guidelines
 - 작업 기간: 2026-11-08
 
