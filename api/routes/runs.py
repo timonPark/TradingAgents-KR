@@ -7,7 +7,8 @@
                                         거른 뒤 ``limit`` 적용, ``include_reports=false`` 로
                                         보고서 본문 제외 (#171)
 - ``GET  /api/runs/{run_id}``         — 상태 스냅샷
-- ``GET  /api/runs/{run_id}/events``  — SSE 스트림 (완료 또는 에러 시 종료)
+- ``POST /api/runs/{run_id}/cancel``  — 분석 취소 요청 (#173). 다음 노드 경계에서 멈춘다
+- ``GET  /api/runs/{run_id}/events``  — SSE 스트림 (완료·에러·취소 시 종료)
 """
 
 from __future__ import annotations
@@ -113,7 +114,9 @@ def list_runs(
     limit: int = 20,
     ticker: str | None = None,
     trade_date: str | None = None,
-    run_status: Literal["pending", "running", "done", "error"] | None = Query(
+    run_status: Literal[
+        "pending", "running", "cancelling", "done", "error", "cancelled"
+    ] | None = Query(
         default=None, alias="status"
     ),
     include_reports: bool = True,
@@ -128,6 +131,20 @@ def list_runs(
 @router.get("/{run_id}", response_model=RunSnapshot)
 def get_run(run_id: str) -> RunSnapshot:
     state = store.get(run_id)
+    if state is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
+    return _snapshot(state)
+
+
+@router.post("/{run_id}/cancel", response_model=RunSnapshot)
+def cancel_run(run_id: str) -> RunSnapshot:
+    """분석을 멈추도록 요청하고 현재 상태를 돌려준다 (#173).
+
+    도는 중이면 ``cancelling`` 으로 바뀌고, 다음 노드 이벤트에서 ``cancelled`` 로
+    끝난다 (이미 도는 모델 호출은 끝까지 돈다). 이미 끝났거나 멈추는 중이면
+    아무것도 바꾸지 않고 현재 상태를 돌려준다.
+    """
+    state = store.request_cancel(run_id)
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
     return _snapshot(state)
@@ -151,7 +168,7 @@ async def stream_events(run_id: str) -> EventSourceResponse:
             for event in batch:
                 cursor += 1
                 yield {"event": event.get("type", "message"), "data": json.dumps(event, ensure_ascii=False)}
-                if event.get("type") in {"done", "error"}:
+                if event.get("type") in {"done", "error", "cancelled"}:
                     return
             await asyncio.sleep(0.1)
 

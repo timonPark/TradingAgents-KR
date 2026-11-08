@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # SSE 큐에 들어오는 이벤트 shape — ``type`` 키는 필수. 나머지는 자유.
 Event = dict[str, Any]
 
+# 아직 도는 중으로 보는 상태. 같은 종목·기준일 중복 시작을 막는 기준 (#172).
+ACTIVE_STATUSES = frozenset({"pending", "running", "cancelling"})
+
 # 각 run 의 종착 신호. 큐에 들어오면 SSE 라우트가 스트림을 닫는다.
 SENTINEL: Event = {"type": "__end__"}
 
@@ -29,7 +32,10 @@ class RunState:
     run_id: str
     ticker: str
     trade_date: str
-    status: str = "pending"  # pending | running | done | error
+    # pending | running | cancelling | done | error | cancelled (#173)
+    status: str = "pending"
+    # #173: 취소가 요청됐는지. 분석 스레드가 노드 사이(진행 콜백)에서 읽고 멈춘다.
+    cancel_requested: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decision: str | None = None
@@ -71,7 +77,7 @@ class RunStore:
         return self._states.get(run_id)
 
     def find_active(self, ticker: str, trade_date: str) -> RunState | None:
-        """같은 종목·기준일의 ``pending``/``running`` 분석을 반환 (#172).
+        """같은 종목·기준일의 ``pending``/``running``/``cancelling`` 분석을 반환 (#172).
 
         상태 로그 경로가 종목·기준일 단위라서 분석 설정이 달라도 같은 키로 본다.
         여러 개면 가장 먼저 만들어진 것.
@@ -81,9 +87,23 @@ class RunStore:
             for s in self._states.values()
             if s.ticker == ticker
             and s.trade_date == trade_date
-            and s.status in {"pending", "running"}
+            and s.status in ACTIVE_STATUSES
         ]
         return min(active, key=lambda s: s.created_at, default=None)
+
+    def request_cancel(self, run_id: str) -> RunState | None:
+        """도는 중인 분석에 취소를 요청한다 (#173). run 이 없으면 ``None``.
+
+        ``pending``/``running`` 이면 ``cancelling`` 으로 바꾸고 플래그를 세운다.
+        실제로 멈추는 것은 분석 스레드가 다음 노드 이벤트에서 플래그를 보았을 때다.
+        이미 끝났거나(``done``/``error``/``cancelled``) 멈추는 중이면 그대로 둔다 (멱등).
+        """
+        state = self._states.get(run_id)
+        if state is not None and state.status in {"pending", "running"}:
+            state.cancel_requested = True
+            state.status = "cancelling"
+            state.updated_at = datetime.now(UTC)
+        return state
 
     def get_queue(self, run_id: str) -> asyncio.Queue[Event] | None:
         return self._queues.get(run_id)
@@ -92,9 +112,11 @@ class RunStore:
         """상태를 이벤트로 업데이트하고 큐에 push.
 
         ``type`` 별 상태 전이:
-        - ``run_start`` → ``status = "running"``
+        - ``run_start`` → ``status = "running"`` (``pending`` 일 때만 — 취소 요청 뒤에
+          늦게 도착해도 ``cancelling`` 을 덮어쓰지 않는다)
         - ``done``       → ``status = "done"`` + ``decision`` 반영 → SENTINEL push
         - ``error``      → ``status = "error"`` + ``error`` 반영 → SENTINEL push
+        - ``cancelled``  → ``status = "cancelled"`` → SENTINEL push (#173)
         """
         state = self._states.get(run_id)
         if state is None:
@@ -106,7 +128,8 @@ class RunStore:
 
         event_type = event.get("type")
         if event_type == "run_start":
-            state.status = "running"
+            if state.status == "pending":
+                state.status = "running"
         elif event_type == "node_start":
             # #126: 지금 돌고 있는 노드/agent 를 state 에 반영.
             state.active_node = event.get("label") or event.get("node")
@@ -135,12 +158,16 @@ class RunStore:
             state.active_node = None
             state.active_node_started_at = None
             state.error = event.get("message")
+        elif event_type == "cancelled":
+            state.status = "cancelled"
+            state.active_node = None
+            state.active_node_started_at = None
 
         queue = self._queues.get(run_id)
         if queue is None:
             return
         queue.put_nowait(event)
-        if event_type in {"done", "error"}:
+        if event_type in {"done", "error", "cancelled"}:
             queue.put_nowait(SENTINEL)
 
     def list_recent(

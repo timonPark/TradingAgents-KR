@@ -555,3 +555,201 @@ def test_list_runs_can_exclude_reports() -> None:
     assert {item["status"] for item in items} == {"done", "error", "running", "pending"}
     # 같은 run 의 단건 조회에는 본문이 남아 있다 (목록에서만 뺀다).
     assert client.get(f"/api/runs/{ids['a']}").json()["reports"] == {"market_report": "본문-a"}
+
+
+# --- #173: 분석 취소 API ------------------------------------------------------
+
+
+def _install_cancellable_graph(monkeypatch, *, build_gate=None, release=None, saved=None):
+    """노드 사이에서만 콜백을 부르는 그래프.
+
+    실제 그래프처럼 ``propagate`` 가 ``run_start`` → 노드 이벤트 → ``done`` 순으로
+    콜백을 직접 부른다 (취소는 그 콜백에서 던져진 예외로 전달된다).
+    ``build_gate`` 는 생성(``__init__``) 단계를 붙잡아 ``pending`` 상태를 만든다.
+    """
+    import api.runner as runner_module
+
+    saved = saved if saved is not None else []
+
+    class _Graph:
+        def __init__(self, *, progress_callback, **kwargs) -> None:
+            self._cb = progress_callback
+            if build_gate is not None:
+                build_gate.wait(timeout=5)
+
+        def propagate(self, ticker: str, trade_date: str):
+            self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
+            if release is not None:
+                release.wait(timeout=5)
+            self._cb({
+                "type": "node_complete", "node": "market_report",
+                "label": "시장 분석가", "content": "시장 본문",
+            })
+            self._cb({"type": "node_complete", "node": "news_report", "label": "뉴스 분석가"})
+            self._cb({"type": "done", "decision": "Buy"})
+            return {"final_trade_decision": "Rating: Buy"}, "Buy"
+
+        def save_reports(self, final_state, ticker):
+            saved.append(ticker)
+            return "/tmp/reports/005930_20240105_120000/complete_report.md"
+
+    monkeypatch.setattr(runner_module, "build_config", lambda req: {})
+    monkeypatch.setattr(
+        "tradingagents.graph.trading_graph.TradingAgentsGraph", _Graph, raising=True
+    )
+    return saved
+
+
+_BODY = {"ticker": "005930", "trade_date": "2024-01-05"}
+
+
+def test_cancel_running_run_stops_at_next_node_and_ends_cancelled(monkeypatch) -> None:
+    import threading
+
+    release = threading.Event()
+    saved = _install_cancellable_graph(monkeypatch, release=release)
+
+    with TestClient(create_app()) as client:
+        run_id = client.post("/api/runs", json=_BODY).json()["run_id"]
+        _wait_for(lambda: store.get(run_id).status == "running")
+
+        response = client.post(f"/api/runs/{run_id}/cancel")
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "cancelling"  # 멈추는 중 — 아직 끝나지 않음
+
+        release.set()
+        _wait_for(lambda: store.get(run_id).status == "cancelled")
+
+        snap = client.get(f"/api/runs/{run_id}").json()
+        assert snap["status"] == "cancelled"
+        assert snap["decision"] is None
+        assert snap["active_node"] is None
+        # 취소를 알아챈 뒤의 노드 결과는 기록되지 않고, 보고서도 저장하지 않는다.
+        assert snap["reports"] == {}
+        assert saved == []
+
+        with client.stream("GET", f"/api/runs/{run_id}/events") as resp:
+            body = "".join(resp.iter_text())
+        assert "event: cancelled" in body
+        assert "event: done" not in body
+
+
+def test_cancel_during_construction_cancels_before_any_node(monkeypatch) -> None:
+    """시작 전(pending, 그래프 생성 중)에 취소해도 노드를 하나도 돌리지 않는다."""
+    import threading
+
+    build_gate = threading.Event()
+    saved = _install_cancellable_graph(monkeypatch, build_gate=build_gate)
+
+    with TestClient(create_app()) as client:
+        run_id = client.post("/api/runs", json=_BODY).json()["run_id"]
+        assert store.get(run_id).status == "pending"
+
+        response = client.post(f"/api/runs/{run_id}/cancel")
+        assert response.json()["status"] == "cancelling"
+
+        build_gate.set()
+        _wait_for(lambda: store.get(run_id).status == "cancelled")
+
+    assert store.get(run_id).reports == {}
+    assert saved == []
+
+
+def test_cancel_that_arrives_after_last_node_still_ends_done(monkeypatch) -> None:
+    """마지막 노드가 끝난 뒤 도착한 취소는 이미 끝난 분석이므로 결과를 버리지 않는다."""
+    import threading
+
+    import api.runner as runner_module
+
+    release = threading.Event()
+
+    class _LastNodeGraph:
+        def __init__(self, *, progress_callback, **kwargs) -> None:
+            self._cb = progress_callback
+
+        def propagate(self, ticker: str, trade_date: str):
+            self._cb({"type": "run_start", "ticker": ticker, "trade_date": trade_date})
+            release.wait(timeout=5)  # 이 사이에 취소가 요청된다. 이후엔 노드 이벤트가 없다.
+            self._cb({"type": "done", "decision": "Buy"})
+            return {"final_trade_decision": "Rating: Buy"}, "Buy"
+
+        def save_reports(self, final_state, ticker):
+            return "/tmp/reports/005930_20240105_120000/complete_report.md"
+
+    monkeypatch.setattr(runner_module, "build_config", lambda req: {})
+    monkeypatch.setattr(
+        "tradingagents.graph.trading_graph.TradingAgentsGraph",
+        _LastNodeGraph,
+        raising=True,
+    )
+
+    with TestClient(create_app()) as client:
+        run_id = client.post("/api/runs", json=_BODY).json()["run_id"]
+        _wait_for(lambda: store.get(run_id).status == "running")
+        assert client.post(f"/api/runs/{run_id}/cancel").json()["status"] == "cancelling"
+
+        release.set()
+        _wait_for(lambda: store.get(run_id).status in {"done", "cancelled"})
+
+    assert store.get(run_id).status == "done"
+    assert store.get(run_id).decision == "Buy"
+
+
+def test_cancel_is_idempotent_and_leaves_finished_runs_alone() -> None:
+    client = TestClient(create_app())
+    states = {}
+    for name in ("done", "error", "cancelled", "cancelling"):
+        state = store.create("005930", f"2024-01-0{len(states) + 1}")
+        state.status = name
+        states[name] = state.run_id
+
+    for name, run_id in states.items():
+        response = client.post(f"/api/runs/{run_id}/cancel")
+        assert response.status_code == 200, (name, response.text)
+        assert response.json()["status"] == name  # 그대로, 되돌리거나 덮어쓰지 않는다
+
+
+def test_cancel_unknown_run_returns_404() -> None:
+    client = TestClient(create_app())
+
+    assert client.post("/api/runs/does-not-exist/cancel").status_code == 404
+
+
+def test_cancelling_run_still_counts_as_active_but_cancelled_does_not() -> None:
+    """멈추는 중에는 아직 도는 중이다(#172 중복 방지 대상). 멈춘 뒤에는 아니다."""
+    state = store.create("005930", "2024-01-05")
+    state.status = "cancelling"
+    assert store.find_active("005930", "2024-01-05") is state
+
+    state.status = "cancelled"
+    assert store.find_active("005930", "2024-01-05") is None
+
+
+def test_list_runs_accepts_cancel_statuses() -> None:
+    client = TestClient(create_app())
+    state = store.create("005930", "2024-01-05")
+    state.status = "cancelled"
+
+    for status_ in ("cancelling", "cancelled"):
+        assert client.get(f"/api/runs?status={status_}").status_code == 200
+    items = client.get("/api/runs?status=cancelled").json()
+    assert [item["run_id"] for item in items] == [state.run_id]
+
+
+def test_graph_lets_run_cancelled_through_progress_callback() -> None:
+    """실제 그래프의 ``_emit_progress`` 는 ``Exception`` 만 삼킨다.
+
+    취소 신호가 삼켜지지 않고 ``propagate`` 밖으로 나가야 러너가 멈출 수 있다.
+    이 결합이 깨지면(예: ``except BaseException`` 으로 바뀌면) 취소가 조용히 무시된다.
+    """
+    from api.runner import RunCancelled
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    def callback(event):
+        raise RunCancelled
+
+    graph = object.__new__(TradingAgentsGraph)
+    graph.progress_callback = callback
+
+    with pytest.raises(RunCancelled):
+        graph._emit_progress({"type": "node_start"})
