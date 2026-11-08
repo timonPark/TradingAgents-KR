@@ -467,3 +467,91 @@ def test_finished_run_does_not_block_new_run(final_status) -> None:
     state.status = final_status
 
     assert store.find_active("005930", "2024-01-05") is None
+
+
+# --- #171: GET /api/runs 필터와 reports 제외 옵션 ---------------------------
+
+
+def _seed_runs() -> dict[str, str]:
+    """상태·종목·기준일이 다른 run 을 만든다. 생성 순서대로 a → e."""
+    specs = {
+        "a": ("005930", "2024-01-05", "done"),
+        "b": ("005930", "2024-01-05", "error"),
+        "c": ("005930", "2024-01-04", "running"),
+        "d": ("000660", "2024-01-05", "running"),
+        "e": ("000660", "2024-01-05", "pending"),
+    }
+    from datetime import UTC, datetime, timedelta
+
+    base = datetime(2024, 1, 5, tzinfo=UTC)
+    ids: dict[str, str] = {}
+    for i, (key, (ticker, trade_date, status_)) in enumerate(specs.items()):
+        state = store.create(ticker, trade_date)
+        state.created_at = base + timedelta(seconds=i)  # 시계 해상도와 무관하게 순서 고정
+        state.status = status_
+        state.reports = {"market_report": f"본문-{key}"}
+        ids[key] = state.run_id
+    return ids
+
+
+def _listed_ids(client: TestClient, query: str = "") -> set[str]:
+    response = client.get(f"/api/runs{query}")
+    assert response.status_code == 200, response.text
+    return {item["run_id"] for item in response.json()}
+
+
+def test_list_runs_without_filters_is_unchanged() -> None:
+    ids = _seed_runs()
+    client = TestClient(create_app())
+
+    response = client.get("/api/runs")
+
+    assert {item["run_id"] for item in response.json()} == set(ids.values())
+    assert all(item["reports"] for item in response.json())  # 기본은 본문 포함
+
+
+def test_list_runs_filters_by_ticker_date_and_status() -> None:
+    ids = _seed_runs()
+    client = TestClient(create_app())
+
+    assert _listed_ids(client, "?ticker=005930") == {ids["a"], ids["b"], ids["c"]}
+    assert _listed_ids(client, "?trade_date=2024-01-05") == {
+        ids["a"], ids["b"], ids["d"], ids["e"],
+    }
+    assert _listed_ids(client, "?status=running") == {ids["c"], ids["d"]}
+    # 조건은 AND 로 합쳐진다.
+    assert _listed_ids(
+        client, "?ticker=005930&trade_date=2024-01-05&status=done"
+    ) == {ids["a"]}
+    assert _listed_ids(client, "?ticker=999999") == set()
+
+
+def test_list_runs_rejects_unknown_status() -> None:
+    client = TestClient(create_app())
+
+    assert client.get("/api/runs?status=bogus").status_code == 422
+
+
+def test_list_runs_applies_limit_after_filtering() -> None:
+    """최근 limit 개 밖의 오래된 분석도 조건으로 찾을 수 있어야 한다."""
+    ids = _seed_runs()
+    client = TestClient(create_app())
+
+    # a 는 가장 오래됐다. limit=1 이어도 조건에 맞으면 a 가 나와야 한다.
+    assert _listed_ids(client, "?ticker=005930&status=done&limit=1") == {ids["a"]}
+    # 조건에 맞는 것이 여러 개면 최신순 limit 개.
+    assert _listed_ids(client, "?ticker=005930&limit=2") == {ids["b"], ids["c"]}
+
+
+def test_list_runs_can_exclude_reports() -> None:
+    ids = _seed_runs()
+    client = TestClient(create_app())
+
+    items = client.get("/api/runs?include_reports=false").json()
+
+    assert {item["run_id"] for item in items} == set(ids.values())
+    assert all(item["reports"] == {} for item in items)
+    # 본문 외 필드는 그대로다.
+    assert {item["status"] for item in items} == {"done", "error", "running", "pending"}
+    # 같은 run 의 단건 조회에는 본문이 남아 있다 (목록에서만 뺀다).
+    assert client.get(f"/api/runs/{ids['a']}").json()["reports"] == {"market_report": "본문-a"}

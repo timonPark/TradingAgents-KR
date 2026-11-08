@@ -143,11 +143,27 @@ class RunStore:
         if event_type in {"done", "error"}:
             queue.put_nowait(SENTINEL)
 
-    def list_recent(self, limit: int = 20) -> list[RunState]:
-        """최근 생성 순으로 ``limit`` 개 반환. 리포트 사이드바에서 사용."""
-        return sorted(
-            self._states.values(), key=lambda s: s.created_at, reverse=True
-        )[:limit]
+    def list_recent(
+        self,
+        limit: int = 20,
+        *,
+        ticker: str | None = None,
+        trade_date: str | None = None,
+        status: str | None = None,
+    ) -> list[RunState]:
+        """최근 생성 순으로 ``limit`` 개 반환. 리포트 사이드바에서 사용.
+
+        ``ticker``/``trade_date``/``status`` 를 주면 **먼저 거른 뒤** ``limit`` 을
+        적용한다 (#171). 그래야 최근 ``limit`` 개 밖의 오래된 분석도 찾을 수 있다.
+        """
+        matched = (
+            s
+            for s in self._states.values()
+            if (ticker is None or s.ticker == ticker)
+            and (trade_date is None or s.trade_date == trade_date)
+            and (status is None or s.status == status)
+        )
+        return sorted(matched, key=lambda s: s.created_at, reverse=True)[:limit]
 
     def reset(self) -> None:
         """테스트 격리용. 프로덕션에서는 호출하지 않는다."""
