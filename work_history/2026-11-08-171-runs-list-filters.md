@@ -1,7 +1,7 @@
 # [#171] 분석 목록 API(GET /api/runs)에 종목·기준일·상태 필터와 보고서 본문 제외 옵션 추가
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/171
-- PR: (PR 생성 후 기재)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/178
 - 브랜치: feat/171-runs-list-filters
 - 작업 기간: 2026-11-08
 
