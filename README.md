@@ -6,7 +6,6 @@
   <a href="https://arxiv.org/abs/2412.20138" target="_blank"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2412.20138-B31B1B?logo=arxiv"/></a>
   <a href="https://github.com/TauricResearch/TradingAgents" target="_blank"><img alt="Upstream" src="https://img.shields.io/badge/Upstream-TauricResearch%2FTradingAgents-14C290?logo=github"/></a>
   <img alt="Market" src="https://img.shields.io/badge/Market-KOSPI%20%7C%20KOSDAQ-blue"/>
-  <img alt="Status" src="https://img.shields.io/badge/Status-WIP-orange"/>
 </div>
 
 ---
@@ -23,10 +22,6 @@
 - 📜 **라이선스**: Apache 2.0 (upstream 원 라이선스 그대로 승계, `LICENSE` 참조)
 
 원본 프레임워크의 **핵심 추론 엔진(LangGraph 오케스트레이션, 멀티 에이전트 토론·리스크 관리 파이프라인)은 그대로 유지**한 채, **데이터 수집 레이어만 한국 증시(KOSPI/KOSDAQ) 환경으로 전환**한 커스터마이징 버전입니다. 원 저작자의 설계와 연구 성과에 깊은 감사를 표합니다.
-
----
-
-> ⚠️ **진행 상태 (WIP)**: 데이터 소스 교체 작업이 진행 중입니다. 아래 "커스터마이징 범위" 섹션의 Task 체크리스트를 참고하세요. 아직 완료되지 않은 Task 는 upstream 의 원본 동작(미국 증시 기준)으로 동작합니다.
 
 ---
 
@@ -50,7 +45,7 @@ tradingagents          # 종목명(예: "삼성") 또는 종목코드 입력 →
 #### 🖥️ 터미널 1 — 백엔드 (FastAPI, 포트 8000)
 
 ```bash
-cd /Users/2309-n0018/Project/TradingAgents-KR
+cd TradingAgents-KR   # 클론한 저장소 루트
 source .venv/bin/activate
 pip install -e ".[web]"     # 첫 실행 시 한 번만
 uvicorn api.main:app --reload --port 8000
@@ -65,7 +60,7 @@ INFO:     Application startup complete.
 #### 🌐 터미널 2 — 프론트엔드 (Astro, 포트 4321)
 
 ```bash
-cd /Users/2309-n0018/Project/TradingAgents-KR/web
+cd TradingAgents-KR/web   # 클론한 저장소 루트 기준
 npm install                 # 첫 실행 시 한 번만
 npm run dev
 ```
@@ -99,14 +94,22 @@ TauricResearch 의 원본 프레임워크 대비 다음 레이어를 한국 환�
 | 거래소 캘린더 | NYSE | KRX (한국거래소 영업일) |
 | 에이전트 프롬프트 | 영어, 미국 시장 페르소나 | 한국어, 국내 증시 리스크(수급 공백·오버행·관리/환기종목) 반영 |
 
-### 작업 체크리스트
+### 구현 완료 항목
 
-- [ ] **Task 1** — 티커 유효성 검증 정규식을 한국 6자리 종목코드로 변경
-- [ ] **Task 2** — 재무/공시 분석 도구 교체 (SEC EDGAR → OpenDartReader)
-- [ ] **Task 3** — 시세 및 기술적 지표 도구 교체 (Alpha Vantage/Yahoo → pykrx) + 외국인/기관 수급 통합
-- [ ] **Task 4** — 거시경제·뉴스 도구 현지화 (ECOS + 네이버 금융)
-- [ ] **Task 5** — 거래소 캘린더 KRX 매핑 (백테스트 시점 격리)
-- [ ] **Task 6** — 시스템 프롬프트 한국어 전환 및 국내 리스크 페르소나 보강
+`code_artifact.md` 의 Task 전부 완료되었습니다.
+
+- [x] **Task 1** — Claude Code 헤드리스 LLM 어댑터
+- [x] **Task 2** — 외부 LLM API 클라이언트·의존성 제거
+- [x] **Task 3** — 분석가 노드 사전조회 리팩터링 (툴 루프 제거)
+- [x] **Task 4** — 티커 검증·심볼 정규화 (KRX 6자 코드)
+- [x] **Task 5** — 재무/공시 (SEC EDGAR → Open DART)
+- [x] **Task 6** — 시세·기술적 지표 (→ pykrx) + 외국인/기관 수급
+- [x] **Task 7** — 거시·뉴스 현지화 (네이버 뉴스 + ECOS)
+- [x] **Task 8** — KRX 거래소 캘린더 (백테스트 시점 격리)
+- [x] **Task 9** — 시스템 프롬프트 한국어화·국내 리스크 페르소나
+- [x] **Task 11** — opt-in 통합 테스트
+- [x] **Task 12** — Docker 에 Claude Code CLI 통합
+- [x] **Task 14** — 로컬 웹 UI (Astro + FastAPI)
 
 ---
 
