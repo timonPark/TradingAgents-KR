@@ -2,7 +2,7 @@
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/184
 - 상위 에픽: https://github.com/timonPark/TradingAgents-KR/issues/183 (Task 15)
-- PR: (작성 후 기록)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/187
 - 브랜치: docs/184-readme-cleanup
 - 작업 기간: 2026-11-09
 
