@@ -135,6 +135,30 @@ def test_stops_paging_once_older_than_window(creds, known_company):
     assert mock_get.call_count == 1
 
 
+@pytest.mark.unit
+def test_raises_when_page_limit_hit_before_window_start(creds, known_company, monkeypatch):
+    """조회 한도(최신 N건)에 걸려 기간 시작까지 못 가면 "일부만" 이 아니라 실패 (#188).
+
+    라우터가 더 깊게 읽는 다음 vendor 로 넘기고, 모두 실패하면 DATA_UNAVAILABLE 로 보고한다.
+    """
+    monkeypatch.setattr(naver_api_hub, "MAX_PAGES", 2)
+    recent = [_news(f"금호전기 최근 기사 {i}", pub="Tue, 03 Nov 2026 09:00:00 +0900") for i in range(100)]
+    with patch(GET, return_value=_resp(_payload(*recent))) as mock_get, pytest.raises(
+        VendorUnavailableError, match="조회 한도"
+    ):
+        naver_api_hub.get_news("001210", "2026-10-28", "2026-11-04")
+    assert mock_get.call_count == 2
+
+
+@pytest.mark.unit
+def test_short_page_means_source_exhausted_not_limit(creds, known_company):
+    """마지막 쪽이 PAGE_SIZE 보다 짧으면 기사를 다 읽은 것 — 한도 초과가 아니다."""
+    few = [_news("금호전기 CB 상장", pub="Tue, 03 Nov 2026 09:00:00 +0900")]
+    with patch(GET, return_value=_resp(_payload(*few))):
+        out = naver_api_hub.get_news("001210", "2026-10-28", "2026-11-04")
+    assert "금호전기 CB 상장" in out
+
+
 # ---------- 실패는 0건이 아니라 예외 ----------
 
 @pytest.mark.unit
@@ -223,9 +247,10 @@ def test_live_api_hub_returns_matched_articles(live_credentials):
     today = datetime.now()
     end = today.strftime("%Y-%m-%d")
     start = (today - timedelta(days=14)).strftime("%Y-%m-%d")
-    with patch(SEARCH, return_value=[SymbolHit("005930", "삼성전자", "KOSPI")]):
-        out = naver_api_hub.get_news("005930", start, end)
-    assert f"## 005930 뉴스 ({start} ~ {end})" in out
+    # 기사량이 많은 종목(삼성전자)은 14일치가 조회 한도(최신 500건)에 안 들어와 실패한다 (#188).
+    with patch(SEARCH, return_value=[SymbolHit("001210", "금호전기", "KOSPI")]):
+        out = naver_api_hub.get_news("001210", start, end)
+    assert f"## 001210 뉴스 ({start} ~ {end})" in out
     assert "해당 기간 뉴스가 없습니다" not in out
 
 
@@ -253,6 +278,27 @@ def test_router_falls_back_to_stock_json_when_api_hub_not_configured(monkeypatch
     with patch("tradingagents.dataflows.vendors.naver_news.requests.get", return_value=fallback):
         out = route_to_vendor("get_news", "001210", "2026-11-01", "2026-11-04")
     assert "금호전기 CB 상장" in out
+    assert "DATA_UNAVAILABLE" not in out
+
+
+@pytest.mark.unit
+def test_router_falls_back_to_stock_json_when_api_hub_limit_hit(creds, known_company, monkeypatch):
+    """API HUB 가 최신 N건으로 기간 시작에 못 닿으면, 더 깊게 읽는 네이버 증권으로 넘어간다 (#188)."""
+    from tradingagents.dataflows.router import route_to_vendor
+
+    monkeypatch.setattr(naver_api_hub, "MAX_PAGES", 1)
+    recent = [_news(f"금호전기 최근 기사 {i}", pub="Wed, 04 Nov 2026 09:00:00 +0900") for i in range(100)]
+    api_hub_reply = _resp(_payload(*recent))
+    stock_reply = _stock_json_response(("금호전기 기간 안 기사", "202611021000"))
+
+    def reply_by_url(url, *args, **kwargs):
+        # 두 vendor 가 같은 ``requests`` 모듈을 쓰므로 URL 로 응답을 나눈다.
+        return api_hub_reply if "naverapihub" in url else stock_reply
+
+    with patch("requests.get", side_effect=reply_by_url):
+        out = route_to_vendor("get_news", "001210", "2026-10-28", "2026-11-04")
+    assert "금호전기 기간 안 기사" in out
+    assert "금호전기 최근 기사" not in out
     assert "DATA_UNAVAILABLE" not in out
 
 

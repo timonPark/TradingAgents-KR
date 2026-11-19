@@ -6,7 +6,8 @@ API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추
 ### 엔드포인트 (#138 갱신)
 - 종목별 뉴스: ``https://m.stock.naver.com/api/news/stock/{ticker}?pageSize=N&page=P``
   (JSON, 최신순, 비공식 경로). 기존 ``finance.naver.com/item/news_news.naver`` 는
-  2026-11 현재 HTTP 410 으로 폐지됐다.
+  2026-11 현재 HTTP 410 으로 폐지됐다. 날짜 파라미터가 없고 종목당 최신 2000건까지만
+  읽을 수 있어, 기사량이 많은 종목은 며칠 전 기사에 닿지 못한다 (#188).
 - 주요뉴스: ``https://m.stock.naver.com/api/news/list?category=mainnews&pageSize=N&page=P``
   (JSON, 최신순, 비공식 경로, #189). 기존 ``finance.naver.com/news/mainnews.naver`` 는
   ``stock.naver.com`` 으로 리다이렉트되어 폐지됐다. 날짜 파라미터는 무시되므로
@@ -42,8 +43,11 @@ _MAIN_NEWS_API = "https://m.stock.naver.com/api/news/list"
 _MAIN_NEWS_PAGE_SIZE = 20  # 100 은 비-JSON 응답을 돌려준다
 _MAIN_NEWS_MAX_PAGES = 60  # 하루 7~8쪽 → 약 1주일 분량
 _STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock"
+# pageSize 100 은 비-JSON 응답, 50 은 쪽 사이에 빈 구간·중복이 생겨 쓸 수 없다.
+# 20 은 끊김 없이 이어지고 101쪽에서 HTTP 400 → 서버 상한 2000건 (20 × 100).
 _STOCK_NEWS_PAGE_SIZE = 20
-_STOCK_NEWS_MAX_PAGES = 5
+_STOCK_NEWS_MAX_PAGES = 100
+_STOCK_NEWS_MAX_ITEMS = 30  # 프롬프트 길이 상한 (naver_api_hub.MAX_ITEMS 와 동일)
 _HEADERS = {
     # 네이버 금융은 User-Agent 가 없으면 가끔 403 을 돌려줌. 일반 브라우저 UA 로.
     "User-Agent": (
@@ -156,9 +160,16 @@ def _parse_main_news_item(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def _format_news_markdown(ticker: str, start: str, end: str, items: list[dict[str, Any]]) -> str:
-    """추출된 뉴스를 분석가 프롬프트용 Markdown 으로 포맷."""
+def _format_news_markdown(
+    ticker: str, start: str, end: str, items: list[dict[str, Any]], note: str = "",
+) -> str:
+    """추출된 뉴스를 분석가 프롬프트용 Markdown 으로 포맷.
+
+    ``note`` 는 헤더 아래에 덧붙이는 주의 문구 (예: 조회 한도로 일부 기간만 조회됨).
+    """
     header = f"## {ticker} 뉴스 ({start} ~ {end})\n\n"
+    if note:
+        header += f"> ⚠ {note}\n\n"
     if not items:
         return header + "해당 기간 뉴스가 없습니다.\n"
     lines = []
@@ -197,25 +208,59 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
 
     all_items: list[dict[str, Any]] = []
     seen: set[str] = set()
+    oldest: datetime | None = None  # 지금까지 읽은 가장 오래된 기사
+    reached_window = False  # 기간 끝(end) 이전 기사에 닿았는가
+    covered = False  # 기간 시작(start) 이전까지(또는 기사 끝까지) 읽었는가
     for page in range(1, _STOCK_NEWS_MAX_PAGES + 1):
         raw_items = _fetch_stock_news_json(ticker, page)
         if not raw_items:
+            covered = True  # 더 읽을 기사가 없음
             break
         parsed = [p for p in (_parse_stock_news_item(r) for r in raw_items) if p]
         for item in parsed:
+            if item["date"] is not None and item["date"] <= end_dt:
+                reached_window = True
             if _is_noise(item["title"]) or item["title"] in seen:
                 continue
             if not _in_date_range(item["date"], start_dt, end_dt):
                 continue
             seen.add(item["title"])
             all_items.append(item)
-        # 가장 오래된 아이템이 start 보다 이전이면 조기 종료
-        oldest = min((i["date"] for i in parsed if i["date"]), default=None)
-        if oldest is not None and oldest < start_dt:
+        # 최신순이라 앞쪽 N건이 곧 반환분 — 채웠으면 더 읽지 않는다 (기간 커버리지도 무관).
+        if len(all_items) >= _STOCK_NEWS_MAX_ITEMS:
+            covered = True
+            break
+        page_oldest = min((i["date"] for i in parsed if i["date"]), default=None)
+        if page_oldest is not None and (oldest is None or page_oldest < oldest):
+            oldest = page_oldest
+        # 가장 오래된 아이템이 start 보다 이전이면 기간을 모두 덮은 것
+        if page_oldest is not None and page_oldest < start_dt:
+            covered = True
+            break
+        if len(raw_items) < _STOCK_NEWS_PAGE_SIZE:
+            covered = True  # 마지막 쪽
             break
 
+    note = ""
+    if not covered:
+        # 조회 한도(최신 N건)에 걸려 기간 시작까지 못 갔다. "무보도" 로 위장하지 않는다 (#188).
+        if not reached_window:
+            oldest_text = f"{oldest:%Y-%m-%d %H:%M}" if oldest else "날짜 미상"
+            raise VendorUnavailableError(
+                f"네이버 증권 뉴스 조회 한도(최신 {_STOCK_NEWS_PAGE_SIZE * _STOCK_NEWS_MAX_PAGES}건, "
+                f"가장 오래된 기사 {oldest_text}) 안에서 {start_date} ~ {end_date} "
+                f"기간에 닿지 못했습니다: {ticker}"
+            )
+        note = (
+            f"조회 한도(최신 {_STOCK_NEWS_PAGE_SIZE * _STOCK_NEWS_MAX_PAGES}건)로 "
+            f"{oldest:%Y-%m-%d} 이후 기사만 조회됨 — 요청 기간 {start_date} ~ {end_date} 중 "
+            "앞쪽 일부는 확인하지 못했습니다. 기사 없음으로 해석하지 마세요."
+        )
+
     all_items.sort(key=lambda i: i["date"] or datetime.min, reverse=True)
-    return _format_news_markdown(ticker, start_date, end_date, all_items)
+    return _format_news_markdown(
+        ticker, start_date, end_date, all_items[:_STOCK_NEWS_MAX_ITEMS], note,
+    )
 
 
 def get_global_news(as_of_date: str, look_back_days: int | None = None, limit: int | None = None) -> str:
