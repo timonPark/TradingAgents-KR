@@ -36,7 +36,10 @@
 - `ruff check tradingagents cli tests` — 통과
 - 수동 확인: `route_to_vendor("get_global_news", "2026-11-19", 1, 3)` 가 실제 기사 3건 반환,
   과거 기준일(2026-11-16) 도 기사 반환, 2026-10-01 은 한도 초과 오류.
-- 웹 UI 화면 검증은 수행하지 않음 (vendor 계층 변경, UI 변경 없음).
+- 웹 UI 화면 검증 (Aside 브라우저, http://localhost:4321): 삼성전자(005930), 기준일 2026-11-19,
+  뉴스 분석가만, effort `low` 로 실행. 뉴스 분석 리포트의 "글로벌·시장 뉴스" 섹션에 앤트로픽 IPO,
+  '삼전닉스' 수급 우려 등 실제 기사가 반영됨. `DATA_UNAVAILABLE` 문구 없음, 백엔드 로그에
+  `unavailable for get_global_news` 경고 0건. 확인 후 쿼터 절약을 위해 실행은 취소.
 
 ## 다음 작업 핸드오프
 
