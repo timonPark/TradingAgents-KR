@@ -147,10 +147,13 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
 
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
+    covered = False  # 기간 시작(start) 이전까지(또는 기사 끝까지) 읽었는가
+    overall_oldest: datetime | None = None
     for page in range(MAX_PAGES):
         payload = _request(query, 1 + page * PAGE_SIZE, client_id, client_secret)
         raw_items = payload.get("items") or []
         if not raw_items:
+            covered = True  # 더 읽을 기사가 없음
             break
         oldest: datetime | None = None
         for raw in raw_items:
@@ -169,11 +172,25 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
             link = raw.get("originallink") or raw.get("link") or ""
             host = urlparse(link).netloc.removeprefix("www.")
             collected.append({"title": title, "source": host, "date": date, "url": link})
+        if oldest is not None and (overall_oldest is None or oldest < overall_oldest):
+            overall_oldest = oldest
         # 최신순이므로 가장 오래된 기사가 시작일 이전이면 더 볼 필요 없음
         if oldest is not None and oldest < start_dt:
+            covered = True
             break
         if len(raw_items) < PAGE_SIZE:
+            covered = True  # 마지막 쪽
             break
+
+    if not covered:
+        # API HUB 검색은 날짜 필터가 없고 최신 1000건(start<=1000)까지만 읽을 수 있다. 기간
+        # 시작까지 못 갔는데 일부만 돌려주면 분석가가 "무보도" 로 오해하므로, 실패로 올려
+        # 라우터가 더 깊게 읽는 다음 vendor(네이버 증권)로 넘기게 한다 (#188).
+        oldest_text = f"{overall_oldest:%Y-%m-%d %H:%M}" if overall_oldest else "날짜 미상"
+        raise VendorUnavailableError(
+            f"API HUB 조회 한도(최신 {PAGE_SIZE * MAX_PAGES}건, 가장 오래된 기사 {oldest_text}) 안에서 "
+            f"{start_date} ~ {end_date} 기간 시작까지 닿지 못했습니다: {ticker}"
+        )
 
     collected.sort(key=lambda i: i["date"] or datetime.min, reverse=True)
     return _format_news_markdown(ticker, start_date, end_date, collected[:MAX_ITEMS])

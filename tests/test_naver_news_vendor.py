@@ -152,6 +152,85 @@ def test_get_news_non_json_body_raises():
         naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
 
+# ---------- 조회 한도 (#188) ----------
+
+def _page(prefix, stamp, n=20):
+    """``n`` 건짜리 한 쪽 (제목 유일). 한 쪽이 꽉 차 있으면 소스가 더 남은 것으로 본다."""
+    return _clusters(*[_item(f"{prefix} {i}", stamp, article_id=f"{prefix}{i}") for i in range(n)])
+
+
+def _patch_stock_pages(*pages):
+    """호출 순서대로 ``pages`` 를 돌려주고, 소진되면 빈 쪽."""
+    responses = [_json_response(p) for p in pages]
+    return patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=responses + [_json_response([])] * 200,
+    )
+
+
+@pytest.mark.unit
+def test_get_news_raises_when_limit_hit_before_reaching_window(monkeypatch):
+    """한도(최신 N건)가 전부 기간 끝보다 새로우면 "기사 없음" 이 아니라 실패."""
+    monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_PAGES", 3)
+    newer = _page("너무 최근", "202611050900")
+    with _patch_stock_pages(newer, newer, newer) as get, pytest.raises(
+        VendorUnavailableError, match="조회 한도",
+    ):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+    assert get.call_count == 3
+
+
+@pytest.mark.unit
+def test_get_news_marks_partial_coverage_when_limit_hit_inside_window(monkeypatch):
+    """기간 끝에는 닿았지만 시작까지 못 갔으면 조회된 만큼 반환하고 일부만 조회됐음을 명시."""
+    monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_PAGES", 2)
+    newer = _page("너무 최근", "202611050900")
+    inside = _clusters(
+        _item("기간 안 기사", "202611031000", article_id="in"),
+        *[_item(f"최근 {i}", "202611050900", article_id=f"n{i}") for i in range(19)],
+    )
+    with _patch_stock_pages(newer, inside):
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert "기간 안 기사" in out
+    assert "조회 한도" in out
+    assert "2026-11-03 이후 기사만 조회됨" in out
+    assert "기사 없음으로 해석하지 마세요" in out
+
+
+@pytest.mark.unit
+def test_get_news_short_page_means_no_news_not_limit():
+    """소스를 끝까지 읽었는데 기간 안 기사가 없으면 정상적인 "뉴스 없음"."""
+    few = _clusters(_item("기간 밖 기사", "202611050900", article_id="x"))
+    with _patch_stock_pages(few):
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert "해당 기간 뉴스가 없습니다" in out
+    assert "조회 한도" not in out
+
+
+@pytest.mark.unit
+def test_get_news_stops_reading_once_item_cap_reached(monkeypatch):
+    """프롬프트 상한(30건)을 채우면 더 읽지 않고, 한도 경고도 붙이지 않는다."""
+    monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_PAGES", 5)
+    with _patch_stock_pages(
+        _page("가", "202611031000"), _page("나", "202611031000"), _page("다", "202611031000"),
+    ) as get:
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert get.call_count == 2
+    assert out.count("- **") == naver_news._STOCK_NEWS_MAX_ITEMS
+    assert "조회 한도" not in out
+
+
+@pytest.mark.unit
+def test_get_news_requests_documented_page_size():
+    """pageSize 50/100 은 서버가 불규칙·비-JSON 으로 응답한다 — 20 을 유지한다."""
+    with _patch_stock_pages([]) as get:
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+    assert get.call_args_list[0].kwargs["params"] == {"pageSize": 20, "page": 1}
+
+
 # ---------- 노이즈 필터 ----------
 
 @pytest.mark.unit
