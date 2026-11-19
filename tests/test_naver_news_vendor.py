@@ -152,36 +152,6 @@ def test_get_news_non_json_body_raises():
         naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
 
-# ---------- 날짜 파싱 ----------
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "text,expected_ymd",
-    [
-        ("2026.11.03 14:30", (2026, 11, 3)),
-        ("2026-11-03 14:30", (2026, 11, 3)),
-        ("2026.11.03", (2026, 11, 3)),
-        ("2026-11-03", (2026, 11, 3)),
-    ],
-)
-def test_parse_naver_date_handles_known_formats(text, expected_ymd):
-    dt = naver_news._parse_naver_date(text)
-    assert dt is not None
-    assert (dt.year, dt.month, dt.day) == expected_ymd
-
-
-@pytest.mark.unit
-def test_parse_naver_date_handles_mm_dd_short_form():
-    dt = naver_news._parse_naver_date("11/03")
-    assert dt is not None
-    assert (dt.month, dt.day) == (11, 3)
-
-
-@pytest.mark.unit
-def test_parse_naver_date_returns_none_for_junk():
-    assert naver_news._parse_naver_date("not-a-date") is None
-
-
 # ---------- 노이즈 필터 ----------
 
 @pytest.mark.unit
@@ -195,50 +165,54 @@ def test_noise_filter_passes_normal_titles():
     assert naver_news._is_noise("삼성전자 4분기 실적 호조") is False
 
 
-# ---------- 주요뉴스 ----------
+# ---------- 주요뉴스 (네이버 증권 JSON, #189) ----------
 
-_MAIN_NEWS_HTML = """
-<html><body>
-<ul class="newsList">
-  <li class="block1">
-    <a href="/news/news_read.naver?article_id=100">한국은행 기준금리 동결</a>
-    <div class="articleSummary">
-      <span>연합뉴스</span>
-      <span class="date">2026.11.03 15:00</span>
-    </div>
-  </li>
-  <li class="block1">
-    <a href="/news/news_read.naver?article_id=101">코스피 2% 상승 마감</a>
-    <div class="articleSummary">
-      <span>이데일리</span>
-      <span class="date">2026.11.03 15:30</span>
-    </div>
-  </li>
-</ul>
-</body></html>
-"""
+def _main(title, stamp, office="연합뉴스", oid="001", aid="0000000001"):
+    return {
+        "type": 1,
+        "subcontent": "본문 요약",
+        "oid": oid,
+        "ohnm": office,
+        "aid": aid,
+        "tit": title,
+        "dt": stamp,
+    }
+
+
+_MAIN_PAGE = [
+    _main("한국은행 기준금리 동결", "20261103150000", aid="0000000100"),
+    _main("코스피 2% 상승 마감", "20261103143000", office="이데일리", aid="0000000101"),
+]
+
+
+def _patch_main_get(*pages):
+    """``requests.get`` 이 호출 순서대로 ``pages`` 를 JSON 으로 돌려주게 한다. 소진 후엔 빈 리스트."""
+    responses = [_json_response(list(p)) for p in pages]
+    return patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=responses + [_json_response([])] * 100,
+    )
 
 
 @pytest.mark.unit
-def test_get_global_news_renders_items(monkeypatch):
-    with patch(
-        "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response(_MAIN_NEWS_HTML),
-    ):
+def test_get_global_news_renders_items():
+    with _patch_main_get(_MAIN_PAGE) as get:
         out = naver_news.get_global_news("2026-11-03", look_back_days=1, limit=5)
 
     assert "## 주요뉴스" in out
-    assert "기준금리 동결" in out
+    assert "한국은행 기준금리 동결" in out
     assert "코스피 2% 상승 마감" in out
+    assert "| 이데일리 |" in out
+    assert "https://n.news.naver.com/mnews/article/001/0000000100" in out
+    # 날짜 파라미터가 없으므로 category/pageSize/page 로만 호출
+    assert get.call_args_list[0].kwargs["params"] == {
+        "category": "mainnews", "pageSize": 20, "page": 1,
+    }
 
 
 @pytest.mark.unit
-def test_get_global_news_respects_limit(monkeypatch):
-    # 두 건이지만 limit=1 로 제한
-    with patch(
-        "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response(_MAIN_NEWS_HTML),
-    ):
+def test_get_global_news_respects_limit():
+    with _patch_main_get(_MAIN_PAGE):
         out = naver_news.get_global_news("2026-11-03", look_back_days=1, limit=1)
 
     assert "기준금리 동결" in out
@@ -246,34 +220,118 @@ def test_get_global_news_respects_limit(monkeypatch):
 
 
 @pytest.mark.unit
-def test_get_global_news_handles_empty(monkeypatch):
-    with patch(
-        "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response("<html></html>"),
-    ):
+def test_get_global_news_handles_empty():
+    with _patch_main_get([]):
         out = naver_news.get_global_news("2026-11-03")
 
     assert "주요뉴스가 없습니다" in out
 
 
 @pytest.mark.unit
-def test_get_global_news_redirect_to_other_host_raises():
-    """mainnews 가 stock.naver.com 으로 리다이렉트되면 "주요뉴스 없음" 이 아니라 실패."""
-    resp = _ok_response("<html>spa</html>")
-    resp.url = "https://stock.naver.com/news/mainnews"
+def test_get_global_news_skips_newer_than_as_of_and_stops_at_window_start():
+    """기준일보다 새로운 기사는 건너뛰고, 창보다 오래된 기사에서 멈춘다 (다음 쪽을 읽지 않는다)."""
+    page1 = [
+        _main("기준일 이후 기사", "20261104090000", aid="1"),
+        _main("기준일 당일 기사", "20261103100000", aid="2"),
+        _main("전일 기사", "20261102100000", aid="3"),
+    ]
+    with _patch_main_get(page1, [_main("읽으면 안 되는 기사", "20261103090000", aid="4")]) as get:
+        out = naver_news.get_global_news("2026-11-03", look_back_days=1)
+
+    assert "기준일 당일 기사" in out
+    assert "기준일 이후 기사" not in out
+    assert "전일 기사" not in out
+    assert get.call_count == 1
+
+
+@pytest.mark.unit
+def test_get_global_news_look_back_includes_earlier_days():
+    page1 = [
+        _main("당일 기사", "20261103100000", aid="1"),
+        _main("전일 기사", "20261102100000", aid="2"),
+        _main("3일 전 기사", "20261031100000", aid="3"),
+    ]
+    with _patch_main_get(page1):
+        out = naver_news.get_global_news("2026-11-03", look_back_days=2)
+
+    assert "당일 기사" in out
+    assert "전일 기사" in out
+    assert "3일 전 기사" not in out
+
+
+@pytest.mark.unit
+def test_get_global_news_pages_back_to_past_as_of_date():
+    """기준일이 과거면 최신 쪽들을 넘겨 기준일 창에 닿을 때까지 읽는다."""
+    newer = [_main("너무 최근 기사", "20261105100000", aid="1")]
+    target = [_main("기준일 기사", "20261103100000", aid="2")]
+    with _patch_main_get(newer, newer, target) as get:
+        out = naver_news.get_global_news("2026-11-03", look_back_days=1)
+
+    assert "기준일 기사" in out
+    assert "너무 최근 기사" not in out
+    assert [c.kwargs["params"]["page"] for c in get.call_args_list][:3] == [1, 2, 3]
+
+
+@pytest.mark.unit
+def test_get_global_news_unreachable_as_of_date_raises(monkeypatch):
+    """조회 한도 안에서 기준일에 못 닿으면 "주요뉴스 없음" 이 아니라 실패."""
+    monkeypatch.setattr(naver_news, "_MAIN_NEWS_MAX_PAGES", 3)
+    newer = [_main("너무 최근 기사", "20261105100000", aid="1")]
+    with _patch_main_get(newer, newer, newer), pytest.raises(VendorUnavailableError, match="조회 한도"):
+        naver_news.get_global_news("2026-11-03")
+
+
+@pytest.mark.unit
+def test_get_global_news_filters_noise_and_dedupes_titles():
+    page = [
+        _main("[포토] 증시 현장", "20261103150000", aid="1"),
+        _main("한국은행 기준금리 동결", "20261103140000", aid="2"),
+        _main("한국은행 기준금리 동결", "20261103130000", office="이데일리", aid="3"),
+    ]
+    with _patch_main_get(page):
+        out = naver_news.get_global_news("2026-11-03")
+
+    assert "[포토]" not in out
+    assert out.count("기준금리 동결") == 1
+
+
+@pytest.mark.unit
+def test_get_global_news_skips_malformed_items():
+    page = ["문자열", {"tit": "", "dt": "20261103150000"}, {"tit": "시각 없음"}, *_MAIN_PAGE]
+    with _patch_main_get(page):
+        out = naver_news.get_global_news("2026-11-03")
+
+    assert "한국은행 기준금리 동결" in out
+    assert "시각 없음" not in out
+
+
+@pytest.mark.unit
+def test_get_global_news_html_response_raises():
+    """엔드포인트가 이전돼 HTML(SPA) 이 오면 "주요뉴스 없음" 이 아니라 실패."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("not json")
     with patch(
         "tradingagents.dataflows.vendors.naver_news.requests.get", return_value=resp,
-    ), pytest.raises(VendorUnavailableError, match="stock.naver.com"):
+    ), pytest.raises(VendorUnavailableError, match="JSON"):
         naver_news.get_global_news("2026-11-03")
 
 
 @pytest.mark.unit
 def test_get_global_news_http_error_raises():
-    resp = _ok_response("")
-    resp.status_code = 410
     with patch(
-        "tradingagents.dataflows.vendors.naver_news.requests.get", return_value=resp,
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        return_value=_json_response([], status=410),
     ), pytest.raises(VendorUnavailableError, match="410"):
+        naver_news.get_global_news("2026-11-03")
+
+
+@pytest.mark.unit
+def test_get_global_news_network_exception_raises():
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=requests.ConnectionError("boom"),
+    ), pytest.raises(VendorUnavailableError, match="ConnectionError"):
         naver_news.get_global_news("2026-11-03")
 
 
@@ -281,19 +339,6 @@ def test_get_global_news_http_error_raises():
 def test_get_global_news_handles_bad_date():
     out = naver_news.get_global_news("not-a-date")
     assert "잘못된 날짜 형식" in out
-
-
-@pytest.mark.unit
-def test_get_global_news_dedupes_titles(monkeypatch):
-    """여러 날짜/페이지에서 같은 제목이 나와도 중복 제거."""
-    with patch(
-        "tradingagents.dataflows.vendors.naver_news.requests.get",
-        return_value=_ok_response(_MAIN_NEWS_HTML),
-    ):
-        out = naver_news.get_global_news("2026-11-03", look_back_days=3, limit=10)
-
-    # "기준금리 동결" 이 하루 3페이지 × 3일 = 9회 반복되어도 1회만
-    assert out.count("기준금리 동결") == 1
 
 
 # ============================================================================
@@ -314,3 +359,13 @@ def test_live_item_news_for_001210_returns_articles():
     out = naver_news.get_news("001210", start, end)
     assert f"## 001210 뉴스 ({start} ~ {end})" in out
     assert "해당 기간 뉴스가 없습니다" not in out
+
+
+@pytest.mark.integration
+def test_live_global_news_returns_articles():
+    """실제 네이버 증권 주요뉴스 JSON — 오늘 기준 기사 1건 이상 (엔드포인트 이전 회귀 방지, #189)."""
+    from datetime import datetime
+
+    out = naver_news.get_global_news(datetime.now().strftime("%Y-%m-%d"), limit=5)
+    assert "주요뉴스가 없습니다" not in out
+    assert "https://n.news.naver.com/mnews/article/" in out

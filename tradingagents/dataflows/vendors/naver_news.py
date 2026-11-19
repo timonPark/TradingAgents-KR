@@ -7,9 +7,10 @@ API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추
 - 종목별 뉴스: ``https://m.stock.naver.com/api/news/stock/{ticker}?pageSize=N&page=P``
   (JSON, 최신순, 비공식 경로). 기존 ``finance.naver.com/item/news_news.naver`` 는
   2026-11 현재 HTTP 410 으로 폐지됐다.
-- 주요뉴스: ``https://finance.naver.com/news/mainnews.naver`` — ``stock.naver.com``
-  으로 리다이렉트되어 더는 동작하지 않는다. 호출하면 ``VendorUnavailableError``.
-  대체 경로는 별도 이슈.
+- 주요뉴스: ``https://m.stock.naver.com/api/news/list?category=mainnews&pageSize=N&page=P``
+  (JSON, 최신순, 비공식 경로, #189). 기존 ``finance.naver.com/news/mainnews.naver`` 는
+  ``stock.naver.com`` 으로 리다이렉트되어 폐지됐다. 날짜 파라미터는 무시되므로
+  최신순으로 페이지를 넘기며 기준일 창에 닿을 때까지 읽는다.
 
 ### 실패 처리
 "뉴스 0건" 과 "수집 실패" 를 구분한다. HTTP 오류·폐지(410)·리다이렉트·JSON 이
@@ -28,19 +29,18 @@ from __future__ import annotations
 
 import html as _html
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urljoin, urlparse
 
 import requests
-from bs4 import BeautifulSoup
 
 from tradingagents.dataflows.errors import VendorUnavailableError
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://finance.naver.com"
+_MAIN_NEWS_API = "https://m.stock.naver.com/api/news/list"
+_MAIN_NEWS_PAGE_SIZE = 20  # 100 은 비-JSON 응답을 돌려준다
+_MAIN_NEWS_MAX_PAGES = 60  # 하루 7~8쪽 → 약 1주일 분량
 _STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock"
 _STOCK_NEWS_PAGE_SIZE = 20
 _STOCK_NEWS_MAX_PAGES = 5
@@ -66,36 +66,12 @@ _NOISE_KEYWORDS = (
 )
 
 
-def _fetch_html(url: str) -> str:
-    """HTTP GET + 공통 에러 처리. 실패 시 ``VendorUnavailableError``.
+def _get_json_list(url: str, params: dict[str, Any]) -> list[Any]:
+    """네이버 증권 JSON(리스트) GET + 공통 에러 처리. 실패·구조 불일치는 ``VendorUnavailableError``.
 
-    "수집 실패" 를 빈 결과("뉴스 없음") 로 위장하지 않는다 (#138): 폐지된 URL 이
-    410 이나 다른 호스트로의 리다이렉트로 응답해도 호출자가 알 수 있어야 한다.
+    "수집 실패" 를 빈 결과("뉴스 없음") 로 위장하지 않는다 (#138): 폐지된 URL 의
+    410, 리다이렉트로 인한 HTML 응답 모두 호출자가 알 수 있어야 한다.
     """
-    try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
-    except requests.RequestException as exc:
-        raise VendorUnavailableError(f"네이버 요청 실패 ({type(exc).__name__}): {url}") from None
-    if resp.status_code != 200:
-        raise VendorUnavailableError(f"네이버 HTTP {resp.status_code}: {url}")
-    final_host = urlparse(str(getattr(resp, "url", "") or url)).netloc
-    if final_host and final_host != urlparse(url).netloc:
-        raise VendorUnavailableError(f"네이버 엔드포인트가 {final_host} 로 이전됨: {url}")
-    # 네이버 금융은 euc-kr 과 utf-8 혼재. 응답 encoding 가이드가 가끔 틀려
-    # chardet 결과를 우선 사용.
-    if resp.encoding is None or resp.encoding.lower() in ("iso-8859-1", "ascii"):
-        resp.encoding = resp.apparent_encoding
-    return resp.text
-
-
-def _fetch_stock_news_json(ticker: str, page: int) -> list[dict[str, Any]]:
-    """네이버 증권 종목 뉴스 JSON 한 페이지 → 평탄화된 기사 dict 리스트.
-
-    응답은 ``[{"total": N, "items": [...]}, ...]`` 형태(클러스터 리스트).
-    실패하거나 구조가 다르면 ``VendorUnavailableError``.
-    """
-    url = f"{_STOCK_NEWS_API}/{ticker}"
-    params = {"pageSize": _STOCK_NEWS_PAGE_SIZE, "page": page}
     try:
         resp = requests.get(url, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
     except requests.RequestException as exc:
@@ -108,6 +84,19 @@ def _fetch_stock_news_json(ticker: str, page: int) -> list[dict[str, Any]]:
         raise VendorUnavailableError("네이버 증권 응답이 JSON 이 아닙니다") from None
     if not isinstance(payload, list):
         raise VendorUnavailableError("네이버 증권 응답 구조가 예상과 다릅니다")
+    return payload
+
+
+def _fetch_stock_news_json(ticker: str, page: int) -> list[dict[str, Any]]:
+    """네이버 증권 종목 뉴스 JSON 한 페이지 → 평탄화된 기사 dict 리스트.
+
+    응답은 ``[{"total": N, "items": [...]}, ...]`` 형태(클러스터 리스트).
+    실패하거나 구조가 다르면 ``VendorUnavailableError``.
+    """
+    payload = _get_json_list(
+        f"{_STOCK_NEWS_API}/{ticker}",
+        {"pageSize": _STOCK_NEWS_PAGE_SIZE, "page": page},
+    )
     items: list[dict[str, Any]] = []
     for cluster in payload:
         if isinstance(cluster, dict):
@@ -134,31 +123,6 @@ def _parse_stock_news_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _parse_naver_date(text: str) -> datetime | None:
-    """네이버 금융 날짜 포맷을 datetime 으로.
-
-    흔한 포맷:
-    - ``2026.11.03 14:30``
-    - ``2026-11-03 14:30``
-    - ``11/03`` (당해 축약 — 현재 연도 가정)
-    """
-    text = text.strip()
-    for fmt in ("%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M", "%Y.%m.%d", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    # ``MM/DD`` 축약
-    m = re.match(r"^(\d{1,2})/(\d{1,2})$", text)
-    if m:
-        year = datetime.now().year
-        try:
-            return datetime(year, int(m.group(1)), int(m.group(2)))
-        except ValueError:
-            return None
-    return None
-
-
 def _parse_ymd(date_str: str) -> datetime | None:
     try:
         return datetime.strptime(date_str, "%Y-%m-%d")
@@ -172,41 +136,24 @@ def _is_noise(title: str) -> bool:
     return any(k in t for k in _NOISE_KEYWORDS)
 
 
-def _parse_main_news(html: str) -> list[dict[str, Any]]:
-    """주요뉴스 페이지의 (title, source, date, url) 리스트 추출.
-
-    ``news/mainnews.naver`` 구조는 ``ul.newsList > li.block1 > dl.articleSubject``
-    또는 간소한 ``dl.newsList > dt > a`` 혼재. 두 패턴 모두 수용.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    items: list[dict[str, Any]] = []
-    for block in soup.select("ul.newsList li, dl.newsList dt"):
-        link = block.find("a")
-        if link is None:
-            continue
-        title = link.get_text(strip=True)
-        if not title or _is_noise(title):
-            continue
-        href = link.get("href", "")
-        if href and not href.startswith("http"):
-            href = urljoin(_BASE, href)
-        # 날짜/출처는 형제 노드에서 찾기
-        source = ""
-        date = None
-        for span in block.select(".articleSummary span, .articleInfo span, .date"):
-            text = span.get_text(strip=True)
-            parsed = _parse_naver_date(text)
-            if parsed:
-                date = parsed
-            elif text and not source:
-                source = text
-        items.append({
-            "title": title,
-            "source": source,
-            "date": date,
-            "url": href,
-        })
-    return items
+def _parse_main_news_item(raw: Any) -> dict[str, Any] | None:
+    """주요뉴스 JSON 기사 → ``{title, source, date, url}``. 제목·시각이 없으면 None."""
+    if not isinstance(raw, dict):
+        return None
+    title = _html.unescape(str(raw.get("tit") or "")).strip()
+    if not title:
+        return None
+    try:
+        date = datetime.strptime(str(raw.get("dt") or ""), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    oid, aid = raw.get("oid"), raw.get("aid")
+    return {
+        "title": title,
+        "source": str(raw.get("ohnm") or ""),
+        "date": date,
+        "url": f"https://n.news.naver.com/mnews/article/{oid}/{aid}" if oid and aid else "",
+    }
 
 
 def _format_news_markdown(ticker: str, start: str, end: str, items: list[dict[str, Any]]) -> str:
@@ -282,32 +229,44 @@ def get_global_news(as_of_date: str, look_back_days: int | None = None, limit: i
         return f"[네이버 주요뉴스 조회 실패: 잘못된 날짜 형식 {as_of_date!r}]"
     look_back = max(1, int(look_back_days or 1))
     cap = max(1, int(limit or 20))
+    window_start = as_of_dt - timedelta(days=look_back - 1)
+    window_end = as_of_dt + timedelta(days=1)  # 기준일 당일 포함 (배타적 상한)
 
+    # 날짜 파라미터가 없는 최신순 목록이라, 기준일보다 새로운 기사는 건너뛰고
+    # 창 시작보다 오래된 기사가 나오면 멈춘다.
     all_items: list[dict[str, Any]] = []
     seen_titles: set[str] = set()
-    for offset in range(look_back):
-        day = as_of_dt - timedelta(days=offset)
-        day_str = day.strftime("%Y%m%d")
-        for page in range(1, 4):  # 최대 3페이지/일
-            url = f"{_BASE}/news/mainnews.naver?date={day_str}&page={page}"
-            html = _fetch_html(url)  # 폐지·리다이렉트면 VendorUnavailableError
-            items = _parse_main_news(html)
-            if not items:
+    reached_window = False
+    for page in range(1, _MAIN_NEWS_MAX_PAGES + 1):
+        payload = _get_json_list(
+            _MAIN_NEWS_API,
+            {"category": "mainnews", "pageSize": _MAIN_NEWS_PAGE_SIZE, "page": page},
+        )
+        if not payload:
+            break  # 더 이상 기사가 없음
+        done = False
+        for raw in payload:
+            item = _parse_main_news_item(raw)
+            if item is None or item["date"] >= window_end:
+                continue
+            reached_window = True
+            if item["date"] < window_start:
+                done = True
                 break
-            for item in items:
-                if item["title"] in seen_titles:
-                    continue
-                seen_titles.add(item["title"])
-                # date 가 없으면 조회 당일로 간주
-                if item["date"] is None:
-                    item["date"] = day
-                all_items.append(item)
-                if len(all_items) >= cap:
-                    break
+            if _is_noise(item["title"]) or item["title"] in seen_titles:
+                continue
+            seen_titles.add(item["title"])
+            all_items.append(item)
             if len(all_items) >= cap:
+                done = True
                 break
-        if len(all_items) >= cap:
+        if done:
             break
+    if not reached_window and payload:
+        raise VendorUnavailableError(
+            f"네이버 주요뉴스가 조회 한도({_MAIN_NEWS_MAX_PAGES}쪽) 안에서 기준일 "
+            f"{as_of_date} 에 닿지 못했습니다 (너무 과거 기준일)"
+        )
 
     header = f"## 주요뉴스 ({as_of_date}, 최근 {look_back}일)\n\n"
     if not all_items:
