@@ -190,8 +190,13 @@ def _validate_bare_prereqs() -> None:
 # 실패 모드별 대응:
 #   - 타임아웃: effort 레벨 기반 가변 디폴트. TRADINGAGENTS_CLAUDE_TIMEOUT 로
 #     전역 오버라이드. 재시도 없음 — 타임아웃은 대개 상황이 바뀌어도 재발.
+#     macOS 에서 subprocess 타임아웃 시계(mach_absolute_time)는 시스템 잠자기
+#     동안 멈춘다 — 잠든 시간은 타임아웃에 포함되지 않는다 (#199).
 #   - subprocess non-zero exit (CalledProcessError): 1회 재시도 후 전파.
 #     일시적 ENOTFOUND 등 네트워크 흔들림 흡수.
+#   - non-zero exit·타임아웃은 RuntimeError 로 바꿔 전파한다 (#199). 원 예외의
+#     str() 은 명령줄 전체(프롬프트 수십 KB)를 담으므로 버리고, 원인 파악에
+#     필요한 stderr 끝부분과 JSON 오류 필드만 메시지에 남긴다.
 #   - 429 / 쿼터 초과: 60초 대기 후 1회 재시도. 2회째 실패 시 명확한
 #     "Max 플랜 쿼터 소진" 메시지와 함께 RuntimeError 전파.
 #   - JSON 파싱 실패: 재시도 없이 그대로 전파 (JSONDecodeError). structured.py
@@ -242,12 +247,58 @@ def _is_quota_error(payload: dict) -> bool:
     return any(keyword in subtype for keyword in ("rate", "quota", "limit"))
 
 
+_OUTPUT_TAIL_CHARS = 500
+_ERROR_JSON_FIELDS = ("result", "api_error_status", "terminal_reason", "subtype")
+
+
+def _tail(text: str | bytes | None) -> str:
+    """출력의 끝부분만 남긴다. 원인은 대개 마지막 줄에 있다."""
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    text = text.strip()
+    if len(text) > _OUTPUT_TAIL_CHARS:
+        return "…" + text[-_OUTPUT_TAIL_CHARS:]
+    return text
+
+
+def _describe_cli_output(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    """실패한 `claude -p` 의 출력을 오류 메시지용으로 요약.
+
+    `--output-format json` 은 exit 1 에서도 stdout 에 결과 JSON 을 내므로
+    (`result`, `api_error_status`, `terminal_reason`), 파싱되면 그 필드를,
+    아니면 stdout 끝부분을 쓴다.
+    """
+    parts: list[str] = []
+    stderr_tail = _tail(stderr)
+    if stderr_tail:
+        parts.append(f"stderr: {stderr_tail}")
+    stdout_text = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else stdout
+    try:
+        payload = json.loads(stdout_text or "")
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        fields = ", ".join(
+            f"{key}={_tail(str(payload[key]))!r}"
+            for key in _ERROR_JSON_FIELDS
+            if payload.get(key) not in (None, "")
+        )
+        if fields:
+            parts.append(f"응답: {fields}")
+    elif _tail(stdout_text):
+        parts.append(f"stdout: {_tail(stdout_text)}")
+    return " / ".join(parts) if parts else "출력 없음"
+
+
 def _run_claude_subprocess(args: list[str], timeout: int) -> dict:
     """Claude Code CLI subprocess 호출. JSON payload dict 반환.
 
     세마포어로 동시 실행을 제한한다 (`TRADINGAGENTS_CLAUDE_CONCURRENCY`,
     디폴트 2). non-zero exit 와 429 쿼터 응답은 1회 재시도 (429 는 60초 대기
-    후). 타임아웃과 JSON 파싱 실패는 그대로 전파.
+    후). 타임아웃은 재시도 없이 전파. non-zero exit·타임아웃은 프롬프트를 뺀
+    RuntimeError 로 바뀐다 (#199). JSON 파싱 실패는 그대로 전파.
     """
     with _get_semaphore():
         for attempt in range(2):  # 초기 1 + 재시도 1
@@ -259,10 +310,18 @@ def _run_claude_subprocess(args: list[str], timeout: int) -> dict:
                     check=True,
                     timeout=timeout,
                 )
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as exc:
                 if attempt == 0:
                     continue
-                raise
+                raise RuntimeError(
+                    f"claude -p 실패 (종료 코드 {exc.returncode}, 1회 재시도 후) — "
+                    f"{_describe_cli_output(exc.stdout, exc.stderr)}"
+                ) from None
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"claude -p 가 {timeout}초 안에 끝나지 않아 중단했습니다 — "
+                    f"{_describe_cli_output(exc.stdout, exc.stderr)}"
+                ) from None
 
             payload = json.loads(completed.stdout)
 
