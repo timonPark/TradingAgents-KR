@@ -726,11 +726,85 @@ def test_non_zero_exit_retried_once_then_succeeds(mock_run):
 @pytest.mark.unit
 @patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
 def test_non_zero_exit_propagates_after_retry(mock_run):
-    """두 번 다 CalledProcessError → 전파."""
+    """두 번 다 non-zero exit → RuntimeError 로 전파."""
     mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd="claude")
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="종료 코드 1"):
         _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
     assert mock_run.call_count == 2
+
+
+# -- 실패 오류 메시지: 프롬프트 제외 + 원인 포함 (#199) ----------------------
+
+_LONG_PROMPT = "User: 약세(Bear) 리서처입니다. " + "시장 분석 보고서 본문 " * 2000
+
+
+def _failure_json(**overrides) -> str:
+    """`claude -p --output-format json` 이 exit 1 과 함께 내는 stdout 형태."""
+    data = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "result": "API Error: Connection error.",
+        "terminal_reason": "api_error",
+        "session_id": "s",
+    }
+    data.update(overrides)
+    return json.dumps(data)
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_non_zero_exit_error_excludes_prompt_and_includes_cause(mock_run):
+    args = ["claude", "-p", _LONG_PROMPT, "--append-system-prompt", _LONG_PROMPT]
+    mock_run.side_effect = subprocess.CalledProcessError(
+        returncode=1,
+        cmd=args,
+        output=_failure_json(api_error_status=503),
+        stderr="[claude-code:network] ECONNRESET\n",
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        _run_claude_subprocess(args, timeout=300)
+
+    message = str(excinfo.value)
+    assert "약세(Bear)" not in message
+    assert len(message) < 2000
+    assert "종료 코드 1" in message
+    assert "ECONNRESET" in message
+    assert "API Error: Connection error." in message
+    assert "503" in message
+    assert "api_error" in message
+    # 원 예외(명령줄 전체 포함)가 트레이스백 체인으로 로그에 새지 않는다
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_non_zero_exit_error_keeps_only_stderr_tail(mock_run):
+    stderr = "앞부분" * 1000 + "마지막 원인: auth expired"
+    mock_run.side_effect = subprocess.CalledProcessError(
+        returncode=1, cmd=["claude"], output="", stderr=stderr
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+
+    message = str(excinfo.value)
+    assert "마지막 원인: auth expired" in message
+    assert len(message) < 2000
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_non_zero_exit_with_non_json_stdout_shows_stdout_tail(mock_run):
+    mock_run.side_effect = subprocess.CalledProcessError(
+        returncode=2, cmd=["claude"], output="Error: not logged in", stderr=""
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        _run_claude_subprocess(["claude", "-p", "x"], timeout=300)
+
+    message = str(excinfo.value)
+    assert "종료 코드 2" in message
+    assert "Error: not logged in" in message
 
 
 # -- 타임아웃 (재시도 없이 전파) ---------------------------------------------
@@ -739,11 +813,33 @@ def test_non_zero_exit_propagates_after_retry(mock_run):
 @pytest.mark.unit
 @patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
 def test_timeout_propagates_without_retry(mock_run):
-    """subprocess.TimeoutExpired 는 재시도 없이 전파."""
+    """타임아웃은 재시도 없이 RuntimeError 로 전파."""
     mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=1)
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(RuntimeError, match="1초"):
         _run_claude_subprocess(["claude", "-p", "x"], timeout=1)
     assert mock_run.call_count == 1  # 재시도 없음
+
+
+@pytest.mark.unit
+@patch("tradingagents.llm_clients.claude_code_client.subprocess.run")
+def test_timeout_error_excludes_prompt_and_includes_partial_stderr(mock_run):
+    """TimeoutExpired 도 str() 에 명령줄 전체가 들어가므로 같은 방식으로 정리.
+
+    subprocess.run 의 POSIX 타임아웃 경로는 부분 출력을 bytes 로 남긴다.
+    """
+    args = ["claude", "-p", _LONG_PROMPT]
+    mock_run.side_effect = subprocess.TimeoutExpired(
+        cmd=args, timeout=300, output=b"", stderr=b"retrying request\n"
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        _run_claude_subprocess(args, timeout=300)
+
+    message = str(excinfo.value)
+    assert "약세(Bear)" not in message
+    assert "300초" in message
+    assert "retrying request" in message
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
 
 
 # -- JSON 파싱 실패 (재시도 없이 전파) --------------------------------------
