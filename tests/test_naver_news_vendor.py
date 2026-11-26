@@ -231,6 +231,95 @@ def test_get_news_requests_documented_page_size():
     assert get.call_args_list[0].kwargs["params"] == {"pageSize": 20, "page": 1}
 
 
+# ---------- 일시적 오류 재시도·부분 결과 (#194) ----------
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    """재시도 대기를 없앤다 — 대기 시간은 ``_STOCK_NEWS_RETRY_DELAYS`` 로 검증."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(naver_news.time, "sleep", sleeps.append)
+    return sleeps
+
+
+@pytest.mark.unit
+def test_get_news_retries_transient_502_on_same_page(_no_retry_sleep):
+    """쪽 하나가 502 → 같은 쪽을 다시 불러 성공하면 정상 결과."""
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=[_json_response(None, status=502), _json_response(_STOCK_NEWS_JSON)],
+    ) as get:
+        out = naver_news.get_news("005930", "2026-11-02", "2026-11-03")
+
+    assert "4분기 실적 호조" in out
+    assert get.call_count == 2
+    assert get.call_args_list[1].kwargs["params"]["page"] == 1
+    assert _no_retry_sleep == [naver_news._STOCK_NEWS_RETRY_DELAYS[0]]
+
+
+@pytest.mark.unit
+def test_get_news_retries_network_error():
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=[requests.ConnectionError("boom"), _json_response(_STOCK_NEWS_JSON)],
+    ):
+        out = naver_news.get_news("005930", "2026-11-02", "2026-11-03")
+    assert "4분기 실적 호조" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", [404, 410])
+def test_get_news_does_not_retry_non_transient_status(status):
+    """폐지(410)·404 는 다시 불러도 같다 — 재시도 없이 바로 실패."""
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        return_value=_json_response(None, status=status),
+    ) as get, pytest.raises(VendorUnavailableError, match=str(status)):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+    assert get.call_count == 1
+
+
+@pytest.mark.unit
+def test_get_news_first_page_failing_after_retries_raises(_no_retry_sleep):
+    """첫 쪽이 재시도 후에도 실패하면 읽은 기사가 없으므로 사유와 함께 실패 (기존 동작)."""
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        return_value=_json_response(None, status=502),
+    ) as get, pytest.raises(VendorUnavailableError, match="502"):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+    assert get.call_count == 1 + len(naver_news._STOCK_NEWS_RETRY_DELAYS)
+    assert _no_retry_sleep == list(naver_news._STOCK_NEWS_RETRY_DELAYS)
+
+
+@pytest.mark.unit
+def test_get_news_returns_partial_result_when_later_page_keeps_failing():
+    """기간 안 기사를 읽은 뒤 다음 쪽이 계속 502 면, 버리지 않고 일부만 조회됐음을 명시해 반환."""
+    inside = _clusters(*[_item(f"기간 안 {i}", "202611031000", article_id=f"in{i}") for i in range(10)],
+                       *[_item(f"최근 {i}", "202611050900", article_id=f"n{i}") for i in range(10)])
+    failures = [_json_response(None, status=502)] * (1 + len(naver_news._STOCK_NEWS_RETRY_DELAYS))
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=[_json_response(inside), *failures],
+    ):
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert "기간 안 0" in out
+    assert "HTTP 502" in out
+    assert "2026-11-03 10:00 이후 기사만 조회됨" in out
+    assert "기사 없음으로 해석하지 마세요" in out
+
+
+@pytest.mark.unit
+def test_get_news_later_page_failure_before_reaching_window_raises():
+    """기간 끝에 닿기 전(전부 더 최근 기사) 실패하면 부분 결과가 의미 없으므로 실패."""
+    newer = _page("너무 최근", "202611050900")
+    failures = [_json_response(None, status=502)] * (1 + len(naver_news._STOCK_NEWS_RETRY_DELAYS))
+    with patch(
+        "tradingagents.dataflows.vendors.naver_news.requests.get",
+        side_effect=[_json_response(newer), *failures],
+    ), pytest.raises(VendorUnavailableError, match="502"):
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+
 # ---------- 노이즈 필터 ----------
 
 @pytest.mark.unit
