@@ -53,6 +53,7 @@ TauricResearch/TradingAgents 프레임워크의 핵심 추론 엔진(LangGraph �
   * **오류 처리 정책:**
     * **타임아웃**: `--effort` 레벨에 따른 가변 디폴트 (medium=300s, high=600s, max=1200s). 환경변수 `TRADINGAGENTS_CLAUDE_TIMEOUT` 로 오버라이드 가능.
     * **non-zero exit**: 1회 재시도 후 예외 전파. 일시적 ENOTFOUND 등은 흡수하되 반복 실패는 환경 문제로 간주.
+    * **실패 오류 메시지 (#199)**: non-zero exit·타임아웃은 `RuntimeError` 로 전파한다. 메시지에는 프롬프트(명령줄)를 넣지 않고 stderr 끝부분과 stdout JSON 의 `result`/`api_error_status`/`terminal_reason` 만 담는다. macOS 에서 타임아웃 시계는 시스템 잠자기 동안 멈춘다.
     * **JSON 파싱 실패**: 어댑터는 예외 전파만, 재시도 안 함. `structured.py` 의 기존 free-text 폴백 경로가 처리.
     * **429 / 쿼터 초과**: 60초 대기 후 1회 재시도. 2회째 실패하면 "Max 플랜 쿼터 소진" 메시지와 함께 명확히 실패 전파 (지수 백오프로 분석이 수십 분 지연되는 것 방지).
   * **동시 실행 제한:** 모듈 레벨 세마포어(`threading.Semaphore` 또는 비동기 호출용 `asyncio.Semaphore`) 로 동시 실행 중인 `claude -p` 프로세스 수를 제한합니다. 환경변수 `TRADINGAGENTS_CLAUDE_CONCURRENCY` (디폴트 `2`) 로 조절. OAuth 쿼터 소진 및 머신 메모리 보호 (Node.js 런타임당 300~500MB) 용. 분석가 병렬 실행, 백테스트 종목 동시 실행 모두 동일 세마포어를 공유합니다.
