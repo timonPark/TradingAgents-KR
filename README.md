@@ -1,41 +1,47 @@
-<p align="center">
-  <img src="tradingagents/assets/tauric-logo.svg" width="60%" alt="Tauric Research">
-</p>
-
 <div align="center" style="line-height: 1;">
   <a href="https://arxiv.org/abs/2412.20138" target="_blank"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2412.20138-B31B1B?logo=arxiv"/></a>
   <a href="https://github.com/TauricResearch/TradingAgents" target="_blank"><img alt="Upstream" src="https://img.shields.io/badge/Upstream-TauricResearch%2FTradingAgents-14C290?logo=github"/></a>
   <img alt="Market" src="https://img.shields.io/badge/Market-KOSPI%20%7C%20KOSDAQ-blue"/>
 </div>
 
----
-
 # TradingAgents-KR
 
-**DART 공시, KRX 시세·외국인/기관 수급, 네이버 뉴스, 한국은행 거시지표를 종합해 한국 증시(KOSPI/KOSDAQ) 종목 분석 리포트를 생성하는 멀티 에이전트 프레임워크**입니다.
+**DART 공시와 외국인·기관 수급을 반영한 AI 애널리스트 리포트.**
 
-[TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)의 핵심 추론 엔진(LangGraph 오케스트레이션, 멀티 에이전트 토론·리스크 관리 파이프라인)을 기반으로, 데이터 수집 레이어와 에이전트 프롬프트를 한국 증시 환경에 맞게 재설계한 하드 포크(hard fork)입니다. 외부 LLM API 키 대신 **Claude Code CLI 헤드리스(OAuth)**를 단일 백엔드로 사용하여 Claude Max/Pro 구독 쿼터로 동작합니다.
+종목명이나 종목코드 하나로 한국 증시(KOSPI/KOSDAQ) 종목 분석 리포트를 만듭니다. 시세·수급, 뉴스, 감성, 재무를 맡은 AI 분석가가 근거를 모으고, 강세/약세 토론과 리스크 검토를 거쳐 5단계 등급(`매수` ~ `매도`)을 냅니다.
+
+### 실제 결과물 — 삼성전자(005930), 2026-11-19 기준
+
+<p align="center">
+  <a href="docs/examples/005930-samsung/report.md"><img src="docs/examples/005930-samsung/report-summary.png" width="49%" alt="리포트 상단: 등급, 실행 조건, 회사 개요, 현재 핵심 이슈"></a>
+  <a href="docs/examples/005930-samsung/report.md"><img src="docs/examples/005930-samsung/report-glance.png" width="49%" alt="한눈에 보기: 에이전트별 판정 흐름과 가격 레벨"></a>
+</p>
+
+최종 등급 **비중 축소** (감성 분석가 혼조 → 리서치 매니저 비중 축소 → 트레이더 매도 → 포트폴리오 매니저 비중 축소). 합성·편집하지 않은 실제 실행 결과입니다. [전체 리포트](docs/examples/005930-samsung/report.md) · [실행 조건과 읽을 때 알아둘 점](docs/examples/README.md)
 
 > ⚠️ **면책 고지**: 본 프로젝트는 연구·교육 목적으로 설계되었습니다. 생성된 리포트와 등급은 금융·투자 자문이나 매수/매도 권유가 아니며, 모든 투자 결정과 책임은 사용자 본인에게 있습니다.
 
----
-
 ## 빠른 시작 (Quick Start)
 
-Python 3.11+, [`claude` CLI 로그인](#2-claude-code-cli-설치-및-로그인), `.env`의 `DART_API_KEY`가 준비된 환경에서의 최단 실행 경로입니다. 처음 설정한다면 아래 [설치 및 환경 설정](#설치-및-환경-설정)을 먼저 진행하세요.
+준비물: Python 3.11+, Claude Max/Pro 구독, [Open DART](https://opendart.fss.or.kr/) API 키(무료). 외부 LLM API 키는 필요 없습니다.
 
 ```bash
-# 1. 가상환경 활성화
-source .venv/bin/activate
+# 1. 설치
+git clone https://github.com/timonPark/TradingAgents-KR.git && cd TradingAgents-KR
+uv venv --python 3.13 && source .venv/bin/activate && pip install -e .
 
-# 2-A. 대화형 CLI로 분석 실행 (종목명 "삼성" 또는 종목코드 "005930" 입력)
+# 2. 준비: Claude Code 로그인 + DART 키
+npm install -g @anthropic-ai/claude-code   # 이미 설치돼 있다면 생략
+claude login && claude -p "ping"            # 응답이 오면 준비 완료
+cp .env.example .env                        # .env 의 DART_API_KEY 에 발급받은 키 입력
+
+# 3. 실행: 종목명("삼성") 또는 종목코드("005930") 입력
 tradingagents
-
-# 2-B. 플래그로 즉시 분석 실행
-tradingagents --ticker 005930 --date 2026-11-01 --analysts market,news,fundamentals --save
 ```
 
-브라우저에서 검색·실행·리포트 열람(PDF 다운로드 포함)을 하려면 [로컬 웹 UI](#2-로컬-웹-ui-astro--fastapi) 섹션을 참고하세요.
+플래그로 바로 실행하기, 브라우저 웹 UI(PDF 다운로드 포함), Docker 는 [사용법](#사용법)을, 선택 API 키(ECOS·NAVER·KRX)는 [설치 및 환경 설정](#설치-및-환경-설정)을 참고하세요.
+
+**Based on** [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) — 핵심 추론 엔진(LangGraph 오케스트레이션, 멀티 에이전트 토론·리스크 관리 파이프라인)을 기반으로, 데이터 수집 레이어와 에이전트 프롬프트를 한국 증시 환경에 맞게 재설계한 하드 포크(hard fork)입니다. 외부 LLM API 키 대신 **Claude Code CLI 헤드리스(OAuth)**를 단일 백엔드로 사용하여 Claude Max/Pro 구독 쿼터로 동작합니다. 출처와 인용은 [기반 프로젝트 및 인용](#기반-프로젝트-및-인용-attribution--citation)을 참고하세요.
 
 ---
 
@@ -236,6 +242,10 @@ pytest -m integration -q
 ---
 
 ## 기반 프로젝트 및 인용 (Attribution & Citation)
+
+<p align="center">
+  <img src="tradingagents/assets/tauric-logo.svg" width="60%" alt="Tauric Research">
+</p>
 
 본 프로젝트는 **[TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)** 를 기반으로 제작된 한국 증시 전용 하드 포크입니다.
 
