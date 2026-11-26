@@ -1,6 +1,7 @@
 # [#199] claude 헤드리스 어댑터 실패 시 stderr 없이 프롬프트 전체가 오류 메시지에 들어감
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/199
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/203
 - 브랜치: fix/199-adapter-error-message
 - 작업 기간: 2026-11-26
 
