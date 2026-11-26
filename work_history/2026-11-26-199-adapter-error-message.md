@@ -43,6 +43,22 @@
 - 수동 smoke: 존재하지 않는 모델로 실제 `claude -p` 실패 유도 → 메시지 365자,
   프롬프트 미포함, 원인 표시:
   `claude -p 실패 (종료 코드 1, 1회 재시도 후) — stderr: [claude-code:unrecognized_model] ... / 응답: result="There's an issue with the selected model ...", api_error_status='404', terminal_reason='api_error', ...`
+- 웹 UI 검증 (Aside, 2026-11-26):
+  - 타임아웃 경로: 백엔드를 `TRADINGAGENTS_CLAUDE_TIMEOUT=1` 로 띄우고 UI 에서 005930 /
+    2026-11-25 / 뉴스 분석가 / low 실행 (run `dd135c04e59e`).
+    - `GET /api/runs/{id}` 의 `error`: `claude -p 가 1초 안에 끝나지 않아 중단했습니다 — 출력 없음` (39자)
+    - SSE `error` 이벤트의 `message`·`traceback` 에 프롬프트 없음, 원 예외 체인 없음
+  - 종료 코드 1 경로: API 로 `deep/quick_think_llm=no-such-model-xyz` 실행 (run `2bd17dba0f36`).
+    실행 시작 시 메모리 정산(reflection) 단계의 백엔드 로그에 새 메시지 확인
+    (`... 종료 코드 1 ... unrecognized_model ... api_error_status='404' ...`). 정산 대기
+    299건을 모두 실패 처리해야 메인 노드에 닿아 30분 이상 걸리므로 실행은 취소했다.
+    정산 실패 항목은 pending 으로 남아 메모리 로그 손상 없음.
+  - **화면 표시는 확인되지 않음 — 기존 UI 버그**: 화면에는 어댑터 메시지 대신
+    `에러: SSE 연결 끊김 — uvicorn 이 켜져 있는지 확인하세요.` 가 표시됐다.
+    `web/src/components/RunPanel.tsx` 가 서버의 `error` 이벤트를 처리한 직후,
+    같은 이벤트에 `source.onerror` 도 호출되어 메시지를 덮어쓴다. 브라우저에서
+    확인: 서버 `error` 이벤트(MessageEvent, data 있음) 한 건에 리스너와 `onerror`
+    가 모두 호출됨. #199 이전부터 있던 문제로 범위 밖 (새 이슈 후보).
 
 ## 위험도 (§4.8): risk:high
 
@@ -52,6 +68,10 @@
 - 단, 성공 경로와 재시도 정책은 손대지 않았고 실패 시 예외 타입·메시지만 바뀐다.
 
 ## 다음 작업 핸드오프
+
+- 새 이슈 후보 (UI): 실행 실패 시 화면이 실제 오류 대신 "SSE 연결 끊김" 을 표시.
+  서버 이벤트 이름 `error` 가 `EventSource.onerror` 와 겹친다. `onerror` 에서
+  `MessageEvent` 를 무시하거나, 서버 이벤트 이름을 바꾸는 방법이 있다.
 
 - 새 이슈 후보: exit 1 과 함께 stdout JSON 에 `api_error_status=429` 가 오면 현재는
   `CalledProcessError` 경로(즉시 재시도)로 가서 60초 대기 쿼터 재시도 정책이 적용되지
