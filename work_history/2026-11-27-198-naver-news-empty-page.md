@@ -1,7 +1,7 @@
 # [#198] 네이버 증권 종목뉴스가 빈 쪽을 돌려주면 '기사 끝'으로 보고 '뉴스 없음' 을 반환할 수 있음
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/198
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/206
 - 브랜치: fix/198-naver-news-empty-page
 - 작업 기간: 2026-11-27
 
