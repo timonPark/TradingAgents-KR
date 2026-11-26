@@ -18,6 +18,10 @@ API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추
 아닌 응답은 ``VendorUnavailableError`` 로 올려 라우터가 ``DATA_UNAVAILABLE`` 로
 보고하게 한다. 정상 응답이 비어 있을 때만 "뉴스 없음".
 
+종목 뉴스는 최대 100쪽을 읽어 일시적 5xx 에 자주 노출된다 (#194). 5xx·네트워크
+오류는 같은 쪽을 다시 부르고, 그래도 실패하면 기간 안 기사를 이미 읽은 경우에
+한해 "일부만 조회됨" 경고와 함께 읽은 만큼 반환한다.
+
 ### 반환 shape
 상류 ``yahoo.news.get_news`` / ``alpha_vantage.news.get_news`` 와 동일하게
 사람이 읽기 쉬운 Markdown 문자열. 분석가가 바로 프롬프트에 주입 가능.
@@ -30,6 +34,7 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -48,6 +53,9 @@ _STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock"
 _STOCK_NEWS_PAGE_SIZE = 20
 _STOCK_NEWS_MAX_PAGES = 100
 _STOCK_NEWS_MAX_ITEMS = 30  # 프롬프트 길이 상한 (naver_api_hub.MAX_ITEMS 와 동일)
+# 일시적 5xx·네트워크 오류 시 같은 쪽 재시도 대기(초). 2026-11-19 장애 때 같은 쪽을
+# 다시 부르면 대개 성공했다 (502,200,502,200 …) (#194).
+_STOCK_NEWS_RETRY_DELAYS = (0.5, 1.0)
 _HEADERS = {
     # 네이버 금융은 User-Agent 가 없으면 가끔 403 을 돌려줌. 일반 브라우저 UA 로.
     "User-Agent": (
@@ -70,6 +78,10 @@ _NOISE_KEYWORDS = (
 )
 
 
+class _TransientVendorError(VendorUnavailableError):
+    """다시 부르면 성공할 수 있는 실패 (5xx·네트워크 오류)."""
+
+
 def _get_json_list(url: str, params: dict[str, Any]) -> list[Any]:
     """네이버 증권 JSON(리스트) GET + 공통 에러 처리. 실패·구조 불일치는 ``VendorUnavailableError``.
 
@@ -79,7 +91,9 @@ def _get_json_list(url: str, params: dict[str, Any]) -> list[Any]:
     try:
         resp = requests.get(url, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
     except requests.RequestException as exc:
-        raise VendorUnavailableError(f"네이버 증권 요청 실패 ({type(exc).__name__})") from None
+        raise _TransientVendorError(f"네이버 증권 요청 실패 ({type(exc).__name__})") from None
+    if resp.status_code >= 500:
+        raise _TransientVendorError(f"네이버 증권 HTTP {resp.status_code}")
     if resp.status_code != 200:
         raise VendorUnavailableError(f"네이버 증권 HTTP {resp.status_code}")
     try:
@@ -106,6 +120,17 @@ def _fetch_stock_news_json(ticker: str, page: int) -> list[dict[str, Any]]:
         if isinstance(cluster, dict):
             items.extend(i for i in cluster.get("items") or [] if isinstance(i, dict))
     return items
+
+
+def _fetch_stock_news_json_with_retry(ticker: str, page: int) -> list[dict[str, Any]]:
+    """``_fetch_stock_news_json`` + 일시적 오류 재시도. 재시도 후에도 실패하면 마지막 오류."""
+    for delay in _STOCK_NEWS_RETRY_DELAYS:
+        try:
+            return _fetch_stock_news_json(ticker, page)
+        except _TransientVendorError as exc:
+            logger.warning("네이버 증권 뉴스 %s %d쪽 재시도 (%s)", ticker, page, exc)
+            time.sleep(delay)
+    return _fetch_stock_news_json(ticker, page)
 
 
 def _parse_stock_news_item(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -211,8 +236,16 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
     oldest: datetime | None = None  # 지금까지 읽은 가장 오래된 기사
     reached_window = False  # 기간 끝(end) 이전 기사에 닿았는가
     covered = False  # 기간 시작(start) 이전까지(또는 기사 끝까지) 읽었는가
+    failure: VendorUnavailableError | None = None  # 재시도 후에도 실패한 쪽의 사유
     for page in range(1, _STOCK_NEWS_MAX_PAGES + 1):
-        raw_items = _fetch_stock_news_json(ticker, page)
+        try:
+            raw_items = _fetch_stock_news_json_with_retry(ticker, page)
+        except _TransientVendorError as exc:
+            # 기간 안 기사를 이미 읽었으면 버리지 않고 부분 결과로 (#194). 아니면 실패.
+            if not reached_window:
+                raise
+            failure = exc
+            break
         if not raw_items:
             covered = True  # 더 읽을 기사가 없음
             break
@@ -242,7 +275,13 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
             break
 
     note = ""
-    if not covered:
+    if failure is not None:
+        note = (
+            f"{failure} 로 {oldest:%Y-%m-%d %H:%M} 이후 기사만 조회됨 — 요청 기간 "
+            f"{start_date} ~ {end_date} 중 앞쪽 일부는 확인하지 못했습니다. "
+            "기사 없음으로 해석하지 마세요."
+        )
+    elif not covered:
         # 조회 한도(최신 N건)에 걸려 기간 시작까지 못 갔다. "무보도" 로 위장하지 않는다 (#188).
         if not reached_window:
             oldest_text = f"{oldest:%Y-%m-%d %H:%M}" if oldest else "날짜 미상"
