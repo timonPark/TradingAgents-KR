@@ -1,7 +1,7 @@
 # [#196] default_config 의 get_global_news 주석이 #189 이후 사실과 다름
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/196
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/204
 - 브랜치: chore/196-global-news-comment
 - 작업 기간: 2026-11-27
 
