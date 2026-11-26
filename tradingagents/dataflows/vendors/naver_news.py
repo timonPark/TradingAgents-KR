@@ -22,6 +22,10 @@ API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추
 오류는 같은 쪽을 다시 부르고, 그래도 실패하면 기간 안 기사를 이미 읽은 경우에
 한해 "일부만 조회됨" 경고와 함께 읽은 만큼 반환한다.
 
+이 API 는 HTTP 200 + 빈 목록을 쪽 중간에 돌려줄 수 있다 (#198). 빈 쪽 하나를
+"기사 끝" 으로 믿으면 수집 실패가 "뉴스 없음" 으로 위장되므로, 같은 쪽을 한 번 더
+부르고 그래도 비면 다음 쪽까지 본 뒤 둘 다 비었을 때만 끝으로 본다.
+
 ### 반환 shape
 상류 ``yahoo.news.get_news`` / ``alpha_vantage.news.get_news`` 와 동일하게
 사람이 읽기 쉬운 Markdown 문자열. 분석가가 바로 프롬프트에 주입 가능.
@@ -133,6 +137,25 @@ def _fetch_stock_news_json_with_retry(ticker: str, page: int) -> list[dict[str, 
     return _fetch_stock_news_json(ticker, page)
 
 
+def _recheck_empty_stock_page(ticker: str, page: int) -> tuple[list[dict[str, Any]], int]:
+    """빈 쪽 재확인 (#198). 같은 쪽을 한 번 더, 그래도 비면 다음 쪽을 본다.
+
+    반환: (기사, 그 기사를 읽은 쪽 번호). 둘 다 비었으면 기사가 빈 리스트 — 진짜 끝.
+    마지막 허용 쪽에서는 다음 쪽을 부르지 않는다 (서버 상한 밖은 HTTP 400).
+    """
+    time.sleep(_STOCK_NEWS_RETRY_DELAYS[0])
+    items = _fetch_stock_news_json_with_retry(ticker, page)
+    if items:
+        logger.warning("네이버 증권 뉴스 %s %d쪽이 빈 응답 후 재조회에서 기사 반환", ticker, page)
+        return items, page
+    if page >= _STOCK_NEWS_MAX_PAGES:
+        return [], page
+    items = _fetch_stock_news_json_with_retry(ticker, page + 1)
+    if items:
+        logger.warning("네이버 증권 뉴스 %s %d쪽이 비었지만 %d쪽에 기사가 있음", ticker, page, page + 1)
+    return items, page + 1
+
+
 def _parse_stock_news_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     """증권 JSON 기사 → ``{title, source, date, url}``. 제목이 없으면 None."""
     title = _html.unescape(str(raw.get("titleFull") or raw.get("title") or "")).strip()
@@ -237,9 +260,13 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
     reached_window = False  # 기간 끝(end) 이전 기사에 닿았는가
     covered = False  # 기간 시작(start) 이전까지(또는 기사 끝까지) 읽었는가
     failure: VendorUnavailableError | None = None  # 재시도 후에도 실패한 쪽의 사유
-    for page in range(1, _STOCK_NEWS_MAX_PAGES + 1):
+    page = 0
+    while page < _STOCK_NEWS_MAX_PAGES:
+        page += 1
         try:
             raw_items = _fetch_stock_news_json_with_retry(ticker, page)
+            if not raw_items:
+                raw_items, page = _recheck_empty_stock_page(ticker, page)
         except _TransientVendorError as exc:
             # 기간 안 기사를 이미 읽었으면 버리지 않고 부분 결과로 (#194). 아니면 실패.
             if not reached_window:
@@ -247,7 +274,7 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
             failure = exc
             break
         if not raw_items:
-            covered = True  # 더 읽을 기사가 없음
+            covered = True  # 재확인 후에도 비었음 — 더 읽을 기사가 없음
             break
         parsed = [p for p in (_parse_stock_news_item(r) for r in raw_items) if p]
         for item in parsed:
