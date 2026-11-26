@@ -320,6 +320,54 @@ def test_get_news_later_page_failure_before_reaching_window_raises():
         naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
 
+# ---------- 빈 쪽 재확인 (#198) ----------
+
+@pytest.mark.unit
+def test_get_news_empty_first_page_is_rechecked(_no_retry_sleep):
+    """첫 쪽이 일시적으로 비어 와도 "뉴스 없음" 으로 끝내지 않고 같은 쪽을 다시 본다."""
+    with _patch_stock_pages([], _STOCK_NEWS_JSON) as get:
+        out = naver_news.get_news("005930", "2026-11-02", "2026-11-03")
+
+    assert "4분기 실적 호조" in out
+    assert "해당 기간 뉴스가 없습니다" not in out
+    assert [c.kwargs["params"]["page"] for c in get.call_args_list[:2]] == [1, 1]
+    assert _no_retry_sleep == [naver_news._STOCK_NEWS_RETRY_DELAYS[0]]
+
+
+@pytest.mark.unit
+def test_get_news_empty_middle_page_continues_to_next_page():
+    """중간 쪽이 두 번 다 비어도 다음 쪽에 기사가 있으면 이어서 읽는다."""
+    newer = _page("너무 최근", "202611050900")
+    after_gap = _clusters(_item("빈 쪽 뒤 기사", "202611031000", article_id="gap"))
+    with _patch_stock_pages(newer, [], [], after_gap) as get:
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert "빈 쪽 뒤 기사" in out
+    assert [c.kwargs["params"]["page"] for c in get.call_args_list] == [1, 2, 2, 3]
+
+
+@pytest.mark.unit
+def test_get_news_really_no_news_still_means_no_news():
+    """같은 쪽 재확인과 다음 쪽이 모두 비면 정말 기사 끝 — 기존대로 "뉴스 없음"."""
+    with _patch_stock_pages() as get:
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert "해당 기간 뉴스가 없습니다" in out
+    assert "조회 한도" not in out
+    assert [c.kwargs["params"]["page"] for c in get.call_args_list] == [1, 1, 2]
+
+
+@pytest.mark.unit
+def test_get_news_empty_last_page_does_not_request_beyond_limit(monkeypatch):
+    """마지막 허용 쪽이 비면 다음 쪽(서버 상한 밖, HTTP 400)을 부르지 않는다."""
+    monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_PAGES", 2)
+    newer = _page("너무 최근", "202611050900")
+    with _patch_stock_pages(newer) as get:
+        naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    assert [c.kwargs["params"]["page"] for c in get.call_args_list] == [1, 2, 2]
+
+
 # ---------- 노이즈 필터 ----------
 
 @pytest.mark.unit
