@@ -36,9 +36,11 @@ import requests
 
 from tradingagents.dataflows.errors import VendorNotConfiguredError, VendorUnavailableError
 from tradingagents.dataflows.vendors.naver_news import (
+    _day_counts_summary,
     _format_news_markdown,
     _is_noise,
     _parse_ymd,
+    _sample_by_day,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ API_URL = "https://naverapihub.apigw.ntruss.com/search/v1/news"
 REQUEST_TIMEOUT = 10  # 초
 PAGE_SIZE = 100
 MAX_PAGES = 5
-MAX_ITEMS = 30  # 프롬프트 길이 상한
+MAX_ITEMS = 30  # 프롬프트에 싣는 기사 수 (날짜별로 고르게, #195)
 
 _KST = timezone(timedelta(hours=9))
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -192,5 +194,7 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
             f"{start_date} ~ {end_date} 기간 시작까지 닿지 못했습니다: {ticker}"
         )
 
-    collected.sort(key=lambda i: i["date"] or datetime.min, reverse=True)
-    return _format_news_markdown(ticker, start_date, end_date, collected[:MAX_ITEMS])
+    return _format_news_markdown(
+        ticker, start_date, end_date, _sample_by_day(collected, MAX_ITEMS),
+        summary=_day_counts_summary(collected, MAX_ITEMS),
+    )

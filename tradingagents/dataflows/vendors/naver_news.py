@@ -26,6 +26,11 @@ API 키 없이 공개 경로에서 뉴스 헤드라인/날짜/출처/URL 을 추
 "기사 끝" 으로 믿으면 수집 실패가 "뉴스 없음" 으로 위장되므로, 같은 쪽을 한 번 더
 부르고 그래도 비면 다음 쪽까지 본 뒤 둘 다 비었을 때만 끝으로 본다.
 
+### 기사 고르기 (#195)
+프롬프트 길이 때문에 30건만 싣는다. 최신 30건을 자르면 기사가 많은 종목은 기준일
+몇 시간치로 채워지므로, 기간을 끝까지 읽은 뒤 날짜별로 고르게 뽑고 일자별 기사 수를
+헤더에 붙인다 (``_sample_by_day``, NAVER API HUB vendor 와 공유).
+
 ### 반환 shape
 상류 ``yahoo.news.get_news`` / ``alpha_vantage.news.get_news`` 와 동일하게
 사람이 읽기 쉬운 Markdown 문자열. 분석가가 바로 프롬프트에 주입 가능.
@@ -56,7 +61,7 @@ _STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock"
 # 20 은 끊김 없이 이어지고 101쪽에서 HTTP 400 → 서버 상한 2000건 (20 × 100).
 _STOCK_NEWS_PAGE_SIZE = 20
 _STOCK_NEWS_MAX_PAGES = 100
-_STOCK_NEWS_MAX_ITEMS = 30  # 프롬프트 길이 상한 (naver_api_hub.MAX_ITEMS 와 동일)
+_STOCK_NEWS_MAX_ITEMS = 30  # 프롬프트에 싣는 기사 수 (naver_api_hub.MAX_ITEMS 와 동일)
 # 일시적 5xx·네트워크 오류 시 같은 쪽 재시도 대기(초). 2026-11-19 장애 때 같은 쪽을
 # 다시 부르면 대개 성공했다 (502,200,502,200 …) (#194).
 _STOCK_NEWS_RETRY_DELAYS = (0.5, 1.0)
@@ -208,16 +213,50 @@ def _parse_main_news_item(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def _sample_by_day(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """날짜별로 고르게 ``limit`` 건 (#195). 최신순으로 반환.
+
+    날짜마다 최신 기사부터 한 건씩 돌아가며 뽑아, 기사가 적은 날의 남는 몫은 다른 날로
+    간다. 날짜 없는 기사는 맨 뒤 묶음.
+    """
+    by_day: dict[Any, list[dict[str, Any]]] = {}
+    for item in sorted(items, key=lambda i: i["date"] or datetime.min, reverse=True):
+        by_day.setdefault(item["date"].date() if item["date"] else None, []).append(item)
+    groups = list(by_day.values())  # 최신 날짜부터, 날짜 없음은 맨 뒤
+    picked: list[dict[str, Any]] = []
+    for rank in range(max((len(g) for g in groups), default=0)):
+        for group in groups:
+            if rank < len(group) and len(picked) < limit:
+                picked.append(group[rank])
+    return sorted(picked, key=lambda i: i["date"] or datetime.min, reverse=True)
+
+
+def _day_counts_summary(items: list[dict[str, Any]], limit: int) -> str:
+    """``limit`` 건을 넘을 때 헤더에 붙이는 일자별 기사 수 요약. 넘지 않으면 빈 문자열."""
+    if len(items) <= limit:
+        return ""
+    counts: dict[str, int] = {}
+    for item in sorted(items, key=lambda i: i["date"] or datetime.max):
+        key = f"{item['date']:%m-%d}" if item["date"] else "날짜 미상"
+        counts[key] = counts.get(key, 0) + 1
+    per_day = " · ".join(f"{day} {n}" for day, n in counts.items())
+    return f"기간 내 기사 {len(items)}건 중 날짜별로 고르게 {limit}건 — 일자별 기사 수: {per_day}"
+
+
 def _format_news_markdown(
     ticker: str, start: str, end: str, items: list[dict[str, Any]], note: str = "",
+    summary: str = "",
 ) -> str:
     """추출된 뉴스를 분석가 프롬프트용 Markdown 으로 포맷.
 
     ``note`` 는 헤더 아래에 덧붙이는 주의 문구 (예: 조회 한도로 일부 기간만 조회됨).
+    ``summary`` 는 그 아래 덧붙이는 기사 고르기 요약 (``_day_counts_summary``).
     """
     header = f"## {ticker} 뉴스 ({start} ~ {end})\n\n"
     if note:
         header += f"> ⚠ {note}\n\n"
+    if summary:
+        header += f"> {summary}\n\n"
     if not items:
         return header + "해당 기간 뉴스가 없습니다.\n"
     lines = []
@@ -286,10 +325,6 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
                 continue
             seen.add(item["title"])
             all_items.append(item)
-        # 최신순이라 앞쪽 N건이 곧 반환분 — 채웠으면 더 읽지 않는다 (기간 커버리지도 무관).
-        if len(all_items) >= _STOCK_NEWS_MAX_ITEMS:
-            covered = True
-            break
         page_oldest = min((i["date"] for i in parsed if i["date"]), default=None)
         if page_oldest is not None and (oldest is None or page_oldest < oldest):
             oldest = page_oldest
@@ -323,9 +358,9 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
             "앞쪽 일부는 확인하지 못했습니다. 기사 없음으로 해석하지 마세요."
         )
 
-    all_items.sort(key=lambda i: i["date"] or datetime.min, reverse=True)
     return _format_news_markdown(
-        ticker, start_date, end_date, all_items[:_STOCK_NEWS_MAX_ITEMS], note,
+        ticker, start_date, end_date, _sample_by_day(all_items, _STOCK_NEWS_MAX_ITEMS), note,
+        _day_counts_summary(all_items, _STOCK_NEWS_MAX_ITEMS),
     )
 
 
