@@ -2,7 +2,7 @@
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/186
 - 상위 에픽: https://github.com/timonPark/TradingAgents-KR/issues/183
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/207
 - 브랜치: docs/186-readme-first-screen
 - 작업 기간: 2026-11-27
 
