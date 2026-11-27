@@ -210,17 +210,63 @@ def test_get_news_short_page_means_no_news_not_limit():
 
 
 @pytest.mark.unit
-def test_get_news_stops_reading_once_item_cap_reached(monkeypatch):
-    """프롬프트 상한(30건)을 채우면 더 읽지 않고, 한도 경고도 붙이지 않는다."""
+def test_get_news_reads_whole_window_instead_of_stopping_at_item_cap(monkeypatch):
+    """30건이 차도 멈추지 않고 기간 끝까지 읽는다 — 최신 몇 시간치로 채우지 않기 위해 (#195)."""
     monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_PAGES", 5)
+    older = _clusters(_item("기간 시작 전", "202610310900", article_id="old"))
     with _patch_stock_pages(
-        _page("가", "202611031000"), _page("나", "202611031000"), _page("다", "202611031000"),
+        _page("가", "202611031000"), _page("나", "202611021000"), _page("다", "202611011000"), older,
     ) as get:
         out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
 
-    assert get.call_count == 2
+    assert get.call_count == 4
     assert out.count("- **") == naver_news._STOCK_NEWS_MAX_ITEMS
     assert "조회 한도" not in out
+
+
+@pytest.mark.unit
+def test_get_news_samples_evenly_by_day_with_day_counts(monkeypatch):
+    """기사가 상한보다 많으면 날짜별로 고르게 뽑고, 일자별 기사 수를 헤더에 붙인다 (#195)."""
+    monkeypatch.setattr(naver_news, "_STOCK_NEWS_MAX_ITEMS", 6)
+    day3 = [_item(f"3일 {i}", f"2026110321{i:02d}", article_id=f"c{i}") for i in range(10)]
+    day2 = [_item(f"2일 {i}", f"2026110221{i:02d}", article_id=f"b{i}") for i in range(4)]
+    day1 = [_item("1일 0", "202611011200", article_id="a0")]
+    older = _item("기간 시작 전", "202610310900", article_id="old")
+    with _patch_stock_pages(_clusters(*day3, *day2, *day1, older)):
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+
+    lines = [ln for ln in out.splitlines() if ln.startswith("- **")]
+    days = [ln[4:14] for ln in lines]
+    # 6건을 3일에 고르게: 11-01 은 1건뿐이라 남는 몫이 다른 날로 간다 (3일 3건·2일 2건·1일 1건 또는 비슷하게)
+    assert days.count("2026-11-01") == 1
+    assert days.count("2026-11-02") >= 2
+    assert days.count("2026-11-03") >= 2
+    assert days == sorted(days, reverse=True)  # 최신순 정렬 유지
+    # 각 날짜 안에서는 최신 기사부터
+    assert "3일 9" in out and "3일 0" not in out
+    assert "기간 내 기사 15건 중 날짜별로 고르게 6건" in out
+    assert "11-01 1 · 11-02 4 · 11-03 10" in out
+
+
+@pytest.mark.unit
+def test_get_news_no_day_counts_when_all_items_fit():
+    """기사가 상한 이하면 전부 싣고 샘플링 문구를 붙이지 않는다."""
+    with _patch_stock_pages(_STOCK_NEWS_JSON):
+        out = naver_news.get_news("005930", "2026-11-01", "2026-11-03")
+    assert "날짜별로 고르게" not in out
+
+
+@pytest.mark.unit
+def test_sample_by_day_keeps_undated_items_last():
+    from datetime import datetime
+    items = [
+        {"title": "날짜 없음", "date": None},
+        {"title": "a", "date": datetime(2026, 11, 3, 10)},
+        {"title": "b", "date": datetime(2026, 11, 3, 9)},
+        {"title": "c", "date": datetime(2026, 11, 2, 9)},
+    ]
+    picked = naver_news._sample_by_day(items, 3)
+    assert [i["title"] for i in picked] == ["a", "c", "날짜 없음"]
 
 
 @pytest.mark.unit

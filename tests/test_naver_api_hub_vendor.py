@@ -162,6 +162,20 @@ def test_short_page_means_source_exhausted_not_limit(creds, known_company):
 # ---------- 실패는 0건이 아니라 예외 ----------
 
 @pytest.mark.unit
+def test_samples_evenly_by_day_when_more_than_max_items(creds, known_company, monkeypatch):
+    """기간 안 기사가 상한보다 많으면 최신 N건이 아니라 날짜별로 고르게 (#195)."""
+    monkeypatch.setattr(naver_api_hub, "MAX_ITEMS", 4)
+    day3 = [_news(f"금호전기 3일 {i}", f"Tue, 03 Nov 2026 2{i}:00:00 +0900") for i in range(4)]
+    day2 = [_news(f"금호전기 2일 {i}", f"Mon, 02 Nov 2026 2{i}:00:00 +0900") for i in range(4)]
+    old = _news("금호전기 기간 전", "Mon, 26 Oct 2026 10:00:00 +0900")
+    with patch(GET, return_value=_resp(_payload(*day3, *day2, old))):
+        out = naver_api_hub.get_news("001210", "2026-10-28", "2026-11-04")
+
+    assert out.count("2026-11-03") >= 2 and out.count("- **2026-11-02") == 2
+    assert "기간 내 기사 8건 중 날짜별로 고르게 4건" in out
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("status", [401, 403])
 def test_auth_failure_raises_not_configured(creds, known_company, status):
     with patch(GET, return_value=_resp(None, status)), pytest.raises(
