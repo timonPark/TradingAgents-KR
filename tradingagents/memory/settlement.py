@@ -130,9 +130,11 @@ class Settlement:
 
     settled: list[tuple[str, str]] = field(default_factory=list)        # (ticker, date)
     failed: list[tuple[str, str, str]] = field(default_factory=list)    # (ticker, date, reason)
+    reflections: int = 0    # model calls asked for, settled or not (#209)
 
 
-def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool = True) -> Settlement:
+def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool = True,
+                   limit: int | None = None) -> Settlement:
     """Settle ``ticker``'s pending decisions whose holding window has traded.
 
     One pass at a time per log (``memory_log.settling()``), so runs sharing a log
@@ -141,6 +143,7 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
     Entries whose window has not traded yet are skipped; an entry whose prices
     or reflection could not be had stays pending and is reported as failed.
     With ``wait=False`` a pass already running elsewhere is left to do the work.
+    ``limit`` caps the reflections asked for (#209); the rest stay pending.
     """
     result = Settlement()
     with memory_log.settling(wait=wait) as held:
@@ -161,6 +164,9 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
                 continue
             if raw is None:
                 continue  # the holding window has not traded yet: try again next run
+            if limit is not None and result.reflections >= limit:
+                break
+            result.reflections += 1
             try:
                 reflection = reflector.reflect_on_final_decision(
                     final_decision=entry.get("decision", ""),
@@ -181,15 +187,32 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
     return result
 
 
-def settle_all_pending(memory_log, reflector, config: dict, wait: bool = True) -> Settlement:
+def settle_all_pending(memory_log, reflector, config: dict, wait: bool = True,
+                       ticker: str | None = None, other_limit: int | None = None) -> Settlement:
     """Settle every ticker's pending decisions whose holding window has traded (#1445).
 
     A run settles its own ticker; a ticker no longer analysed would otherwise
     keep its decisions pending, and their lessons out of later runs.
+
+    Each reflection is a model call, so a run that found many other tickers due
+    at once would wait on all of them (#209). Given its ``ticker``, a run settles
+    that ticker in full first, then at most ``other_limit`` reflections for the
+    other tickers, oldest decision first; the rest wait for later runs.
     """
     result = Settlement()
-    for ticker in dict.fromkeys(e["ticker"] for e in memory_log.get_pending_entries()):
-        done = settle_pending(ticker, memory_log, reflector, config, wait=wait)
+    pending = sorted(memory_log.get_pending_entries(), key=lambda e: e["date"])
+    tickers = [t for t in dict.fromkeys(e["ticker"] for e in pending) if t != ticker]
+    if ticker is not None:
+        tickers.insert(0, ticker)
+    budget = other_limit
+    for t in tickers:
+        own = t == ticker
+        if not own and budget is not None and budget <= 0:
+            break
+        done = settle_pending(t, memory_log, reflector, config, wait=wait, limit=None if own else budget)
         result.settled.extend(done.settled)
         result.failed.extend(done.failed)
+        result.reflections += done.reflections
+        if not own and budget is not None:
+            budget -= done.reflections
     return result
