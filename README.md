@@ -41,7 +41,7 @@ tradingagents
 
 플래그로 바로 실행하기, 브라우저 웹 UI(PDF 다운로드 포함), Docker 는 [사용법](#사용법)을, 선택 API 키(ECOS·NAVER·KRX)는 [설치 및 환경 설정](#설치-및-환경-설정)을 참고하세요.
 
-**Based on** [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) — 핵심 추론 엔진(LangGraph 오케스트레이션, 멀티 에이전트 토론·리스크 관리 파이프라인)을 기반으로, 데이터 수집 레이어와 에이전트 프롬프트를 한국 증시 환경에 맞게 재설계한 하드 포크(hard fork)입니다. 외부 LLM API 키 대신 **Claude Code CLI 헤드리스(OAuth)**를 단일 백엔드로 사용하여 Claude Max/Pro 구독 쿼터로 동작합니다. 출처와 인용은 [기반 프로젝트 및 인용](#기반-프로젝트-및-인용-attribution--citation)을 참고하세요.
+**Based on** [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) (Apache 2.0) — 핵심 추론 엔진(LangGraph 오케스트레이션, 멀티 에이전트 토론·리스크 관리 파이프라인)을 기반으로, 데이터 수집 레이어와 에이전트 프롬프트를 한국 증시 환경에 맞게 재설계한 하드 포크(hard fork)입니다. 외부 LLM API 키 대신 **Claude Code CLI 헤드리스**(OAuth)를 단일 백엔드로 사용하여 Claude Max/Pro 구독 쿼터로 동작합니다. 출처와 인용은 [기반 프로젝트 및 인용](#기반-프로젝트-및-인용-attribution--citation)을 참고하세요.
 
 ---
 
