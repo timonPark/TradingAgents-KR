@@ -1,7 +1,7 @@
 # [#195] 기사량 많은 종목의 뉴스 30건이 기준일 당일 최근 몇 시간치뿐이라 7일 창을 대표하지 못함
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/195
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/208
 - 브랜치: fix/195-news-sampling-by-day
 - 작업 기간: 2026-11-27
 
