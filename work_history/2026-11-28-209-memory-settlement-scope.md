@@ -1,7 +1,7 @@
 # [#209] Memory Log 정산이 단일 종목 실행을 오래 붙잡는 문제
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/209
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/214
 - 브랜치: fix/209-memory-settlement-scope
 - 작업 기간: 2026-11-28
 
