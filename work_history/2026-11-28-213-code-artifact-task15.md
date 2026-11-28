@@ -1,7 +1,7 @@
 # [#213] code_artifact.md 에 Task 15(첫인상 개선) 절 반영
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/213
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/216
 - 브랜치: docs/213-code-artifact-task15
 - 작업 기간: 2026-11-28
 
