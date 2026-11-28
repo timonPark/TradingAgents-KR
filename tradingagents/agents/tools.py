@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from tradingagents.dataflows import run_cache
 from tradingagents.dataflows.date_window import as_of, as_of_window
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
@@ -240,7 +241,12 @@ def get_news(
         start_date, end_date = as_of_window(start_date, end_date, trade_date)
     except ValueError as e:
         return str(e)
-    return route_to_vendor("get_news", ticker, start_date, end_date)
+    # 뉴스·감성 분석가가 같은 조회를 하므로 한 실행 안에서는 재사용한다 (#210).
+    return run_cache.cached(
+        ("get_news", ticker, start_date, end_date),
+        lambda: route_to_vendor("get_news", ticker, start_date, end_date),
+        keep=lambda result: not result.startswith("DATA_UNAVAILABLE"),
+    )
 
 
 @tool

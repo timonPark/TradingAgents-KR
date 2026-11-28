@@ -3,6 +3,7 @@ from contextvars import Context, ContextVar, copy_context
 from copy import deepcopy
 
 import tradingagents.default_config as default_config
+from tradingagents.dataflows import run_cache
 
 # Use default config but allow it to be overridden
 _config: dict | None = None
@@ -46,7 +47,8 @@ def run_config(config: dict):
     """Serve ``config``, over the defaults, to every read made inside the block."""
     token = _run_config.set(_merge(deepcopy(default_config.DEFAULT_CONFIG), config))
     try:
-        yield
+        with run_cache.scope():  # 실행마다 새 데이터 캐시 (#210)
+            yield
     finally:
         _run_config.reset(token)
 
@@ -59,6 +61,7 @@ def run_config_context(config: dict) -> Context:
     """
     context = copy_context()
     context.run(_run_config.set, _merge(deepcopy(default_config.DEFAULT_CONFIG), config))
+    context.run(run_cache.new_scope)  # 실행마다 새 데이터 캐시 (#210)
     return context
 
 

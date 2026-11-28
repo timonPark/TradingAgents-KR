@@ -307,6 +307,40 @@ def test_past_decisions_settle_alongside_the_analysts(tmp_path, monkeypatch, off
     assert lessons in pm_prompt
 
 
+def _count_get_news(monkeypatch):
+    calls = []
+    for vendor in router.VENDOR_METHODS["get_news"]:
+        monkeypatch.setitem(router.VENDOR_METHODS["get_news"], vendor,
+                            lambda *a, **k: calls.append(a) or "get_news data")
+    return calls
+
+
+@pytest.mark.unit
+def test_a_run_fetches_ticker_news_once_for_both_analysts(tmp_path, monkeypatch, offline):
+    """뉴스·감성 분석가가 같은 종목뉴스를 각자 조회하지 않는다 (#210)."""
+    calls = _count_get_news(monkeypatch)
+    graph = _graph(tmp_path, monkeypatch, ScriptedModel(structured=True))
+
+    state, _ = graph.propagate("NVDA", TRADE_DATE)
+
+    assert state["news_report"].strip() and state["sentiment_report"].strip()
+    assert len(calls) == 1
+    graph.propagate("NVDA", TRADE_DATE)
+    assert len(calls) == 2, "the next run fetches afresh"
+
+
+@pytest.mark.unit
+def test_a_streamed_run_fetches_ticker_news_once(tmp_path, monkeypatch, offline):
+    calls = _count_get_news(monkeypatch)
+    graph = _graph(tmp_path, monkeypatch, ScriptedModel(structured=True))
+    init = graph.propagator.create_initial_state("NVDA", TRADE_DATE)
+
+    for _ in graph.stream_run(init, **graph.propagator.get_graph_args()):
+        pass
+
+    assert len(calls) == 1
+
+
 @pytest.mark.unit
 def test_a_settlement_failure_is_noted_and_the_run_goes_on(tmp_path, monkeypatch, offline):
     """The analysts have spent their tokens by the time the join waits on settlement."""
