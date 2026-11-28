@@ -1,7 +1,7 @@
 # [#210] 한 실행 안에서 종목뉴스 get_news 결과 재사용
 
 - 이슈: https://github.com/timonPark/TradingAgents-KR/issues/210
-- PR: (생성 후 기입)
+- PR: https://github.com/timonPark/TradingAgents-KR/pull/215
 - 브랜치: feat/210-run-news-cache
 - 작업 기간: 2026-11-28
 
