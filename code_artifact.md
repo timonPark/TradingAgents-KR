@@ -137,7 +137,13 @@ TauricResearch/TradingAgents 프레임워크의 핵심 추론 엔진(LangGraph �
   * 수정: `tradingagents/dataflows/router.py`, 뉴스 분석가 (`tradingagents/agents/analysts/news_analyst.py`) 및 감성 분석가 (`tradingagents/agents/analysts/sentiment_analyst.py`) 의 사전조회 로직
 * **작업 내용:**
   * Reddit, StockTwits, FRED, Polymarket 호출부를 삭제합니다.
-  * 네이버 뉴스 vendor 를 작성해 노이즈(광고성 기사)를 제거하고 종목 뉴스를 전달합니다. (#138 갱신: 종목 뉴스는 NAVER API HUB 뉴스 검색 `naver_api_hub.py` 를 1순위, 네이버 증권 JSON `naver_news.py` 를 폴백으로 쓰는 체인 `naver_api_hub,naver_news`. 기존 `finance.naver.com` HTML 크롤은 폐지(HTTP 410)되어 제거. 주요뉴스(`get_global_news`)는 엔드포인트 폐지로 현재 `VendorUnavailableError` — 별도 이슈. 수집 실패는 "뉴스 없음"이 아니라 `DATA_UNAVAILABLE` 로 보고.)
+  * 네이버 뉴스 vendor 를 작성해 노이즈(광고성 기사)를 제거하고 종목 뉴스를 전달합니다. (#138 갱신: 종목 뉴스는 NAVER API HUB 뉴스 검색 `naver_api_hub.py` 를 1순위, 네이버 증권 JSON `naver_news.py` 를 폴백으로 쓰는 체인 `naver_api_hub,naver_news`. 기존 `finance.naver.com` HTML 크롤은 폐지(HTTP 410)되어 제거. 주요뉴스(`get_global_news`)는 #189 에서 네이버 증권 JSON API(`naver_news.py`)로 복구. 수집 실패는 "뉴스 없음"이 아니라 `DATA_UNAVAILABLE` 로 보고.)
+  * 종목 뉴스 후속 보강:
+    * 요청 기간 시작까지 닿지 못하면 API HUB 는 폴백으로 넘기고, `naver_news` 는 "일부 기간만 조회됨" 경고를 붙인다 (#188).
+    * 502·네트워크 오류는 재시도하고, 일부 쪽을 읽은 뒤의 실패는 부분 결과와 경고로 돌려준다 (#194).
+    * 빈 쪽 하나를 기사 끝으로 믿지 않고 다시 확인한다 (#198).
+    * 기간 전체를 읽어 날짜별로 고르게 30건을 고르고 일자별 기사 수를 함께 싣는다 (#195).
+    * 한 실행 안에서는 뉴스·감성 분석가가 같은 조회 결과를 재사용한다 (#210).
   * 거시 지표는 한국은행 ECOS Open API(`ecos.py`) 호출 또는 환율·기준금리 정적 매핑으로 교체합니다.
 
 ### Task 8: 한국 거래소 캘린더 매핑 (백테스트 시점 격리)
