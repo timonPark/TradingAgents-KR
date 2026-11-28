@@ -314,7 +314,7 @@ def test_a_settlement_failure_is_noted_and_the_run_goes_on(tmp_path, monkeypatch
 
     graph = _graph(tmp_path, monkeypatch, ScriptedModel(structured=True))
 
-    def locked():
+    def locked(**_):
         raise OSError("memory log is locked")
 
     monkeypatch.setattr(graph, "settle_all_pending", locked)
@@ -341,6 +341,22 @@ def test_the_run_settles_other_tickers_due_decisions_too(tmp_path, monkeypatch, 
 
     msft = next(e for e in graph.memory_log.load_entries() if e["ticker"] == "MSFT")
     assert not msft["pending"]
+
+
+@pytest.mark.unit
+def test_the_memory_step_settles_its_ticker_and_caps_other_tickers(tmp_path, monkeypatch, offline):
+    """Other tickers' due decisions are spread over runs, not all paid for in this one (#209)."""
+    from tradingagents.graph.trading_graph import _OTHER_TICKER_REFLECTIONS_PER_RUN
+    from tradingagents.memory import settlement
+
+    graph = _graph(tmp_path, monkeypatch, ScriptedModel(structured=True))
+    asked = []
+    monkeypatch.setattr(graph, "settle_all_pending",
+                        lambda **kw: asked.append(kw) or settlement.Settlement())
+
+    graph._memory_step({"company_of_interest": "NVDA", "trade_date": "2026-01-20"})
+
+    assert asked == [{"wait": False, "ticker": "NVDA", "other_limit": _OTHER_TICKER_REFLECTIONS_PER_RUN}]
 
 
 @pytest.mark.unit

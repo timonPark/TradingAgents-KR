@@ -27,6 +27,11 @@ from .setup import GraphSetup
 
 logger = logging.getLogger(__name__)
 
+# A run's Memory Log step settles its own ticker in full but asks at most this many
+# reflections (one model call each) for other tickers, so a backlog that comes due
+# at once is spread over later runs instead of holding one run for hours (#209).
+_OTHER_TICKER_REFLECTIONS_PER_RUN = 3
+
 
 def _validate_trade_date(trade_date) -> str:
     """The run date as a canonical ``YYYY-MM-DD`` string no later than today."""
@@ -389,7 +394,9 @@ class TradingAgentsGraph:
         note = ""
         try:
             # Another run settling the same log does the work; this one goes on.
-            done = self.settle_all_pending(wait=False)
+            # Other tickers get a few reflections per run, not all at once (#209).
+            done = self.settle_all_pending(wait=False, ticker=state["company_of_interest"],
+                                           other_limit=_OTHER_TICKER_REFLECTIONS_PER_RUN)
             if done.failed:
                 note = (f"{len(done.failed)} past decision(s) could not be settled this run "
                         "and stay pending.")
@@ -416,15 +423,18 @@ class TradingAgentsGraph:
         with run_config(self.config):
             return settlement.settle_pending(company_name, self.memory_log, self.reflector, self.config)
 
-    def settle_all_pending(self, wait: bool = True) -> settlement.Settlement:
+    def settle_all_pending(self, wait: bool = True, ticker: str | None = None,
+                           other_limit: int | None = None) -> settlement.Settlement:
         """Settle every ticker's decisions whose holding window has now traded (#1445).
 
         For a scheduler whose tickers rotate: a ticker it stops analysing would
         otherwise keep its decisions pending, and their lessons out of later runs.
         With ``wait=False`` a pass already running on the same log is not waited for.
+        ``ticker`` / ``other_limit``: see ``settlement.settle_all_pending`` (#209).
         """
         with run_config(self.config):
-            return settlement.settle_all_pending(self.memory_log, self.reflector, self.config, wait=wait)
+            return settlement.settle_all_pending(self.memory_log, self.reflector, self.config, wait=wait,
+                                                 ticker=ticker, other_limit=other_limit)
 
     def record_decision(self, company_name, trade_date, final_state):
         """Record a finished run: its state log, and its decision in the memory log

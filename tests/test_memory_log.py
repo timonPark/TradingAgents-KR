@@ -1222,6 +1222,84 @@ class TestSettleAll:
         assert result.settled == [] and [f[:2] for f in result.failed] == [("AAPL", "2026-01-05")]
         assert {e["ticker"] for e in log.get_pending_entries()} == {"AAPL", "MSFT"}
 
+    def _backlog(self, tmp_path, monkeypatch):
+        """Five other tickers due at once, oldest first by decision date, plus the run's own two."""
+        log = make_log(tmp_path)
+        others = [("T5", "2026-01-09"), ("T1", "2026-01-05"), ("T2", "2026-01-06"),
+                  ("T4", "2026-01-08"), ("T3", "2026-01-07")]
+        for t, d in others:
+            log.store_decision(t, d, DECISION_BUY)
+        log.store_decision("OWN", "2026-01-05", DECISION_BUY)
+        log.store_decision("OWN", "2026-01-06", DECISION_BUY)
+        series = pd.Series([100.0 + i for i in range(20)], index=pd.bdate_range("2026-01-02", periods=20))
+        monkeypatch.setattr(settlement, "get_closes", lambda *a, **k: series)
+        asked = []
+
+        class _Reflector:
+            def reflect_on_final_decision(self, **kwargs):
+                asked.append(kwargs)
+                return "Held up."
+        return log, _Reflector(), asked
+
+    def test_a_run_settles_its_own_ticker_in_full_and_caps_the_others(self, tmp_path, monkeypatch):
+        """A backlog that came due at once must not hold one run for hours (#209)."""
+        log, reflector, asked = self._backlog(tmp_path, monkeypatch)
+
+        result = settlement.settle_all_pending(log, reflector, {"holding_period_days": 5},
+                                               ticker="OWN", other_limit=3)
+
+        assert result.settled == [("OWN", "2026-01-05"), ("OWN", "2026-01-06"),
+                                  ("T1", "2026-01-05"), ("T2", "2026-01-06"), ("T3", "2026-01-07")]
+        assert len(asked) == result.reflections == 5
+        assert {e["ticker"] for e in log.get_pending_entries()} == {"T4", "T5"}
+
+    def test_the_capped_rest_is_settled_by_later_runs(self, tmp_path, monkeypatch):
+        log, reflector, _ = self._backlog(tmp_path, monkeypatch)
+        config = {"holding_period_days": 5}
+
+        settlement.settle_all_pending(log, reflector, config, ticker="OWN", other_limit=3)
+        second = settlement.settle_all_pending(log, reflector, config, ticker="OWN", other_limit=3)
+
+        assert second.settled == [("T4", "2026-01-08"), ("T5", "2026-01-09")]
+        assert not log.get_pending_entries()
+
+    def test_a_failed_reflection_counts_against_the_cap(self, tmp_path, monkeypatch):
+        """A provider that is down must not be asked for every pending decision in one run."""
+        log, _, _ = self._backlog(tmp_path, monkeypatch)
+        calls = []
+
+        class _Down:
+            def reflect_on_final_decision(self, **kwargs):
+                calls.append(1)
+                raise RuntimeError("provider down")
+
+        result = settlement.settle_all_pending(log, _Down(), {"holding_period_days": 5},
+                                               ticker="OWN", other_limit=3)
+
+        assert len(calls) == 2 + 3
+        assert [f[0] for f in result.failed] == ["OWN", "OWN", "T1", "T2", "T3"]
+
+    def test_a_decision_not_yet_due_costs_no_reflection(self, tmp_path, monkeypatch):
+        """Only a reflection is a model call; a window that has not traded spends none of the cap."""
+        log, reflector, _ = self._backlog(tmp_path, monkeypatch)
+        log.store_decision("T0", "2026-01-02", DECISION_BUY)
+        real = settlement.fetch_returns
+        monkeypatch.setattr(settlement, "fetch_returns",
+                            lambda t, *a, **k: (None, None, None, None) if t == "T0" else real(t, *a, **k))
+
+        result = settlement.settle_all_pending(log, reflector, {"holding_period_days": 5},
+                                               ticker="OWN", other_limit=3)
+
+        assert [s[0] for s in result.settled] == ["OWN", "OWN", "T1", "T2", "T3"]
+
+    def test_without_a_cap_every_ticker_is_settled_as_before(self, tmp_path, monkeypatch):
+        """A scheduler or the CLI asking for every ticker keeps #1445's behaviour."""
+        log, reflector, _ = self._backlog(tmp_path, monkeypatch)
+
+        result = settlement.settle_all_pending(log, reflector, {"holding_period_days": 5})
+
+        assert len(result.settled) == 7 and not log.get_pending_entries()
+
 
 @pytest.mark.unit
 def test_the_graph_settles_every_ticker_under_its_own_config(tmp_path, monkeypatch):
@@ -1232,7 +1310,7 @@ def test_the_graph_settles_every_ticker_under_its_own_config(tmp_path, monkeypat
     graph.memory_log, graph.reflector = make_log(tmp_path), object()
     seen = []
     monkeypatch.setattr(settlement, "settle_all_pending",
-                        lambda log, reflector, config, wait=True: seen.append(get_config()["output_language"])
+                        lambda log, reflector, config, wait=True, **_: seen.append(get_config()["output_language"])
                         or settlement.Settlement(settled=[("AAPL", "2026-01-05")]))
 
     assert graph.settle_all_pending().settled == [("AAPL", "2026-01-05")]
